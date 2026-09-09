@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #1e1e1e; }
+    #container { width: 100%; height: 100%; }
+    #loading {
+        color: #888; font-family: -apple-system, sans-serif; font-size: 13px;
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    }
+</style>
+</head>
+<body>
+<div id="container"><div id="loading">Loading editor...</div></div>
+<script>
+    // Load Monaco strictly from the bundled local copy — never a remote CDN. A CDN fallback
+    // would run remote code inside a WebView that holds the user's file contents, and offline
+    // it would just hang forever. Show an explicit error instead.
+    var monacoBase = 'monaco/vs';
+    var loaderScript = document.createElement('script');
+
+    function initLoader() {
+        require.config({ paths: { vs: monacoBase }});
+        initEditor();
+    }
+
+    loaderScript.src = 'monaco/loader.min.js';
+    loaderScript.onload = initLoader;
+    loaderScript.onerror = function() {
+        document.getElementById('loading').textContent = 'Failed to load editor (bundled Monaco missing)';
+    };
+    document.head.appendChild(loaderScript);
+</script>
+<script>
+    var editor = null;
+    var isDirty = false;
+    var lastSavedContent = '';
+    var suppressDirtyNotifications = false;
+
+    function initEditor() {
+        require(['vs/editor/editor.main'], function () {
+            document.getElementById('loading').remove();
+
+            editor = monaco.editor.create(document.getElementById('container'), {
+                value: '',
+                language: 'plaintext',
+                theme: 'vs-dark',
+                automaticLayout: true,
+                fontSize: 13,
+                fontFamily: "'SF Mono', Menlo, Monaco, 'Courier New', monospace",
+                minimap: { enabled: true },
+                lineNumbers: 'on',
+                renderWhitespace: 'none',
+                guides: {
+                    indentation: true,
+                    bracketPairs: true,
+                    highlightActiveIndentation: true
+                },
+                bracketPairColorization: { enabled: true },
+                scrollBeyondLastLine: false,
+                wordWrap: 'off',
+                folding: true,
+                matchBrackets: 'always',
+                autoClosingBrackets: 'always',
+                autoClosingQuotes: 'always',
+                suggest: { showWords: true },
+                tabSize: 4,
+                insertSpaces: true,
+                renderLineHighlight: 'none',
+                cursorStyle: 'line',
+                cursorBlinking: 'smooth',
+                smoothScrolling: true,
+                mouseWheelZoom: true,
+                find: { addExtraSpaceOnTop: false }
+            });
+
+            editor.onDidChangeModelContent(function () {
+                isDirty = editor.getValue() !== lastSavedContent;
+                if (!suppressDirtyNotifications) {
+                    window.webkit.messageHandlers.editorEvent.postMessage({
+                        type: 'contentChanged',
+                        isDirty: isDirty
+                    });
+                }
+            });
+
+            editor.onDidChangeCursorPosition(function (e) {
+                var model = editor.getModel();
+                var totalLines = model ? model.getLineCount() : 0;
+                var selection = editor.getSelection();
+                var selectedText = model ? model.getValueInRange(selection) : '';
+                window.webkit.messageHandlers.editorEvent.postMessage({
+                    type: 'cursorChanged',
+                    line: e.position.lineNumber,
+                    column: e.position.column,
+                    totalLines: totalLines,
+                    selectionLength: selectedText.length
+                });
+            });
+
+            // Cmd+S from inside the editor → notify native. The standalone window intercepts
+            // Cmd+S with its own key monitor before Monaco sees it, so this path serves the
+            // embedded panel, which has no such monitor.
+            editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, function () {
+                window.webkit.messageHandlers.editorEvent.postMessage({ type: 'save' });
+            });
+
+            window.webkit.messageHandlers.editorEvent.postMessage({ type: 'ready' });
+        });
+    }
+
+    function setContent(text, language) {
+        if (!editor) return;
+        suppressDirtyNotifications = true;
+        var model = editor.getModel();
+        if (model) monaco.editor.setModelLanguage(model, language || 'plaintext');
+        editor.setValue(text);
+        lastSavedContent = editor.getValue();
+        isDirty = false;
+        suppressDirtyNotifications = false;
+    }
+
+    function getContent() { return editor ? editor.getValue() : ''; }
+
+    function markSaved() {
+        lastSavedContent = editor ? editor.getValue() : '';
+        isDirty = false;
+    }
+
+    function focusEditor() { if (editor) editor.focus(); }
+
+    function setLanguage(lang) {
+        if (!editor) return;
+        var model = editor.getModel();
+        if (model) monaco.editor.setModelLanguage(model, lang);
+    }
+
+    function setFontSize(size) { if (editor) editor.updateOptions({ fontSize: size }); }
+    function setTheme(theme) { monaco.editor.setTheme(theme); }
+    function toggleMinimap(show) { if (editor) editor.updateOptions({ minimap: { enabled: show } }); }
+    function toggleWordWrap(wrap) { if (editor) editor.updateOptions({ wordWrap: wrap ? 'on' : 'off' }); }
+    function toggleWhitespace(mode) { if (editor) editor.updateOptions({ renderWhitespace: mode }); }
+    function toggleIndentGuides(show) { if (editor) editor.updateOptions({ guides: { indentation: show } }); }
+    function toggleLineHighlight(mode) { if (editor) editor.updateOptions({ renderLineHighlight: mode }); }
+
+    function goToLine(lineNum) {
+        if (editor) {
+            editor.revealLineInCenter(lineNum);
+            editor.setPosition({ lineNumber: lineNum, column: 1 });
+            editor.focus();
+        }
+    }
+
+    function findText() { if (editor) editor.getAction('actions.find').run(); }
+    function replaceText() { if (editor) editor.getAction('editor.action.startFindReplaceAction').run(); }
+    function getIsDirty() { return isDirty; }
+</script>
+</body>
+</html>
