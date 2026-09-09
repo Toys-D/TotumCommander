@@ -26,9 +26,88 @@ final class MarkdownPreviewTests: XCTestCase {
         XCTAssertFalse(NSFontManager.shared.traits(of: normal).contains(.boldFontMask), "обычный текст — обычным")
     }
 
-    func test_переносыСтрокСохраняются() throws {
+    func test_переносСтрокиОстаётсяПереносом() throws {
+        // Markdown считает одиночный перенос пробелом, но человек смотрит СВОЙ файл и ждёт
+        // увидеть его строки. Пустая строка между абзацами при этом не нужна — её работу
+        // делает отступ между ними.
         let text = try XCTUnwrap(MarkdownStyler.render("первая\nвторая\n\nтретья"))
-        XCTAssertEqual(text.string.components(separatedBy: "\n").count, 4, "абзацы не склеиваются")
+        XCTAssertEqual(text.string.components(separatedBy: "\n").count, 3, "строки не склеиваются")
+        XCTAssertFalse(text.string.contains("\n\n"), "пустых строк между абзацами нет")
+    }
+
+    private func style(at index: Int, in text: NSAttributedString) -> NSParagraphStyle? {
+        text.attribute(.paragraphStyle, at: index, effectiveRange: nil) as? NSParagraphStyle
+    }
+
+    private func index(of needle: String, in text: NSAttributedString) throws -> Int {
+        let plain = text.string
+        let range = try XCTUnwrap(plain.range(of: needle), "в разложенном тексте нет «\(needle)»")
+        return plain.distance(from: plain.startIndex, to: range.lowerBound)
+    }
+
+    // MARK: - Блоки, а не решётки с палками
+
+    func test_заголовокКрупнееИЖирнее() throws {
+        let text = try XCTUnwrap(MarkdownStyler.render("# Заголовок\n\nобычный текст"))
+        XCTAssertFalse(text.string.contains("#"), "решётка заголовка не показывается")
+        let head = try XCTUnwrap(font(at: try index(of: "Заголовок", in: text), in: text))
+        let body = try XCTUnwrap(font(at: try index(of: "обычный", in: text), in: text))
+        XCTAssertGreaterThan(head.pointSize, body.pointSize)
+        XCTAssertTrue(NSFontManager.shared.traits(of: head).contains(.boldFontMask))
+    }
+
+    func test_таблицаСтановитсяТаблицей() throws {
+        let document = """
+        | Что проверяли | Результат |
+        |---|---|
+        | Первое | Ответ один |
+        """
+        let text = try XCTUnwrap(MarkdownStyler.render(document))
+        XCTAssertFalse(text.string.contains("|"), "палки разметки не показываются")
+        XCTAssertFalse(text.string.contains("---"), "строка выравнивания не показывается")
+        let cell = try XCTUnwrap(style(at: try index(of: "Ответ один", in: text), in: text))
+        let block = try XCTUnwrap(cell.textBlocks.first as? NSTextTableBlock,
+                                  "ячейка живёт в настоящей таблице")
+        XCTAssertEqual(block.table.numberOfColumns, 2)
+        XCTAssertEqual(block.startingColumn, 1)
+        XCTAssertEqual(block.startingRow, 1, "шапка — нулевая строка")
+    }
+
+    func test_шапкаТаблицыЖирная() throws {
+        let text = try XCTUnwrap(MarkdownStyler.render("| Имя | Тип |\n|---|---|\n| файл | .md |"))
+        let head = try XCTUnwrap(font(at: try index(of: "Имя", in: text), in: text))
+        XCTAssertTrue(NSFontManager.shared.traits(of: head).contains(.boldFontMask))
+    }
+
+    func test_списокПолучаетМаркеры() throws {
+        let text = try XCTUnwrap(MarkdownStyler.render("- один\n- два"))
+        XCTAssertTrue(text.string.contains("•"), "пункты помечены точкой")
+        XCTAssertFalse(text.string.contains("- один"), "чёрточка разметки не показывается")
+        let item = try XCTUnwrap(style(at: try index(of: "один", in: text), in: text))
+        XCTAssertGreaterThan(item.headIndent, 0, "пункт с отступом")
+    }
+
+    func test_нумерованныйСписокСохраняетНомера() throws {
+        let text = try XCTUnwrap(MarkdownStyler.render("1. первый\n2. второй"))
+        XCTAssertTrue(text.string.contains("1. "), "номер остаётся номером")
+        XCTAssertTrue(text.string.contains("2. "))
+    }
+
+    func test_блокКодаМоноширинныйИСФоном() throws {
+        let text = try XCTUnwrap(MarkdownStyler.render("текст\n\n```swift\nlet x = 1\n```"))
+        XCTAssertFalse(text.string.contains("```"), "заборчик кода не показывается")
+        let code = try XCTUnwrap(font(at: try index(of: "let x", in: text), in: text))
+        XCTAssertTrue(code.isFixedPitch)
+        let block = try XCTUnwrap(style(at: try index(of: "let x", in: text), in: text))
+        XCTAssertNotNil(block.textBlocks.first?.backgroundColor, "у кода своя подложка")
+    }
+
+    func test_цитатаОтступаетИБледнее() throws {
+        let text = try XCTUnwrap(MarkdownStyler.render("> цитата"))
+        XCTAssertFalse(text.string.contains(">"), "уголок цитаты не показывается")
+        let quote = try XCTUnwrap(style(at: try index(of: "цитата", in: text), in: text))
+        XCTAssertGreaterThan(quote.firstLineHeadIndent, 0)
+        XCTAssertFalse(quote.textBlocks.isEmpty, "у цитаты есть полоска слева")
     }
 
     /// Документ размером с ТЗ (13 000 слов) — разбор, стиль и полная раскладка в NSTextView
