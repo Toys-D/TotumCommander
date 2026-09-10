@@ -195,6 +195,16 @@ if [ -n "$GS_BIN" ]; then
         mkdir -p "$GS_DEST/bin" "$GS_DEST/share/ghostscript"
         cp "$GS_BIN" "$GS_DEST/bin/gs"
         cp -R "$GS_RES_SRC" "$GS_DEST/share/ghostscript/Resource"
+        # Цветовые профили. Замер на нашей отрисовке (png16m) разницы не дал: CMYK выходит
+        # побайтово одинаково с ними и без них. Но лежат они 256 КБ, а файлу, который
+        # ССЫЛАЕТСЯ на профиль, без них рисовать нечем — кладём, раз есть.
+        GS_ICC_SRC="$(/bin/ls -d "$GS_PREFIX"/share/ghostscript/*/iccprofiles 2>/dev/null | head -1)"
+        [ -d "$GS_ICC_SRC" ] || GS_ICC_SRC="$GS_PREFIX/share/ghostscript/iccprofiles"
+        if [ -d "$GS_ICC_SRC" ]; then
+            cp -R "$GS_ICC_SRC" "$GS_DEST/share/ghostscript/iccprofiles"
+        else
+            echo "    (no iccprofiles beside Ghostscript — a colour-managed EPS falls back)"
+        fi
         dylibbundler -od -b \
             -x "$GS_DEST/bin/gs" \
             -d "$GS_DEST/lib" \
@@ -223,8 +233,28 @@ dylibbundler -od -b \
     -d "$VIEWER_APP/Contents/Frameworks" \
     -p @executable_path/../Frameworks
 
-# Code-sign with Developer ID so macOS Keychain + Firewall remember permissions
-codesign --force --deep --sign "Apple Development: toysappleid@gmail.com (3P8J62VT66)" "$APP" 2>/dev/null
+# Signing. A STABLE identity is a convenience for the developer: macOS then remembers the
+# permissions and firewall rules it granted, instead of asking again after every build.
+#
+# It used to be one unconditional line with the author's own certificate — under `set -e`.
+# That certificate exists in no other keychain, so on any other Mac the build died exactly
+# here, and release.sh (which runs this script) died with it: nobody but the author could
+# build the program from this repository at all. Now the identity is CHOSEN: the one asked
+# for, the author's if this machine really has it, ad hoc otherwise — and a refusal of the
+# stable identity falls back instead of ending the build.
+SIGN_ID="${FCXL_SIGN_ID:-}"
+if [ -z "$SIGN_ID" ]; then
+    PREFERRED="Apple Development: toysappleid@gmail.com (3P8J62VT66)"
+    if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$PREFERRED"; then
+        SIGN_ID="$PREFERRED"
+    else
+        SIGN_ID="-"
+    fi
+fi
+if ! codesign --force --deep --sign "$SIGN_ID" "$APP"; then
+    echo "    signing with '$SIGN_ID' failed — falling back to ad hoc"
+    codesign --force --deep --sign - "$APP"
+fi
 
 if [ -n "${FCXL_NO_LAUNCH:-}" ]; then
     echo "=== Built, not launched ==="
