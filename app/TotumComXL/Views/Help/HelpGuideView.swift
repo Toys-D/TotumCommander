@@ -122,7 +122,7 @@ struct HelpGuideWebView: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
-        view.setValue(false, forKey: "drawsBackground")
+        view.fcxlMakeBackgroundTransparent()
         view.loadHTMLString(html, baseURL: nil)
         context.coordinator.loaded = html
         return view

@@ -36,7 +36,7 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
         config.userContentController = userController
 
         webView = WKWebView(frame: .zero, configuration: config)
-        webView.setValue(false, forKey: "drawsBackground")
+        webView.fcxlMakeBackgroundTransparent()
 
         super.init()
 
