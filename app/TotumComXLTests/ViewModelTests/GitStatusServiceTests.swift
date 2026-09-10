@@ -117,7 +117,8 @@ final class GitStatusServiceTests: XCTestCase {
     // MARK: - Against a real repository
 
     private func makeRepository() throws -> String? {
-        guard FileManager.default.isExecutableFile(atPath: GitStatusService.gitExecutable) else {
+        guard let git = GitStatusService.gitExecutable,
+              FileManager.default.isExecutableFile(atPath: git) else {
             return nil     // no git on this machine: the panel simply shows no marks
         }
         let root = (NSTemporaryDirectory() as NSString)

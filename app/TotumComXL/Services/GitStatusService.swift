@@ -217,7 +217,8 @@ enum GitStatusService {
     /// it did before this feature existed.
     static func run(_ arguments: [String], at directory: String, timeout: TimeInterval = 10)
         -> String? {
-        guard FileManager.default.isExecutableFile(atPath: gitExecutable) else { return nil }
+        guard let gitExecutable, FileManager.default.isExecutableFile(atPath: gitExecutable)
+        else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: gitExecutable)
         process.arguments = arguments
@@ -244,9 +245,45 @@ enum GitStatusService {
             ?? String(data: data, encoding: .isoLatin1)
     }
 
-    /// Where git lives. The command-line tools put it here; anything else (Homebrew, Xcode's
-    /// own copy) is reached through this same stub.
-    static let gitExecutable = "/usr/bin/git"
+    /// Где живёт НАСТОЯЩИЙ git.
+    ///
+    /// `/usr/bin/git` — не git, а заглушка (одна и та же у всех инструментов, 118 КБ). На
+    /// машине без инструментов разработчика она не запускает ничего, а открывает системное
+    /// окно «требуются инструменты разработчика» — и человек, просто зашедший в папку с
+    /// проектом, получал это окно ни за что, ничего не спрашивая. Поэтому ищем настоящий
+    /// git, а не нашли — метки просто не показываются, как было до появления этой возможности.
+    static let gitExecutable: String? = firstRealGit()
+
+    /// Пути, где настоящий git лежит: активная папка разработчика (её называет
+    /// `xcode-select`), инструменты командной строки, Homebrew, ручная установка.
+    nonisolated static func firstRealGit(
+        developerDirectory: String? = activeDeveloperDirectory(),
+        isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+    ) -> String? {
+        var candidates: [String] = []
+        if let developerDirectory, !developerDirectory.isEmpty {
+            candidates.append(developerDirectory + "/usr/bin/git")
+        }
+        candidates += ["/Library/Developer/CommandLineTools/usr/bin/git",
+                       "/Applications/Xcode.app/Contents/Developer/usr/bin/git",
+                       "/opt/homebrew/bin/git", "/usr/local/bin/git"]
+        return candidates.first(where: isExecutable)
+    }
+
+    /// Что отвечает `xcode-select -p`. Сам он есть всегда и окон не открывает.
+    nonisolated static func activeDeveloperDirectory() -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+        process.arguments = ["-p"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        do { try process.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     /// Marks for the rows of one folder, straight from git.
     static func marks(inDirectory directory: String, repoRoot: String) -> [String: GitMark] {
