@@ -558,6 +558,8 @@ let package = Package(
                 "ViewModelTests/PanelSlotTests.swift",
                 "ViewModelTests/NetworkBrowseStatusTests.swift",
                 "ViewModelTests/AppResourcesTests.swift",
+                "ViewModelTests/BeautyModeCapabilityTests.swift",
+                "ViewModelTests/PostScriptColourArgsTests.swift",
                 "ViewModelTests/RemoteSessionTests.swift",
                 "ViewModelTests/BranchViewTests.swift",
                 "ViewModelTests/ColumnOrderTests.swift",

@@ -474,6 +474,24 @@ enum PanelAppearanceSettings {
                           systemIsDark: isDarkAppearance)
     }
 
+    /// Что положить в рабочий ключ переключателя, который помнится по темам.
+    ///
+    /// «Красивый режим» — размытие и свечение — требует Apple Silicon уровня Pro и выше: на
+    /// базовом M1 с восемью ядрами GPU список начинает заикаться, и программа сама об этом
+    /// знает (`MacCapabilities.supportsBeautyMode`). Но знала об этом ровно одна кнопка в
+    /// настройках, а в наборе по умолчанию тёмная тема идёт с включёнными эффектами, — и
+    /// человек на слабой машине, просто переключившись в тёмную тему, получал заикающиеся
+    /// панели, ничего не включая сам, да ещё и с серой, недоступной кнопкой.
+    ///
+    /// Проверка стоит здесь, в зеркале, а не у каждого рисующего: рабочий ключ читают в
+    /// десяти местах, и забыть её в одном из них — значит вернуть размытие туда, где его не
+    /// держат. Помнить же, что человек хотел эффекты, никто не мешает: запомненное значение
+    /// остаётся, и на машине, которая их тянет, они включатся сами.
+    nonisolated static func effectiveThemedFlag(_ remembered: Bool, key: String,
+                                                supportsBeauty: Bool) -> Bool {
+        key == beautyModeEnabledKey ? (remembered && supportsBeauty) : remembered
+    }
+
     /// Copy the current theme's remembered colour into each effective key. Call at
     /// launch and on every `.fcxlAppearanceChanged` (system or manual theme switch).
     @MainActor
@@ -489,7 +507,9 @@ enum PanelAppearanceSettings {
         }
         var maskChanged = false
         for b in themedBoolKeys {
-            let remembered = d.bool(forKey: dark ? b.dark : b.light)
+            let remembered = effectiveThemedFlag(d.bool(forKey: dark ? b.dark : b.light),
+                                                 key: b.effective,
+                                                 supportsBeauty: MacCapabilities.supportsBeautyMode)
             if d.bool(forKey: b.effective) != remembered {
                 d.set(remembered, forKey: b.effective)
                 if b.effective == CursorMaskStore.enabledKey { maskChanged = true }
