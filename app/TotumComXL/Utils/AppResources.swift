@@ -32,11 +32,14 @@ enum AppResources {
         var list: [URL] = []
         // 1. Contents/Resources — место ресурсов в собранной программе.
         if let resourceURL { list.append(resourceURL.appendingPathComponent(leaf)) }
-        // 2. Рядом с .app и рядом с исполняемым файлом отладочной сборки — сюда смотрит
-        //    сгенерированный SwiftPM поиск, и здесь набор лежит при запуске из-под сборки.
+        // 2. В корне самого .app (а у отладочной сборки — рядом с исполняемым файлом):
+        //    именно сюда смотрит сгенерированный SwiftPM поиск.
         list.append(mainBundleURL.appendingPathComponent(leaf))
-        // 3. Рядом с набором, в котором лежит наш код: так набор находится в тестах.
-        if let codeBundleURL {
+        // 3. Рядом с набором, в котором лежит наш код: так набор находится в тестах и при
+        //    запуске из-под сборки. Только когда программа запущена НЕ из `.app`: у
+        //    собранной программы это папка, В КОТОРОЙ она лежит, — Загрузки например, — и
+        //    случайный чужой набор рядом не должен подменять наш собственный.
+        if let codeBundleURL, mainBundleURL.pathExtension != "app" {
             list.append(codeBundleURL.deletingLastPathComponent().appendingPathComponent(leaf))
             list.append(codeBundleURL.appendingPathComponent(leaf))
         }
@@ -48,9 +51,22 @@ enum AppResources {
         return list.filter { seen.insert($0.path).inserted }
     }
 
-    /// Первый существующий набор из перечисленных.
+    /// Приметы настоящего набора: по ним видно, что это наши ресурсы, а не пустая папка с
+    /// подходящим именем. `Bundle(url:)` соглашается на любую существующую папку, а поиск на
+    /// ней останавливается — и программа осталась бы с ключами вместо слов, не сказав ни слова.
+    static let markers = ["ru.lproj", "DefaultStyle.plist"]
+
+    /// Есть ли в этой папке хоть одна примета нашего набора.
+    nonisolated static func looksLikeOurBundle(_ url: URL,
+                                               exists: (String) -> Bool = {
+                                                   FileManager.default.fileExists(atPath: $0)
+                                               }) -> Bool {
+        markers.contains { exists(url.appendingPathComponent($0).path) }
+    }
+
+    /// Первый ПРИГОДНЫЙ набор из перечисленных: существующий и с ресурсами внутри.
     nonisolated static func firstBundle(among urls: [URL]) -> Bundle? {
-        for url in urls {
+        for url in urls where looksLikeOurBundle(url) {
             if let found = Bundle(url: url) { return found }
         }
         return nil
@@ -62,7 +78,12 @@ enum AppResources {
         let code = Bundle(for: BundleAnchor.self)
         let urls = candidates(mainBundleURL: main.bundleURL, resourceURL: main.resourceURL,
                               codeBundleURL: code.bundleURL)
-        return firstBundle(among: urls) ?? main
+        if let found = firstBundle(among: urls) { return found }
+        // Молчать здесь нельзя: человек увидит ключи вместо слов и пустую справку, а причина
+        // не будет написана нигде. В журнале она будет.
+        NSLog("FCXL: набор ресурсов не найден — искали в: %@",
+              urls.map(\.path).joined(separator: ", "))
+        return main
     }()
 
     /// Нашёлся ли настоящий набор ресурсов, а не запасной `.app`.
@@ -73,8 +94,12 @@ enum AppResources {
     /// Зовётся с ключом `--fcxl-resource-check` и печатает, что нашла. Раньше это узнавалось
     /// только на чужом Mac и узнавалось падением; теперь узнаёт скрипт выкладки, до DMG.
     static func selfCheck() -> Bool {
+        // Не четыре файла, а по одному от каждой части, которая без своего ресурса
+        // молча перестаёт работать: слова, оформление, справка, редактор, курсор, облака.
         let names = ["ru.lproj/Localizable.strings", "en.lproj/Localizable.strings",
-                     "DefaultStyle.plist", "help.ru.md"]
+                     "DefaultStyle.plist", "help.ru.md", "help.en.md",
+                     "monaco-editor.html", "monaco/loader.min.js",
+                     "DefaultCursorMask.png", "cloud-box.png"]
         print("набор ресурсов: \(bundle.bundleURL.path)")
         guard found else {
             print("НЕ НАЙДЕН: ресурсов нет ни в Contents/Resources, ни рядом с программой")

@@ -45,6 +45,41 @@ final class AppResourcesTests: XCTestCase {
         XCTAssertEqual(Set(urls.map(\.path)).count, urls.count, "один и тот же путь не проверяется дважды")
     }
 
+    func test_пустаяПапкаСПодходящимИменемНеСчитаетсяНабором() {
+        // `Bundle(url:)` соглашается на любую существующую папку, а поиск на ней
+        // останавливался — программа осталась бы с ключами вместо слов и молча.
+        let empty = URL(fileURLWithPath: "/tmp/пусто.bundle")
+        XCTAssertFalse(AppResources.looksLikeOurBundle(empty, exists: { _ in false }))
+    }
+
+    func test_наборУзнаётсяПоСвоимФайлам() {
+        let url = URL(fileURLWithPath: "/tmp/наш.bundle")
+        XCTAssertTrue(AppResources.looksLikeOurBundle(url) { path in
+            path.hasSuffix("/DefaultStyle.plist")
+        })
+        XCTAssertTrue(AppResources.looksLikeOurBundle(url) { path in
+            path.hasSuffix("/ru.lproj")
+        })
+    }
+
+    func test_рядомСПрограммойЧужойНаборНеПодменяетНаш() {
+        // У собранной программы папка «рядом с набором кода» — это папка, В КОТОРОЙ она
+        // лежит: Загрузки например. Случайный набор оттуда браться не должен.
+        let urls = AppResources.candidates(mainBundleURL: app, resourceURL: resources,
+                                           codeBundleURL: app)
+        let downloads = app.deletingLastPathComponent().appendingPathComponent(leaf)
+        XCTAssertFalse(urls.contains(downloads))
+    }
+
+    func test_вТестахНаборРядомСКодомВсёЖеИщется() {
+        // Здесь программа запущена не из .app — значит поиск рядом с кодом разрешён.
+        let bare = URL(fileURLWithPath: "/tmp/build/debug")
+        let code = URL(fileURLWithPath: "/tmp/build/debug/Tests.xctest")
+        let urls = AppResources.candidates(mainBundleURL: bare, resourceURL: nil,
+                                           codeBundleURL: code)
+        XCTAssertTrue(urls.contains(URL(fileURLWithPath: "/tmp/build/debug").appendingPathComponent(leaf)))
+    }
+
     func test_несуществующиеПутиДаютНичего() {
         let nothing = AppResources.firstBundle(among: [
             URL(fileURLWithPath: "/tmp/нет-такого-набора-1.bundle"),
