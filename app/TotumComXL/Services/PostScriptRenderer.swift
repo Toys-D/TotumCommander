@@ -49,6 +49,24 @@ enum PostScriptRenderer {
         return roots
     }
 
+    /// Цветовые профили рядом со встроенным Ghostscript, если они там есть.
+    ///
+    /// Замер на нашей отрисовке разницы не дал — CMYK выходит побайтово одинаково с ними и
+    /// без них, — но файл, который ССЫЛАЕТСЯ на профиль, без них рисовать нечем, и вместо
+    /// цвета получится подстановка наугад.
+    private static var iccProfilesDir: String? {
+        let bundled = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Library/Ghostscript/share/ghostscript/iccprofiles")
+        return FileManager.default.fileExists(atPath: bundled.path) ? bundled.path : nil
+    }
+
+    /// Доводы про цвет, которые получает Ghostscript. Отдельной функцией — чтобы проверялось
+    /// тестом: путь должен кончаться косой чертой, иначе Ghostscript его не примет.
+    nonisolated static func colourArguments(iccProfilesDir dir: String?) -> [String] {
+        guard let dir, !dir.isEmpty else { return [] }
+        return ["-sICCProfilesDir=" + (dir.hasSuffix("/") ? dir : dir + "/")]
+    }
+
     static var isAvailable: Bool { executableURL != nil }
 
     /// Longest edge we aim for, in pixels. Ghostscript hands back a bitmap, so this is what
@@ -109,6 +127,7 @@ enum PostScriptRenderer {
         var args = ["-dSAFER", "-dBATCH", "-dNOPAUSE", "-dFirstPage=1", "-dLastPage=1",
                     "-sDEVICE=bbox"]
         for root in resourceRoots { args.append("-I\(root)/Init"); args.append("-I\(root)") }
+        args.append(contentsOf: colourArguments(iccProfilesDir: iccProfilesDir))
         args.append(path)
 
         let task = Process()
@@ -193,6 +212,7 @@ enum PostScriptRenderer {
             args.append("-I\(root)/Init")
             args.append("-I\(root)")
         }
+        args.append(contentsOf: colourArguments(iccProfilesDir: iccProfilesDir))
         args.append(path)
 
         let task = Process()

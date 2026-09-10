@@ -40,14 +40,32 @@ for pair in ghostscript:LICENSE djvulibre:COPYING libarchive:COPYING libssh2:COP
             openssl@3:LICENSE.txt zstd:COPYING lz4:LICENSE xz:COPYING jpeg-turbo:LICENSE.md libb2:COPYING; do
     name="${pair%%:*}"; file="${pair##*:}"
     src="/opt/homebrew/opt/$name/$file"
-    if [ -f "$src" ]; then cp "$src" "$LIC/LICENSE-$name.txt"; else echo "    WARNING: no licence text for $name"; fi
+    if [ -f "$src" ]; then
+        cp "$src" "$LIC/LICENSE-$name.txt"
+    else
+        # Раньше здесь было предупреждение, и выпуск шёл дальше. Внутри лежат Ghostscript
+        # (AGPL v3), DjVuLibre и ntfs-3g (GPL v2+): отдать их без текста лицензии нельзя,
+        # а предупреждение в потоке сборки никто не читает.
+        echo "    NO LICENCE TEXT for $name ($src)"; MISSING_LIC=1
+    fi
 done
+[ "${MISSING_LIC:-0}" = 0 ] || { echo "Bundled GPL parts without their licence text — not shipping"; exit 1; }
 cat > "$LIC/NOTICE.txt" <<EOF
 Totum Commander $VERSION — GNU GPL v3 (LICENSE-Totum-Commander.txt).
 Bundled: rclone (MIT), Ghostscript (AGPL v3), DjVuLibre (GPL v2+), ntfs-3g (GPL v2+),
 libarchive (BSD), minizip-ng (zlib), libssh2 (BSD), OpenSSL (Apache 2.0), zstd, lz4, xz,
 libjpeg-turbo, libb2. Source of the program: https://github.com/Toys-D/TotumCommander
 EOF
+
+# Ghostscript встраивается только если он есть на машине сборки (launch.sh), а его нет —
+# значит у всех получателей мёртвый просмотр EPS и PostScript. Раньше об этом говорило
+# предупреждение посреди сборки, и выпуск шёл дальше.
+echo "=== Checking Ghostscript is embedded ==="
+if [ ! -x "$OUT/Contents/Library/Ghostscript/bin/gs" ]; then
+    echo "No Ghostscript inside the bundle — EPS and PostScript preview would be dead"
+    echo "Install it first: brew install ghostscript"
+    exit 1
+fi
 
 echo "=== Checking for paths that exist only on this Mac ==="
 BAD=0
