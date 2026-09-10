@@ -821,6 +821,7 @@
 "network.login.dropped" = "The server cut the connection right after the password. That is how a wrong password is answered — and also how a server that has temporarily blocked your address after several failed attempts behaves.";
 "network.login.retryTitle" = "Login failed";
 "network.browse.searching" = "Looking for computers…";
+"settings.keys.sound.relogin" = "The shortcut list is changed, but the system did not re-read it just now: the keys come free after you log out and back in.";
 "network.browse.nobody" = "No computers found";
 "network.browse.nobodyHint" = "Nobody on the network answered. Check that file sharing is on there — and that this app is allowed onto the local network.";
 "network.browse.openSettings" = "Local Network settings";

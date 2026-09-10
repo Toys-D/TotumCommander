@@ -14,6 +14,8 @@ struct SettingsKeysView: View {
     /// Клавиши звука, которые сейчас держит macOS. Считается при открытии раздела и после
     /// нажатия кнопки — список меняется редко, следить за ним постоянно незачем.
     @State private var heldByMacOS: [String] = SystemShortcuts.heldKeys()
+    /// Список поправлен, а система его не перечитала: скажем про перезаход.
+    @State private var needsRelogin = false
 
     var body: some View {
         Form {
@@ -65,9 +67,19 @@ struct SettingsKeysView: View {
                     .foregroundColor(.secondary)
                 if !heldByMacOS.isEmpty {
                     Button(L("settings.keys.sound.free")) {
-                        SystemShortcuts.freeVolumeKeys()
+                        // Список правится всегда, а перечитывает его система отдельной
+                        // командой по приватному пути. Не вышло — правка вступит в силу
+                        // после перезахода в учётную запись, и об этом надо сказать, а не
+                        // молча оставить человека с прежними клавишами.
+                        needsRelogin = !SystemShortcuts.freeVolumeKeys()
                         heldByMacOS = SystemShortcuts.heldKeys()
                     }
+                }
+                if needsRelogin {
+                    Text(L("settings.keys.sound.relogin"))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Section(L("settings.keys.cmdQ")) {

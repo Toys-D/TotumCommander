@@ -59,21 +59,36 @@ enum SystemShortcuts {
             list[hotkey.id] = disabledEntry(for: hotkey)
         }
         defaults.set(list, forKey: listKey)
-        applySettings()
-        return heldKeys().isEmpty
+        // Ответ складывается из двух половин: список правда изменился И система его правда
+        // перечитала. Раньше ответ читался только из списка — то есть из того, что мы сами
+        // секунду назад записали, — и выходило «клавиши освобождены» даже когда команда
+        // перечитать не выполнилась и ярлык оставался живым до перезахода в учётную запись.
+        let applied = applySettings()
+        return freed(applied: applied, stillHeld: heldKeys())
+    }
+
+    /// Освободились ли клавиши. Отдельно — чтобы правило проверялось тестом.
+    nonisolated static func freed(applied: Bool, stillHeld: [String]) -> Bool {
+        applied && stillHeld.isEmpty
     }
 
     /// Система перечитывает список ярлыков только по этой команде — без неё правка вступила
     /// бы в силу лишь после перезахода в учётную запись.
-    private static func applySettings() {
+    /// - Returns: перечитала ли система список ярлыков прямо сейчас. Путь к этой команде
+    ///   приватный — Apple может её перенести или убрать; тогда правка вступит в силу лишь
+    ///   после перезахода в учётную запись, и человеку надо сказать об этом, а не отвечать
+    ///   «готово».
+    @discardableResult
+    private static func applySettings() -> Bool {
         let tool = "/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings"
-        guard FileManager.default.isExecutableFile(atPath: tool) else { return }
+        guard FileManager.default.isExecutableFile(atPath: tool) else { return false }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: tool)
         process.arguments = ["-u"]
         process.standardOutput = Pipe()
         process.standardError = Pipe()
-        try? process.run()
+        do { try process.run() } catch { return false }
         process.waitUntilExit()
+        return process.terminationStatus == 0
     }
 }
