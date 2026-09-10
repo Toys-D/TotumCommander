@@ -45,7 +45,7 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
         webView.navigationDelegate = self
 
         // Load Monaco HTML with file:// access to local Monaco bundle
-        let bundle = Bundle.module
+        let bundle = AppResources.bundle
         if let htmlURL = bundle.url(forResource: "monaco-editor", withExtension: "html") {
             webView.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())
         } else if let htmlPath = Bundle.main.path(forResource: "monaco-editor", ofType: "html") {

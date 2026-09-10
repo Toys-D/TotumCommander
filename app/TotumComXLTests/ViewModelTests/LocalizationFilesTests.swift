@@ -35,7 +35,7 @@ final class LocalizationFilesTests: XCTestCase {
     /// Английский бандл из сборки отдаёт английское: именно этим путём идёт L() после
     /// выбора языка в настройках.
     func test_английскийБандлСборкиОтдаётАнглийское() throws {
-        let path = try XCTUnwrap(Bundle.module.path(forResource: "en", ofType: "lproj"),
+        let path = try XCTUnwrap(AppResources.bundle.path(forResource: "en", ofType: "lproj"),
                                  "en.lproj в бандле сборки")
         let bundle = try XCTUnwrap(Bundle(path: path))
         let missing = "\u{0}__missing__\u{0}"

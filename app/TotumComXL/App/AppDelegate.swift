@@ -17,6 +17,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Entry Point
 
     static func main() {
+        // Проверка для скрипта выкладки: видит ли собранная программа свои ресурсы внутри
+        // себя. Раньше это выяснялось только на чужом Mac — и выяснялось падением до первого
+        // окна. Ключ служебный, до создания окна, поэтому дешёвый и безопасный.
+        if CommandLine.arguments.contains("--fcxl-resource-check") {
+            exit(AppResources.selfCheck() ? 0 : 1)
+        }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate

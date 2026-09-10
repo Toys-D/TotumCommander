@@ -112,23 +112,23 @@ extension AppLanguage {
 /// rather than show a half-translated UI the Settings pane asks for a restart.
 private let localizationBundle: Bundle = {
     let code = AppLanguage.current.resolvedCode
-    if let path = Bundle.module.path(forResource: code, ofType: "lproj"),
+    if let path = AppResources.bundle.path(forResource: code, ofType: "lproj"),
        let bundle = Bundle(path: path) {
         return bundle
     }
-    if let path = Bundle.module.path(forResource: "ru", ofType: "lproj"),
+    if let path = AppResources.bundle.path(forResource: "ru", ofType: "lproj"),
        let bundle = Bundle(path: path) {
         return bundle
     }
-    return .module
+    return AppResources.bundle
 }()
 
 /// Russian is kept as a second source: while the English translation is still incomplete, a
 /// key that is missing from en.lproj shows in Russian instead of leaking a raw identifier
 /// like "context.copy" into the UI.
 private let fallbackBundle: Bundle = {
-    guard let path = Bundle.module.path(forResource: "ru", ofType: "lproj"),
-          let bundle = Bundle(path: path) else { return .module }
+    guard let path = AppResources.bundle.path(forResource: "ru", ofType: "lproj"),
+          let bundle = Bundle(path: path) else { return AppResources.bundle }
     return bundle
 }()
 

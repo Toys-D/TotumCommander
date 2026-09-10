@@ -23,8 +23,8 @@ enum HelpGuide {
         let name = "help.\(code)"
         // .process("Resources") может как сохранить папку Help, так и разложить файлы
         // по верху бандла — ищем и там, и там.
-        return Bundle.module.url(forResource: name, withExtension: "md", subdirectory: "Help")
-            ?? Bundle.module.url(forResource: name, withExtension: "md")
+        return AppResources.bundle.url(forResource: name, withExtension: "md", subdirectory: "Help")
+            ?? AppResources.bundle.url(forResource: name, withExtension: "md")
     }
 
     /// Разделы, где встречается запрос (заголовок или текст); пустой запрос — всё.

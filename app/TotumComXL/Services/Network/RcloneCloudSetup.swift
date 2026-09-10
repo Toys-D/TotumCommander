@@ -60,7 +60,7 @@ enum CloudLogos {
         lock.lock()
         defer { lock.unlock() }
         if let ready = loaded[name] { return ready }
-        guard let url = Bundle.module.url(forResource: name, withExtension: "png"),
+        guard let url = AppResources.bundle.url(forResource: name, withExtension: "png"),
               let image = NSImage(contentsOf: url) else { return nil }
         loaded[name] = image
         return image

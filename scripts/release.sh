@@ -60,6 +60,18 @@ while IFS= read -r -d '' bin; do
 done < <(find "$OUT" -type f \( -perm -u+x -o -name '*.dylib' \) -print0)
 [ "$BAD" = 0 ] || { echo "Homebrew paths inside the bundle — it would not run elsewhere"; exit 1; }
 
+# The crash that taught this: SwiftPM writes Bundle.module out of exactly two paths — the
+# bundle NEXT TO the .app and an ABSOLUTE path inside the build directory of the machine that
+# compiled it. Neither is where a macOS app keeps its resources, so on the author's Mac the
+# build directory quietly saved every launch, and on the first other Mac the app died in its
+# very first line — no window, just "quit unexpectedly". The app now looks in
+# Contents/Resources itself (see AppResources) and this asks it, before the DMG exists.
+echo "=== Checking the app finds its own resources ==="
+if ! "$OUT/Contents/MacOS/TotumComXL" --fcxl-resource-check; then
+    echo "The app cannot see its resources inside itself — it would not start on another Mac"
+    exit 1
+fi
+
 echo "=== Signing ad hoc ==="
 codesign --force --deep --sign - "$OUT"
 codesign --verify --deep --strict "$OUT"

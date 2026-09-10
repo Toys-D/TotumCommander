@@ -228,13 +228,13 @@ enum CursorMaskStore {
     /// yet: the toggle comes on by default (DefaultStyle), and a toggle with no mask behind it
     /// would show a bare cursor.
     static func shippedImage() -> NSImage? {
-        Bundle.module.url(forResource: "DefaultCursorMask", withExtension: "png")
+        AppResources.bundle.url(forResource: "DefaultCursorMask", withExtension: "png")
             .flatMap { NSImage(contentsOf: $0) }
     }
 
     /// The artwork behind the shipped mask, so the editor opens on it rather than on nothing.
     static func shippedArtworkImage() -> NSImage? {
-        Bundle.module.url(forResource: "DefaultCursorMaskArtwork", withExtension: "png")
+        AppResources.bundle.url(forResource: "DefaultCursorMaskArtwork", withExtension: "png")
             .flatMap { NSImage(contentsOf: $0) }
     }
 }

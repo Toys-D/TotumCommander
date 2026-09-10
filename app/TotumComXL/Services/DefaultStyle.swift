@@ -37,7 +37,7 @@ enum DefaultStyle {
         key.hasSuffix("Migrated") || personalPrefixes.contains { key.hasPrefix($0) }
     }
 
-    static func load(from bundle: Bundle = .module) -> [String: Any]? {
+    static func load(from bundle: Bundle = AppResources.bundle) -> [String: Any]? {
         guard let url = bundle.url(forResource: resourceName, withExtension: "plist"),
               let data = try? Data(contentsOf: url),
               let plist = try? PropertyListSerialization.propertyList(from: data, format: nil),
@@ -48,7 +48,7 @@ enum DefaultStyle {
     /// Register the shipped look with `defaults`. Answers how many keys were registered —
     /// zero when the file is missing, which is a build problem, not a reason to crash.
     @discardableResult
-    static func register(into defaults: UserDefaults = .standard, from bundle: Bundle = .module) -> Int {
+    static func register(into defaults: UserDefaults = .standard, from bundle: Bundle = AppResources.bundle) -> Int {
         guard let style = load(from: bundle) else { return 0 }
         let shipped = style.filter { !isPersonal($0.key) }
         defaults.register(defaults: shipped)
