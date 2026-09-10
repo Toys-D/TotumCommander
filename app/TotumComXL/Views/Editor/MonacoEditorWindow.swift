@@ -361,6 +361,12 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
         let h: CGFloat = 30
         let panel = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: h))
         panel.wantsLayer = true
+        // Полоса собрана точными кадрами: тридцать точек высоты и штатные контролы по
+        // двадцать два. В macOS 26 системные контролы стали выше и шире прежних, и такая
+        // раскладка на них расползается — контролы наезжают друг на друга. Этот ключ Apple
+        // и дала для плотных полос: он просит у контролов прежние, тесные размеры, и
+        // раскладка остаётся той же, что здесь посчитана.
+        if #available(macOS 26.0, *) { panel.prefersCompactControlSizeMetrics = true }
         let isDark = (window?.effectiveAppearance ?? NSApp.effectiveAppearance)
             .bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         panel.layer?.backgroundColor = (isDark ? NSColor(white: 0.2, alpha: 1) : NSColor(white: 0.92, alpha: 1)).cgColor
