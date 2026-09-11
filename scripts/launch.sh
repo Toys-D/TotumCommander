@@ -120,6 +120,41 @@ mkdir -p "$APP/Contents/Resources/en.lproj" "$APP/Contents/Resources/ru.lproj"
 /usr/libexec/PlistBuddy -c "Delete :FCXLGitBranch" "$PLIST" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Delete :NSLocalNetworkUsageDescription" "$PLIST" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string 'Totum Commander ищет компьютеры в локальной сети для подключения к общим папкам.'" "$PLIST"
+# Объяснения для окон «доступ к папке». macOS спрашивает про Рабочий стол, Документы,
+# Загрузки, съёмные и сетевые тома при ПЕРВОМ обращении — это одинаково для всех файловых
+# менеджеров, кроме Finder, и обойти это нельзя. Но можно не оставлять человека в
+# неведении: если этих ключей нет, в окне стоит пустое казённое предложение, а с ними —
+# наши слова о том, зачем программе папка. Языковые варианты лежат в InfoPlist.strings.
+for pair in \
+    "NSDesktopFolderUsageDescription:Totum Commander показывает файлы Рабочего стола в панели и работает с ними по вашей команде." \
+    "NSDocumentsFolderUsageDescription:Totum Commander показывает файлы папки «Документы» в панели и работает с ними по вашей команде." \
+    "NSDownloadsFolderUsageDescription:Totum Commander показывает файлы папки «Загрузки» в панели и работает с ними по вашей команде." \
+    "NSRemovableVolumesUsageDescription:Totum Commander показывает содержимое подключённых дисков и карт памяти." \
+    "NSNetworkVolumesUsageDescription:Totum Commander показывает содержимое сетевых папок, к которым вы подключились."
+do
+    key="${pair%%:*}"; text="${pair#*:}"
+    /usr/libexec/PlistBuddy -c "Delete :$key" "$PLIST" 2>/dev/null || true
+    /usr/libexec/PlistBuddy -c "Add :$key string '$text'" "$PLIST"
+done
+
+cat > "$APP/Contents/Resources/ru.lproj/InfoPlist.strings" <<'STRINGS'
+"NSDesktopFolderUsageDescription" = "Totum Commander показывает файлы Рабочего стола в панели и работает с ними по вашей команде.";
+"NSDocumentsFolderUsageDescription" = "Totum Commander показывает файлы папки «Документы» в панели и работает с ними по вашей команде.";
+"NSDownloadsFolderUsageDescription" = "Totum Commander показывает файлы папки «Загрузки» в панели и работает с ними по вашей команде.";
+"NSRemovableVolumesUsageDescription" = "Totum Commander показывает содержимое подключённых дисков и карт памяти.";
+"NSNetworkVolumesUsageDescription" = "Totum Commander показывает содержимое сетевых папок, к которым вы подключились.";
+"NSLocalNetworkUsageDescription" = "Totum Commander ищет компьютеры в локальной сети для подключения к общим папкам.";
+STRINGS
+
+cat > "$APP/Contents/Resources/en.lproj/InfoPlist.strings" <<'STRINGS'
+"NSDesktopFolderUsageDescription" = "Totum Commander shows the files on your Desktop in its panel and works with them when you ask it to.";
+"NSDocumentsFolderUsageDescription" = "Totum Commander shows the files in your Documents folder in its panel and works with them when you ask it to.";
+"NSDownloadsFolderUsageDescription" = "Totum Commander shows the files in your Downloads folder in its panel and works with them when you ask it to.";
+"NSRemovableVolumesUsageDescription" = "Totum Commander shows what is on the disks and cards you plug in.";
+"NSNetworkVolumesUsageDescription" = "Totum Commander shows what is in the network folders you connect to.";
+"NSLocalNetworkUsageDescription" = "Totum Commander looks for computers on your local network so you can open their shared folders.";
+STRINGS
+
 /usr/libexec/PlistBuddy -c "Delete :NSBonjourServices" "$PLIST" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :NSBonjourServices array" "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :NSBonjourServices:0 string _smb._tcp" "$PLIST"

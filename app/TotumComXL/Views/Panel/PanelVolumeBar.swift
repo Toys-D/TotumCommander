@@ -39,6 +39,10 @@ struct PanelVolumeBar: View {
     @State private var showNetworkMenu = false
     @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
     @AppStorage(PanelAppearanceSettings.beautyModeEnabledKey) private var beautyModeEnabled: Bool = false
+    /// Есть ли iCloud Drive. Сначала дешёвая примета (папка на месте), а настоящий ответ
+    /// — один раз после появления полосы: он поднимает CloudDocs, и та обходит Рабочий стол
+    /// и Документы. Из отрисовки такое спрашивать нельзя.
+    @State private var icloudAvailable = CloudStatusService.isAvailableFast
     @AppStorage(PanelAppearanceSettings.cursorUsesCustomColorKey) private var cursorUsesCustomColor: Bool = false
     @AppStorage(PanelAppearanceSettings.cursorBackgroundColorHexKey) private var cursorBackgroundColorHex: String = ""
     @Environment(\.colorScheme) private var colorScheme
@@ -141,6 +145,18 @@ struct PanelVolumeBar: View {
         }
     }
 
+    /// Спросить систему по-настоящему и поправить чип, если дешёвая примета обманула.
+    @MainActor
+    private func refineCloudAvailability() async {
+        let real = await Task.detached(priority: .utility) {
+            CloudStatusService.refreshAvailability()
+        }.value
+        if real != icloudAvailable {
+            icloudAvailable = real
+            mountedVolumesRevision &+= 1
+        }
+    }
+
     var body: some View {
         HStack(spacing: 4) {
             ForEach(volumeButtons, id: \.label) { vol in
@@ -214,8 +230,16 @@ struct PanelVolumeBar: View {
         // (or stay missing) until the program was restarted.
         .onReceive(NotificationCenter.default.publisher(
             for: .NSUbiquityIdentityDidChange)) { _ in
+            CloudStatusService.forgetAvailability()
+            icloudAvailable = CloudStatusService.isAvailableFast
             mountedVolumesRevision &+= 1
+            Task { await refineCloudAvailability() }
         }
+        // Настоящий ответ про iCloud — здесь, после появления полосы, и не на главном
+        // потоке: он поднимает службу CloudDocs, а та в ответ обходит Рабочий стол и
+        // Документы. Раньше этот вопрос задавался прямо из отрисовки и потому случался
+        // ДО первого окна программы.
+        .task { await refineCloudAvailability() }
         // The same question is worth re-asking whenever the window comes back to the front:
         // that is when the person returns from System Settings having changed it.
         .onReceive(NotificationCenter.default.publisher(
@@ -463,7 +487,7 @@ struct PanelVolumeBar: View {
         // iCloud Drive right after the two built-ins: it is a place files live, and reaching
         // it meant typing a path through a hidden Library folder. Shown only while iCloud
         // Drive is actually switched on — an entry that opens nothing is worse than none.
-        if CloudStatusService.isAvailable {
+        if icloudAvailable {
             buttons.append(VolumeButtonModel(
                 label: L("volume.icloud"), path: CloudStatusService.cloudDriveRoot,
                 icon: "icloud", isEjectable: false

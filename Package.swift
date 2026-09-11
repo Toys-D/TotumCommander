@@ -563,6 +563,8 @@ let package = Package(
                 "ViewModelTests/PostScriptColourArgsTests.swift",
                 "ViewModelTests/WebViewBackgroundTests.swift",
                 "ViewModelTests/SystemShortcutsHonestyTests.swift",
+                "ViewModelTests/LocalNetworkVerdictTests.swift",
+                "ViewModelTests/ProtectedFolderStartupTests.swift",
                 "ViewModelTests/RemoteSessionTests.swift",
                 "ViewModelTests/BranchViewTests.swift",
                 "ViewModelTests/ColumnOrderTests.swift",

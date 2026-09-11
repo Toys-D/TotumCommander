@@ -733,10 +733,14 @@ final class PanelViewModel: ObservableObject {
     /// local network without asking when its prompt never came, and nothing else on screen
     /// would ever say so. Said at most once per visit.
     private func warnIfLocalNetworkBlocked(afterScan: Bool, listIsEmpty: Bool) async {
-        guard let gateway = LANScanner.localAddresses().first else { return }
-        // The gateway of our own subnet: something is always there to knock on.
-        let prefix = gateway.split(separator: ".").prefix(3).joined(separator: ".")
-        let state = await LocalNetworkPermission.check(host: "\(prefix).1")
+        // Шлюз спрашиваем у системы, а не назначаем «первым адресом подсети»: он там не
+        // всегда, а проверка разрешения должна стучаться в живое.
+        let gateway = await Task.detached(priority: .utility) {
+            LANDiscovery.defaultGateway()
+        }.value
+        let state = await Task.detached(priority: .utility) {
+            LocalNetworkPermission.state(gateway: gateway)
+        }.value
         guard let advice = LocalNetworkPermission.adviceAfterEmptyScan(state),
               LocalNetworkPermission.shouldWarn(advice, afterScan: afterScan,
                                                 listIsEmpty: listIsEmpty),
@@ -1381,7 +1385,34 @@ final class PanelViewModel: ObservableObject {
             .store(in: &cancellables)
 
         canPersistState = true
-        loadFileSystemDirectory(at: resolvedInitialPath, resetCursor: true)
+        // Первое чтение папки. Если запомненная папка лежит в охраняемой системой — Рабочий
+        // стол, Документы, Загрузки, iCloud, съёмный или сетевой том, — macOS спросит
+        // разрешение. А из инициализации панели этот вопрос выходил ДО первого окна: человек
+        // видел системное окно про папки раньше, чем саму программу, и не понимал, чьё оно.
+        // Такие пути читаются на такт позже, когда окно уже на экране; все остальные —
+        // сразу, как раньше.
+        if Self.needsVisibleWindowBeforeReading(resolvedInitialPath) {
+            DispatchQueue.main.async { [weak self] in
+                self?.loadFileSystemDirectory(at: resolvedInitialPath, resetCursor: true)
+            }
+        } else {
+            loadFileSystemDirectory(at: resolvedInitialPath, resetCursor: true)
+        }
+    }
+
+    /// Охраняет ли macOS доступ к этому пути — то есть может ли первое обращение к нему
+    /// поднять системный вопрос «разрешить доступ?».
+    ///
+    /// Список закрытых мест у macOS свой и известный: Рабочий стол, Документы, Загрузки,
+    /// хранилище iCloud, съёмные и сетевые тома. Обойти сам вопрос нельзя — его задаёт
+    /// система любому файловому менеджеру, кроме Finder; можно только не задавать его раньше,
+    /// чем человек увидел программу.
+    nonisolated static func needsVisibleWindowBeforeReading(
+        _ path: String, home: String = NSHomeDirectory()) -> Bool {
+        if path.hasPrefix("/Volumes/") { return true }
+        let guarded = ["Desktop", "Documents", "Downloads", "Library/Mobile Documents"]
+            .map { home + "/" + $0 }
+        return guarded.contains { path == $0 || path.hasPrefix($0 + "/") }
     }
 
     // MARK: - Status numbers (cached)

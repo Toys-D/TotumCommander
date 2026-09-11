@@ -57,6 +57,38 @@ enum LocalNetworkPermission {
         }
     }
 
+    /// Пускают ли нас — по шлюзу и таблице ARP.
+    ///
+    /// Прежняя проверка стучалась шлюзу в порт 445 — порт общих папок Windows. У домашнего
+    /// роутера его нет и быть не должно: замер на живой сети — 445 молчит, 80 отвечает
+    /// мгновенно. То есть на любой обычной сети проверка получала молчание и не могла
+    /// отличить «нас не пускают» от «сети нет» — а значит не срабатывала ровно там, ради
+    /// чего писалась.
+    ///
+    /// Теперь по-другому. Шлюз есть в таблице ARP — он жив: таблицу наполняет вся система, и
+    /// нашего разрешения на это не нужно. Если он жив, а нам не ответил ни один его порт —
+    /// нас не пускают. Ответил — пускают. Нет его и в таблице — сети нет, и говорить не о чем.
+    ///
+    /// Стук сырыми сокетами, а не через Network.framework: тот же путь, что у обзора сети,
+    /// и он же закрывается запретом. Замер: Network.framework до соседа по сети — 1850 мс,
+    /// сырой сокет — единицы миллисекунд.
+    static func state(gateway: String?, ports: [UInt16] = [80, 443, 53],
+                      timeout: TimeInterval = 0.8) -> State {
+        guard let gateway, !gateway.isEmpty else { return .unknown }
+        let answered = !LANDiscovery.openPorts(ports.map { (ip: gateway, port: $0) },
+                                               timeout: timeout).open.isEmpty
+        let prefix = gateway.split(separator: ".").prefix(3).joined(separator: ".")
+        let alive = LANDiscovery.addresses(inArpOutput: LANDiscovery.arpTable(),
+                                           prefixes: [prefix], selfIPs: []).contains(gateway)
+        return verdict(anyPortAnswered: answered, gatewayAlive: alive)
+    }
+
+    /// Само правило — отдельно, чтобы проверялось тестом без сети.
+    nonisolated static func verdict(anyPortAnswered: Bool, gatewayAlive: Bool) -> State {
+        if anyPortAnswered { return .granted }
+        return gatewayAlive ? .denied : .unknown
+    }
+
     /// A refusal is a refusal only when the system names it. "Host is down" is not.
     /// "Connection refused" is the opposite of a refusal: the packet reached the router and
     /// came back — the filter is not standing in the way. Silence alone stays unknown.

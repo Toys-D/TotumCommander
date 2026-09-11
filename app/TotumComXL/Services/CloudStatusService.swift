@@ -64,6 +64,32 @@ enum CloudStatusService {
         return values.isUbiquitousItem == true
     }
 
+    /// Ответ, посчитанный один раз. Нужен, чтобы `isAvailable` не звался из отрисовки.
+    private static var cachedAvailability: Bool?
+
+    /// Дешёвое первое мнение — для рисования полосы дисков.
+    ///
+    /// `isAvailable` спрашивает у системы опознавательный знак учётной записи iCloud, а тот
+    /// поднимает службу CloudDocs, и она в ответ обходит Рабочий стол и Документы, проверяя,
+    /// не корни ли они синхронизации. Измерено на этой машине (перехватом вызовов): это
+    /// случалось через 0,2 с после старта, ДО первого окна, потому что вопрос задавался прямо
+    /// из отрисовки полосы дисков. Полосе для чипа достаточно знать, что папка есть.
+    static var isAvailableFast: Bool {
+        if let cachedAvailability { return cachedAvailability }
+        return FileManager.default.fileExists(atPath: cloudDriveRoot)
+    }
+
+    /// Спросить по-настоящему и запомнить. Звать вне отрисовки: поднимает CloudDocs.
+    @discardableResult
+    static func refreshAvailability() -> Bool {
+        let value = isAvailable
+        cachedAvailability = value
+        return value
+    }
+
+    /// Забыть ответ — когда в iCloud вошли или вышли.
+    static func forgetAvailability() { cachedAvailability = nil }
+
     static func state(of path: String) -> CloudState {
         // A placeholder IS the "only in the cloud" case: the real file has no bytes here.
         if (path as NSString).lastPathComponent.hasSuffix(placeholderSuffix),
