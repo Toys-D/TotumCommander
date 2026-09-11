@@ -45,6 +45,28 @@ final class AppResourcesTests: XCTestCase {
         XCTAssertEqual(Set(urls.map(\.path)).count, urls.count, "один и тот же путь не проверяется дважды")
     }
 
+    func test_корнемПрограммыСчитаетсяСамAppАНеПапкаВнутри() {
+        let roots = AppResources.liveRoots(
+            executablePath: "/Программы/Totum Commander.app/Contents/MacOS/TotumComXL")
+        XCTAssertEqual(roots.app?.path, "/Программы/Totum Commander.app")
+        XCTAssertEqual(roots.directory.path, "/Программы/Totum Commander.app/Contents/MacOS")
+    }
+
+    func test_безAppОстаётсяПапкаИсполняемогоФайла() {
+        // Отладочный запуск: корня .app нет вовсе.
+        let roots = AppResources.liveRoots(executablePath: "/сборка/debug/TotumComXLApp")
+        XCTAssertNil(roots.app)
+        XCTAssertEqual(roots.directory.path, "/сборка/debug")
+    }
+
+    func test_ядроЗнаетГдеМыСейчас() {
+        // После переноса работающей программы Bundle.main отдаёт прежний путь, а это —
+        // настоящий. Здесь он должен хотя бы существовать.
+        let live = AppResources.liveExecutablePath()
+        XCTAssertNotNil(live)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: live ?? ""), live ?? "—")
+    }
+
     func test_пустаяПапкаСПодходящимИменемНеСчитаетсяНабором() {
         // `Bundle(url:)` соглашается на любую существующую папку, а поиск на ней
         // останавливался — программа осталась бы с ключами вместо слов и молча.

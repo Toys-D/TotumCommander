@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Ресурсы программы: строки перевода, руководство, оформление по умолчанию, картинки.
@@ -73,18 +74,76 @@ enum AppResources {
     }
 
     /// Набор ресурсов. Никогда не роняет программу: если набора нет, это сам `.app`.
-    static let bundle: Bundle = {
+    /// Найденный набор. Держится между обращениями, но перед выдачей проверяется: на месте
+    /// ли он ещё.
+    ///
+    /// Зачем проверка. Программу можно сдвинуть, пока она работает, — перетащить из Загрузок
+    /// в Программы или переименовать папку, в которой она лежит; файловым менеджером это
+    /// делается на раз, им можно переместить и его самого. Запомненный путь после этого
+    /// указывает в пустоту, и всё, что читается с диска потом — справка, части редактора,
+    /// маски курсора, значки облаков, — не находится до перезапуска. Проверка «папка ещё
+    /// там?» стоит микросекунды, а обращения к своим файлам редки: открыли справку, открыли
+    /// редактор. Пропала — ищем себя заново, уже по новому месту.
+    private static var resolved: Bundle?
+    private static let lock = NSLock()
+
+    static var bundle: Bundle {
+        lock.lock()
+        defer { lock.unlock() }
+        if let resolved, looksLikeOurBundle(resolved.bundleURL) { return resolved }
+        let found = locate()
+        resolved = found
+        return found
+    }
+
+    /// Где программа лежит ПРЯМО СЕЙЧАС — по слову ядра, а не по памяти.
+    ///
+    /// Измерено: после переноса работающей программы `Bundle.main.bundleURL` продолжает
+    /// отдавать прежний путь (он взят при запуске и больше не меняется), а ядро отдаёт
+    /// новый. Поэтому «найти себя заново» без этого вопроса не работает.
+    nonisolated static func liveExecutablePath() -> String? {
+        var buffer = [CChar](repeating: 0, count: 4096)
+        let length = proc_pidpath(getpid(), &buffer, UInt32(buffer.count))
+        guard length > 0 else { return nil }
+        return String(cString: buffer)
+    }
+
+    /// Что из пути исполняемого файла считать корнем программы и что — её папкой.
+    ///
+    /// У собранной программы это `…/Totum Commander.app/Contents/MacOS/исполняемый`, и корень
+    /// — три уровня вверх. У отладочного запуска корня `.app` нет вовсе, и остаётся папка,
+    /// в которой лежит исполняемый файл.
+    nonisolated static func liveRoots(executablePath: String) -> (app: URL?, directory: URL) {
+        let executable = URL(fileURLWithPath: executablePath)
+        let directory = executable.deletingLastPathComponent()
+        let candidate = directory.deletingLastPathComponent().deletingLastPathComponent()
+        return (candidate.pathExtension == "app" ? candidate : nil, directory)
+    }
+
+    /// Поиск набора с нуля.
+    private static func locate() -> Bundle {
         let main = Bundle.main
         let code = Bundle(for: BundleAnchor.self)
-        let urls = candidates(mainBundleURL: main.bundleURL, resourceURL: main.resourceURL,
-                              codeBundleURL: code.bundleURL)
+        var urls: [URL] = []
+        // Сначала то, где программа лежит сейчас: после переноса только этот путь и верен.
+        if let live = liveExecutablePath() {
+            let roots = liveRoots(executablePath: live)
+            let leaf = bundleName + ".bundle"
+            if let app = roots.app {
+                urls.append(app.appendingPathComponent("Contents/Resources/" + leaf))
+                urls.append(app.appendingPathComponent(leaf))
+            }
+            urls.append(roots.directory.appendingPathComponent(leaf))
+        }
+        urls += candidates(mainBundleURL: main.bundleURL, resourceURL: main.resourceURL,
+                           codeBundleURL: code.bundleURL)
         if let found = firstBundle(among: urls) { return found }
         // Молчать здесь нельзя: человек увидит ключи вместо слов и пустую справку, а причина
         // не будет написана нигде. В журнале она будет.
         NSLog("FCXL: набор ресурсов не найден — искали в: %@",
               urls.map(\.path).joined(separator: ", "))
         return main
-    }()
+    }
 
     /// Нашёлся ли настоящий набор ресурсов, а не запасной `.app`.
     static var found: Bool { bundle.bundleURL.lastPathComponent == bundleName + ".bundle" }
