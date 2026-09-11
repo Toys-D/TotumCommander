@@ -355,7 +355,7 @@ struct CenterDividerView: View {
             Rectangle().fill(Color.clear).frame(maxHeight: .infinity).contentShape(Rectangle())
 
             if dividerOffsetY < 0 {
-                Spacer().frame(maxHeight: CGFloat(-dividerOffsetY))
+                Spacer().frame(maxHeight: max(-stackOffset, 0))
             }
 
             if dividerShowQuickLinks {
@@ -431,7 +431,7 @@ struct CenterDividerView: View {
             }
 
             if dividerOffsetY > 0 {
-                Spacer().frame(maxHeight: CGFloat(dividerOffsetY))
+                Spacer().frame(maxHeight: max(stackOffset, 0))
             }
 
             Rectangle().fill(Color.clear).frame(maxHeight: .infinity).contentShape(Rectangle())
@@ -444,22 +444,41 @@ struct CenterDividerView: View {
     static let topBlockID = "tunnel.top"
     static let midBlockID = "tunnel.mid"
 
-    /// Сколько кнопок показать. Считается из высоты контейнера и измеренных рамок: шапки,
-    /// разделителя и одной кнопки — ни одна из них от самого расчёта не зависит, поэтому
-    /// перерасчёт не зацикливается.
-    private var plan: TunnelOverflow.Plan {
+    /// Сколько кнопок показать и на сколько сдвинуть стопку. И то и другое — из одной и
+    /// той же измеренной высоты, поэтому между собой они не спорят: сначала место кнопкам,
+    /// остаток — сдвигу.
+    ///
+    /// Считается из высоты контейнера и измеренных рамок: шапки, разделителя и одной
+    /// кнопки — ни одна из них от самого расчёта не зависит, поэтому перерасчёт не
+    /// зацикливается.
+    private var measured: (plan: TunnelOverflow.Plan, offsetY: CGFloat) {
         let foldersNeed = dividerShowQuickLinks ? tunnel.folders.count + 1 : 0   // + «Сеть»
         let actionsNeed = tunnel.actions.count
-        guard tunnelHeight > 0 else { return .all(folders: foldersNeed, actions: actionsNeed) }
+        let wanted = CGFloat(dividerOffsetY)
+        guard tunnelHeight > 0 else {
+            return (.all(folders: foldersNeed, actions: actionsNeed), wanted)
+        }
         let spacing = CGFloat(dividerIconSpacing)
         let top = frames[Self.topBlockID]?.height ?? 80
         let mid = dividerShowQuickLinks ? (frames[Self.midBlockID]?.height ?? 20) : 4
         let buttons = frames.filter { $0.key != Self.topBlockID && $0.key != Self.midBlockID }
-        let item = max(buttons.values.map(\.height).max() ?? 0, dividerShowLabels ? 34 : 22)
-        let available = tunnelHeight - top - mid - abs(CGFloat(dividerOffsetY)) - spacing * 3 - 4
-        return TunnelOverflow.plan(available: available, itemHeight: item, spacing: spacing,
-                                   folders: foldersNeed, actions: actionsNeed)
+        let item = TunnelOverflow.itemHeight(measured: buttons.values.map(\.height),
+                                             showsLabels: dividerShowLabels)
+        let available = TunnelOverflow.available(tunnelHeight: tunnelHeight, topBlock: top,
+                                                 midBlock: mid, hasOffset: wanted != 0,
+                                                 spacing: spacing)
+        let plan = TunnelOverflow.plan(available: available, itemHeight: item, spacing: spacing,
+                                       folders: foldersNeed, actions: actionsNeed)
+        let left = TunnelOverflow.leftover(available: available,
+                                           shown: plan.folders + plan.actions,
+                                           itemHeight: item, spacing: spacing)
+        return (plan, TunnelOverflow.usableOffset(wanted, leftover: left))
     }
+
+    private var plan: TunnelOverflow.Plan { measured.plan }
+
+    /// Сдвиг стопки после проверки на место.
+    private var stackOffset: CGFloat { measured.offsetY }
 
     private var visibleFolders: [TunnelStore.Folder] {
         guard plan.foldersHidden else { return tunnel.folders }

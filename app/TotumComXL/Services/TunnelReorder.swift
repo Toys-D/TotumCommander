@@ -110,6 +110,54 @@ enum TunnelOverflow {
         }
     }
 
+    /// Пустая часть туннеля — высота под обе секции кнопок: вся высота туннеля минус то,
+    /// что занято всегда, — шапка, разделитель между папками и операциями и зазоры между
+    /// блоками. Остаток годен под N кнопок и N−1 зазор между ними, как того и ждёт
+    /// plan(available:…).
+    ///
+    /// Зазоров между блоками ровно четыре: шапка — пустое место — папки — разделитель —
+    /// операции; при сдвинутой стопке добавляется пятый, у распорки сдвига.
+    ///
+    /// Сам сдвиг стопки здесь НЕ вычитается: он занимает только то, что осталось после
+    /// кнопок (см. usableOffset). Иначе сдвиг на сто точек прятал в «Ещё» три кнопки, а
+    /// под ними оставалось пустое место — ровно то, что было видно на экране.
+    static func available(tunnelHeight: CGFloat, topBlock: CGFloat, midBlock: CGFloat,
+                          hasOffset: Bool, spacing: CGFloat) -> CGFloat {
+        let gap = max(spacing, 0)
+        let blockGaps = gap * (hasOffset ? 5 : 4)
+        return max(0, tunnelHeight - topBlock - midBlock - blockGaps - edgeMargin)
+    }
+
+    /// Что осталось от пустой части после показанных кнопок.
+    static func leftover(available: CGFloat, shown: Int, itemHeight: CGFloat,
+                         spacing: CGFloat) -> CGFloat {
+        guard shown > 0 else { return max(available, 0) }
+        let used = CGFloat(shown) * max(itemHeight, 0)
+            + CGFloat(shown - 1) * max(spacing, 0)
+        return max(0, available - used)
+    }
+
+    /// Сдвиг стопки, который туннель может себе позволить: не больше остатка. Когда места
+    /// вдоволь — сдвиг тот, что задал человек; когда его нет — стопка уступает место
+    /// кнопкам, а не наоборот.
+    static func usableOffset(_ offsetY: CGFloat, leftover: CGFloat) -> CGFloat {
+        let room = max(leftover, 0)
+        return offsetY < 0 ? -min(-offsetY, room) : min(offsetY, room)
+    }
+
+    /// Запас у нижнего края: последняя кнопка не должна упираться в рамку туннеля, и
+    /// округления не должны её срезать — туннель обрезает всё, что вышло за края.
+    static let edgeMargin: CGFloat = 4
+
+    /// Высота одной кнопки. Берётся ИЗМЕРЕННАЯ у самих кнопок: прежняя оценка «34 точки с
+    /// подписью» была на треть больше настоящих двадцати пяти, и туннель убирал в «Ещё»
+    /// три-четыре кнопки, которым места хватало. Оценка нужна только на первом проходе,
+    /// пока ни одна кнопка о себе ещё не отчиталась.
+    static func itemHeight(measured: [CGFloat], showsLabels: Bool) -> CGFloat {
+        let real = measured.filter { $0 > 1 }.max()
+        return max(real ?? (showsLabels ? 25 : 22), 1)
+    }
+
     /// - available: высота под обе секции вместе, уже без шапки, разделителя и отступов.
     /// - itemHeight, spacing: высота кнопки и зазор между кнопками.
     /// - folders, actions: сколько кнопок нужно каждой секции.
