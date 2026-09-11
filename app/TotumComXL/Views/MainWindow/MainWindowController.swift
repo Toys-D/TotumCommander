@@ -367,7 +367,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
             item.target = NSApp.delegate
             item.action = #selector(AppDelegate.showSettingsWindow(_:))
             item.image = Self.settingsSymbol(updateAvailable: UpdateChecker.shared.available != nil,
-                                             appearance: window?.effectiveAppearance)
+                                             appearance: PanelAppearanceSettings.chromeAppearance(for: window))
             if let release = UpdateChecker.shared.available {
                 item.toolTip = String(format: L("settings.updates.badgeTip"), release.version)
             }
@@ -404,7 +404,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
             item.target = self
             item.action = #selector(openDropStack(_:))
             item.image = Self.dropStackSymbol(count: DropStackStore.count,
-                                              appearance: window?.effectiveAppearance)
+                                              appearance: PanelAppearanceSettings.chromeAppearance(for: window))
             return item
 
         case Self.monitorItemID:
@@ -592,7 +592,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
     /// Tints the window (titlebar gaps + background) with the per-theme interface colour.
     private func applyInterfaceBackground() {
         guard let window else { return }
-        let dark = window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        // Тему спрашиваем у настройки и приложения, а НЕ у окна: внутри KVO на
+        // NSApp.effectiveAppearance окно ещё отдаёт прежнюю — см. chromeThemeIsDark.
+        let dark = PanelAppearanceSettings.chromeThemeIsDark(for: window)
         let key = PanelAppearanceSettings.interfaceColorKey(dark: dark)
         let hasCustom = !(UserDefaults.standard.string(forKey: key) ?? "").isEmpty
         // The window background is visible only in the (transparent) titlebar strip —
@@ -619,6 +621,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         // The window's NAME too: the titlebar draws it, so the titlebar takes the same
         // appearance — the whole strip reads on its colour, name and buttons alike.
         Self.titlebarView(of: window)?.appearance = toolbarAppearance
+        // Значки, которые мы печём сами, держат в себе цвет той темы, в которой испечены:
+        // поднос полки и шестерёнка с плашкой — не шаблонные картинки. Солнце/луна тоже
+        // обновлялись только по нажатию кнопки, и после переключения СИСТЕМЫ кнопка
+        // показывала прежнее. Всё это живёт в заголовке — значит обновляется здесь.
+        setThemeIcon(dark: dark)
+        refreshDropStackButton()
+        refreshSettingsButton()
     }
 
     /// The strip that draws the window's name and holds the toolbar — reached through the
@@ -727,7 +736,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         guard let item = window?.toolbar?.items.first(where: { $0.itemIdentifier == Self.stackItemID })
         else { return }
         let count = DropStackStore.count
-        Self.setImage(Self.dropStackSymbol(count: count, appearance: window?.effectiveAppearance), on: item)
+        Self.setImage(Self.dropStackSymbol(count: count,
+                                           appearance: PanelAppearanceSettings.chromeAppearance(for: window)),
+                      on: item)
         item.toolTip = count > 0 ? "\(L("stack.title")) (\(count))" : L("stack.tooltip")
         item.view?.toolTip = item.toolTip
     }
@@ -828,7 +839,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         else { return }
         let release = UpdateChecker.shared.available
         Self.setImage(Self.settingsSymbol(updateAvailable: release != nil,
-                                          appearance: window?.effectiveAppearance), on: item)
+                                          appearance: PanelAppearanceSettings.chromeAppearance(for: window)),
+                      on: item)
         item.toolTip = release.map { String(format: L("settings.updates.badgeTip"), $0.version) }
             ?? L("settings.title")
         item.view?.toolTip = item.toolTip

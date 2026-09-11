@@ -474,6 +474,39 @@ enum PanelAppearanceSettings {
                           systemIsDark: isDarkAppearance)
     }
 
+    /// Тема для оконного обрамления — заголовка и панели инструментов.
+    ///
+    /// Спрашивать об этом САМО ОКНО нельзя. Внутри KVO на `NSApp.effectiveAppearance` —
+    /// а именно оттуда программа узнаёт о переключении системы — окно ещё отдаёт ПРЕЖНЮЮ
+    /// тему. Замерено пробой: в обработчике `NSApp` уже `darkAqua`, а окно всё ещё `aqua`,
+    /// и догоняет только на следующем такте. Заголовок из-за этого красился цветом ушедшей
+    /// темы и таким оставался: панели тёмные, а заголовок светлый. Спрашиваем настройку и
+    /// само приложение — как это делает зеркало «по темам».
+    ///
+    /// Если у окна тема задана явно (`window.appearance`), она и главнее: такое окно
+    /// нарисовано именно в ней.
+    static func chromeThemeIsDark(windowAppearance: NSAppearance?, appearanceMode: Int,
+                                  systemIsDark: Bool) -> Bool {
+        if let pinned = windowAppearance?.bestMatch(from: [.aqua, .darkAqua]) {
+            return pinned == .darkAqua
+        }
+        return mirrorThemeIsDark(appearanceMode: appearanceMode, systemIsDark: systemIsDark)
+    }
+
+    /// То же для живого окна.
+    @MainActor
+    static func chromeThemeIsDark(for window: NSWindow?) -> Bool {
+        chromeThemeIsDark(windowAppearance: window?.appearance,
+                          appearanceMode: UserDefaults.standard.integer(forKey: appearanceModeKey),
+                          systemIsDark: isDarkAppearance)
+    }
+
+    /// Оформление действующей темы — для картинок, которые печём сами (значки с плашками).
+    @MainActor
+    static func chromeAppearance(for window: NSWindow?) -> NSAppearance? {
+        NSAppearance(named: chromeThemeIsDark(for: window) ? .darkAqua : .aqua)
+    }
+
     /// Что положить в рабочий ключ переключателя, который помнится по темам.
     ///
     /// «Красивый режим» — размытие и свечение — требует Apple Silicon уровня Pro и выше: на

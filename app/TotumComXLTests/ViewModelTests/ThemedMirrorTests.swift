@@ -51,3 +51,50 @@ final class ThemedMirrorTests: XCTestCase {
                        "в светлой теме — выключена")
     }
 }
+
+/// Тема заголовка и панели инструментов — та же, что у панелей, и берётся так же.
+///
+/// Настоящий баг: система переключалась на тёмную, панели темнели, а заголовок оставался
+/// прежнего, светлого цвета. Причина — заголовок спрашивал тему у САМОГО ОКНА, а внутри
+/// KVO на NSApp.effectiveAppearance окно ещё отдаёт прежнюю. Замерено пробой: NSApp уже
+/// darkAqua, окно всё ещё aqua, догоняет на следующем такте — и цвет ушедшей темы так и
+/// оставался на заголовке до следующего повода перекрасить.
+final class ChromeThemeTests: XCTestCase {
+
+    private func chrome(window: NSAppearance.Name? = nil, mode: Int, systemIsDark: Bool) -> Bool {
+        PanelAppearanceSettings.chromeThemeIsDark(
+            windowAppearance: window.flatMap { NSAppearance(named: $0) },
+            appearanceMode: mode, systemIsDark: systemIsDark)
+    }
+
+    /// То самое место: «по системе», система уже тёмная — обрамление тёмное, что бы там
+    /// ни отвечало отстающее окно.
+    func test_поСистеме_ТемаБерётсяУСистемы() {
+        XCTAssertTrue(chrome(mode: 0, systemIsDark: true))
+        XCTAssertFalse(chrome(mode: 0, systemIsDark: false))
+    }
+
+    func test_принудительнаяТема_ЗнаетСебяСразу() {
+        XCTAssertFalse(chrome(mode: 1, systemIsDark: true), "форс-светлая на тёмной системе")
+        XCTAssertTrue(chrome(mode: 2, systemIsDark: false), "форс-тёмная на светлой системе")
+    }
+
+    /// А если тема окна задана явно — она главнее: окно нарисовано именно в ней.
+    func test_явнаяТемаОкна_Главнее() {
+        XCTAssertTrue(chrome(window: .darkAqua, mode: 1, systemIsDark: false))
+        XCTAssertFalse(chrome(window: .aqua, mode: 2, systemIsDark: true))
+    }
+
+    /// Обрамление и зеркало «по темам» не расходятся: иначе заголовок красится ключом
+    /// одной темы, а панели — другой.
+    func test_обрамлениеСовпадаетСЗеркалом() {
+        for mode in [0, 1, 2] {
+            for system in [true, false] {
+                XCTAssertEqual(chrome(mode: mode, systemIsDark: system),
+                               PanelAppearanceSettings.mirrorThemeIsDark(appearanceMode: mode,
+                                                                         systemIsDark: system),
+                               "режим \(mode), система \(system ? "тёмная" : "светлая")")
+            }
+        }
+    }
+}
