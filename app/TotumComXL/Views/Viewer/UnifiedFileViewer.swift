@@ -834,14 +834,15 @@ struct UnifiedFileViewer: View {
         }
     }
 
+    /// Без надписей «Повернуть» и «Отразить»: два слова забирали ширину, которой не хватало
+    /// самим кнопкам — в узком окне полоса обрывалась на середине. Что делает кнопка,
+    /// говорит её значок и подсказка под мышью.
     @ViewBuilder
     private var imageTurnButtons: some View {
         Group {
-            Text(L("viewer.image.rotate")).font(.system(size: 11)).foregroundStyle(.secondary)
             editButton("rotate.left", L("viewer.image.rotateLeft")) { changeImage { $0.rotateOnScreen(clockwise: false) } }
             editButton("rotate.right", L("viewer.image.rotateRight")) { changeImage { $0.rotateOnScreen(clockwise: true) } }
 
-            Text(L("viewer.image.flip")).font(.system(size: 11)).foregroundStyle(.secondary)
             editButton("arrow.left.and.right.righttriangle.left.righttriangle.right",
                            L("viewer.image.flipHorizontal")) { changeImage { $0.flipOnScreen(horizontal: true) } }
             editButton("arrow.up.and.down.righttriangle.up.righttriangle.down",

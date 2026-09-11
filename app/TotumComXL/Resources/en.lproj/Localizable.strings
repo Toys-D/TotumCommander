@@ -2053,10 +2053,8 @@ A frequent culprit is Parallels Desktop (usually F6): open its Settings ▸ Shor
 "viewer.image.format.heic" = "HEIC";
 "viewer.image.format.tiff" = "TIFF";
 "viewer.image.saveFailed" = "Could not write the file as %@";
-"viewer.image.rotate" = "Rotate";
 "viewer.image.rotateLeft" = "Rotate left";
 "viewer.image.rotateRight" = "Rotate right";
-"viewer.image.flip" = "Flip";
 "viewer.image.flipHorizontal" = "Flip left to right";
 "viewer.image.flipVertical" = "Flip top to bottom";
 "viewer.image.invert" = "Invert";

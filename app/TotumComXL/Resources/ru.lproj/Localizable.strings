@@ -2059,10 +2059,8 @@
 "viewer.image.format.heic" = "HEIC";
 "viewer.image.format.tiff" = "TIFF";
 "viewer.image.saveFailed" = "Не удалось записать файл в формате %@";
-"viewer.image.rotate" = "Повернуть";
 "viewer.image.rotateLeft" = "Повернуть влево";
 "viewer.image.rotateRight" = "Повернуть вправо";
-"viewer.image.flip" = "Отразить";
 "viewer.image.flipHorizontal" = "Отразить слева направо";
 "viewer.image.flipVertical" = "Отразить сверху вниз";
 "viewer.image.invert" = "Негатив";
