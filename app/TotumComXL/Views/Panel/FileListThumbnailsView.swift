@@ -192,8 +192,9 @@ struct FileListThumbnailsView: NSViewRepresentable {
 
         // The tag scan finishes after the cells are already on screen, so a tag-only change has to
         // count as a reason to redraw — otherwise the dots appear only on the next folder change.
+        let pathChanged = context.coordinator.lastPath != viewModel.currentPath
         if context.coordinator.lastItemCount != viewModel.items.count ||
-            context.coordinator.lastPath != viewModel.currentPath ||
+            pathChanged ||
             context.coordinator.lastSortToken != viewModel.sortToken ||
             context.coordinator.lastTags != viewModel.tagsByPath ||
             context.coordinator.lastGit != viewModel.gitByPath
@@ -225,12 +226,17 @@ struct FileListThumbnailsView: NSViewRepresentable {
             cursorOnly = true
         }
 
-        if viewModel.scrollOnCursorChange,
-           viewModel.items.indices.contains(viewModel.cursorIndex) {
+        // За курсором — только когда он переехал или сменилась папка. На прочих
+        // обновлениях (а перекраска приходит сама, раз в пятнадцать секунд) прокрутку не
+        // трогать: человек листает список, и его бросало обратно к курсору. CursorFollow.
+        let follow = context.coordinator.follow.step(
+            wanted: cursorChanged || pathChanged,
+            canScroll: viewModel.items.indices.contains(viewModel.cursorIndex))
+        if follow, viewModel.scrollOnCursorChange {
             context.coordinator.scrollCursorToVisible(
                 in: collectionView,
                 cursorIndex: viewModel.cursorIndex,
-                force: cursorChanged
+                force: true
             )
         }
 
@@ -298,6 +304,8 @@ struct FileListThumbnailsView: NSViewRepresentable {
         var lastItemCount: Int
         var lastPath: String
         var lastCursorIndex: Int
+        /// Идти ли за курсором — и просьба, которую не смогли исполнить сразу.
+        var follow = CursorFollow()
         var lastSelectedPaths: Set<String>
         var lastIsActive: Bool
         var lastScrollResetToken: UInt64
