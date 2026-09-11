@@ -60,14 +60,19 @@ echo "=== Build number $NEW_BUILD ==="
 echo "=== Building ($CONFIG) ==="
 swift build -c "$CONFIG"
 
+# Папка со собранным — у самого SwiftPM, а не строкой в скрипте. Было вписано имя папки для
+# Apple Silicon: на Intel-Mac она называется иначе, и сборка на таком копировала бы ничего —
+# из того же семейства, что и личный сертификат ниже.
+BIN="$(swift build -c "$CONFIG" --show-bin-path)"
+
 echo "=== Updating bundle ==="
-cp .build/arm64-apple-macosx/$CONFIG/TotumComXLApp "$APP/Contents/MacOS/TotumComXL"
+cp "$BIN/TotumComXLApp" "$APP/Contents/MacOS/TotumComXL"
 # Copy resource bundle (includes HTML, localization files).
 # MUST remove the old copy first: `cp -R src dst` with an EXISTING dst directory
 # copies src INTO dst (nested bundle-in-bundle) and never refreshes dst's own
 # files — the app's resource copy had been stale since April because of this.
 rm -rf "$APP/Contents/Resources/TotumComXL_TotumComXLApp.bundle"
-cp -R .build/arm64-apple-macosx/$CONFIG/TotumComXL_TotumComXLApp.bundle "$APP/Contents/Resources/TotumComXL_TotumComXLApp.bundle"
+cp -R "$BIN/TotumComXL_TotumComXLApp.bundle" "$APP/Contents/Resources/TotumComXL_TotumComXLApp.bundle"
 # Ensure Local Network permission keys exist (macOS 14/15 silently block
 # Bonjour/NWBrowser without these — the app would see no network hosts).
 # Idempotent: delete-then-add so re-runs don't fail. MUST run before codesign
@@ -134,7 +139,7 @@ mkdir -p "$APP/Contents/Resources/en.lproj" "$APP/Contents/Resources/ru.lproj"
 echo "=== Embedding MCP bridge ==="
 swift build -c "$CONFIG" --product FCXLMCPServer
 mkdir -p "$APP/Contents/Helpers"
-cp .build/arm64-apple-macosx/$CONFIG/FCXLMCPServer "$APP/Contents/Helpers/fcxl-mcp"
+cp "$BIN/FCXLMCPServer" "$APP/Contents/Helpers/fcxl-mcp"
 chmod +x "$APP/Contents/Helpers/fcxl-mcp"
 
 # rclone — им работают облака: Google Drive, Dropbox, OneDrive и ещё десятки. Едет внутри
@@ -152,7 +157,7 @@ echo "=== Embedding DjVu viewer ==="
 swift build -c "$CONFIG" --product FCXLDjVuViewer
 VIEWER_APP="$APP/Contents/Library/FCXL DjVu Viewer.app"
 mkdir -p "$VIEWER_APP/Contents/MacOS"
-cp .build/arm64-apple-macosx/$CONFIG/FCXLDjVuViewer "$VIEWER_APP/Contents/MacOS/FCXLDjVuViewer"
+cp "$BIN/FCXLDjVuViewer" "$VIEWER_APP/Contents/MacOS/FCXLDjVuViewer"
 cat > "$VIEWER_APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -39,7 +39,11 @@ mv "$OUT/Contents/Resources/LICENSE-rclone.txt" "$LIC/LICENSE-rclone.txt" 2>/dev
 for pair in ghostscript:LICENSE djvulibre:COPYING libarchive:COPYING libssh2:COPYING \
             openssl@3:LICENSE.txt zstd:COPYING lz4:LICENSE xz:COPYING jpeg-turbo:LICENSE.md libb2:COPYING; do
     name="${pair%%:*}"; file="${pair##*:}"
-    src="/opt/homebrew/opt/$name/$file"
+    # Где живёт кег — спрашиваем у Homebrew, а не вписываем. На Intel-Mac он в /usr/local, и
+    # прибитый /opt/homebrew означал бы «текста лицензии нет» — а теперь это отказ выпускать.
+    prefix="$(brew --prefix "$name" 2>/dev/null)"
+    [ -n "$prefix" ] || prefix="$(brew --prefix 2>/dev/null)/opt/$name"
+    src="$prefix/$file"
     if [ -f "$src" ]; then
         cp "$src" "$LIC/LICENSE-$name.txt"
     else
