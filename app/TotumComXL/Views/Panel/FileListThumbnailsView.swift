@@ -1160,6 +1160,36 @@ final class ThumbnailsCollectionView: NSCollectionView {
     }
 }
 
+/// Где внутри квадратной ячейки стоят картинка и имя.
+///
+/// Курсор закрашивает ВСЮ ячейку, а картинка с именем занимают только её верх: при размере
+/// 210 это 6 + 134 + 4 + строка имени — на пятьдесят точек меньше ячейки. Пустой остаток
+/// оставался снизу, и подсветка выглядела сдвинутой вниз. Поэтому пустое место делится
+/// пополам — сверху и снизу, и содержимое стоит в середине.
+enum ThumbnailCellLayout {
+    /// Наименьший отступ сверху: при мелком размере ячейки содержимое выше её самой, и
+    /// тогда лучше прижать к верху, чем срезать картинке шапку.
+    static let minimumTopInset: CGFloat = 6
+    /// Зазор между картинкой и именем.
+    static let iconToName: CGFloat = 4
+
+    /// Высота под имя. По умолчанию одна строка: имя здесь именно в одну строку и
+    /// обрезается многоточием (стиль абзаца — .byTruncatingTail), поэтому запас на вторую
+    /// строку просто поднял бы содержимое выше середины на полстроки.
+    static func nameHeight(font: NSFont, lines: Int = 1) -> CGFloat {
+        let line = (font.ascender - font.descender + font.leading).rounded(.up)
+        return max(line, 1) * CGFloat(max(lines, 1))
+    }
+
+    /// Отступ сверху, при котором картинка с именем стоят в середине ячейки.
+    static func topInset(cellSize: CGFloat, previewSize: CGFloat, nameHeight: CGFloat,
+                         gap: CGFloat = iconToName,
+                         minimum: CGFloat = minimumTopInset) -> CGFloat {
+        let content = previewSize + gap + nameHeight
+        return max(minimum, ((cellSize - content) / 2).rounded())
+    }
+}
+
 final class ThumbnailItem: NSCollectionViewItem {
     static let id = NSUserInterfaceItemIdentifier("thumbnail-item")
 
@@ -1244,6 +1274,8 @@ final class ThumbnailItemView: NSView {
 
     private var previewWidthConstraint: NSLayoutConstraint?
     private var previewHeightConstraint: NSLayoutConstraint?
+    /// Отступ сверху — не постоянная величина: он держит содержимое в середине ячейки.
+    private var iconTopConstraint: NSLayoutConstraint?
     private var displayedName = ""
     private var displayedIsDirectory = false
     private var displayedExtension = ""
@@ -1323,9 +1355,11 @@ final class ThumbnailItemView: NSView {
 
         previewWidthConstraint = iconView.widthAnchor.constraint(equalToConstant: 64)
         previewHeightConstraint = iconView.heightAnchor.constraint(equalToConstant: 64)
+        iconTopConstraint = iconView.topAnchor.constraint(equalTo: topAnchor,
+                                                          constant: ThumbnailCellLayout.minimumTopInset)
 
         NSLayoutConstraint.activate([
-            iconView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            iconTopConstraint,
             iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
 
             dotsView.trailingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 3),
@@ -1356,7 +1390,23 @@ final class ThumbnailItemView: NSView {
 
     override func layout() {
         super.layout()
+        centreContent()
         if abs(bounds.width - plaqueWidth) > 0.5 { refreshGitPlaque() }
+    }
+
+    /// Ставит картинку с именем в середину ячейки. Вызывается из layout() и после
+    /// настройки: размер ячейки знает только layout, размер картинки — только configure.
+    private func centreContent() {
+        guard let iconTopConstraint, bounds.height > 0 else { return }
+        let preview = previewHeightConstraint?.constant ?? 64
+        let inset = ThumbnailCellLayout.topInset(
+            cellSize: bounds.height,
+            previewSize: preview,
+            nameHeight: ThumbnailCellLayout.nameHeight(font: PanelAppearanceSettings.resolvedListFont()))
+        // Ставим только при настоящем изменении: присваивание запускает новый проход
+        // разметки, а он опять придёт сюда.
+        guard abs(iconTopConstraint.constant - inset) > 0.5 else { return }
+        iconTopConstraint.constant = inset
     }
 
     /// The Git plaque: drawn to lie ON the picture, and never wider than the cell holding it.
@@ -1451,6 +1501,7 @@ final class ThumbnailItemView: NSView {
         if previewHeightConstraint?.constant != previewSize {
             previewHeightConstraint?.constant = previewSize
         }
+        centreContent()
 
         if isRenaming {
             nameLabel.isHidden = true

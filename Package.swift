@@ -610,6 +610,7 @@ let package = Package(
                 "ViewModelTests/TunnelLookTests.swift",
                 "ViewModelTests/TunnelContextMenuTests.swift",
                 "ViewModelTests/TunnelSmallWindowTests.swift",
+                "ViewModelTests/ThumbnailCellLayoutTests.swift",
                 "ViewModelTests/TunnelOverflowTests.swift",
                 "ViewModelTests/ThemedMirrorTests.swift",
                 "ViewModelTests/ContextMenuLayoutTests.swift",
