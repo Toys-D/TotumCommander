@@ -57,3 +57,45 @@ final class ThumbnailCellLayoutTests: XCTestCase {
                              ThumbnailCellLayout.minimumTopInset)
     }
 }
+
+/// Признак картинки и признак раскраски — врозь.
+///
+/// Они жили одной строкой, и правило «гаснущая свежесть» (перекраска раз в пятнадцать
+/// секунд) выбрасывало все готовые эскизы: картинки мигали сами по себе.
+final class ThumbnailAppearanceTokenTests: XCTestCase {
+
+    private func picture(previewSize: CGFloat = 134, quickLook: Bool = true,
+                         folderTint: String = "none", scale: CGFloat = 1,
+                         weight: CGFloat = 0, symbol: String = "arrow.up") -> String {
+        ThumbnailAppearance.pictureToken(previewSize: previewSize, quickLook: quickLook,
+                                        folderTint: folderTint, upIconScale: scale,
+                                        upIconWeight: weight, upIconSymbol: symbol)
+    }
+
+    private func paint(generation: Int, cursorName: NSColor = .systemOrange) -> String {
+        ThumbnailAppearance.paintToken(folderName: .systemYellow, fileName: .labelColor,
+                                       cursorName: cursorName, cursorBackground: nil,
+                                       generation: generation)
+    }
+
+    /// Главное: шаг угасания меняет раскраску и НЕ трогает признак картинки.
+    func test_счётчикПерекрасок_НеВыбрасываетЭскизы() {
+        XCTAssertEqual(picture(), picture(), "картинка от счётчика не зависит вовсе")
+        XCTAssertNotEqual(paint(generation: 1), paint(generation: 2))
+    }
+
+    /// А то, что действительно меняет картинку, признак меняет.
+    func test_признакКартинки_МеняетсяОтРазмераИПредпросмотра() {
+        XCTAssertNotEqual(picture(), picture(previewSize: 96))
+        XCTAssertNotEqual(picture(), picture(quickLook: false))
+        XCTAssertNotEqual(picture(), picture(folderTint: "FF8800"))
+        XCTAssertNotEqual(picture(), picture(scale: 1.4))
+        XCTAssertNotEqual(picture(), picture(weight: 2))
+        XCTAssertNotEqual(picture(), picture(symbol: "arrowshape.up"))
+    }
+
+    /// Цвет курсора — раскраска: эскизы при его смене остаются.
+    func test_цветаИдутВРаскраску() {
+        XCTAssertNotEqual(paint(generation: 1), paint(generation: 1, cursorName: .systemPink))
+    }
+}

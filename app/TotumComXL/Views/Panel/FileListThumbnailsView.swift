@@ -141,13 +141,27 @@ struct FileListThumbnailsView: NSViewRepresentable {
         }
 
         context.coordinator.parent = self
-        let cursorBgToken = cursorBackgroundColor.map { PanelAppearanceSettings.hexString(from: $0) } ?? "sys"
-        let appearanceToken = "\(Int(previewSize.rounded()))-\(useQuickLookPreviews)-\(folderTintCacheToken())-us\(Int((upIconScale * 100).rounded()))-uw\(Int(upIconWeight.rounded()))-sym\(upIconSymbol)-\(PanelAppearanceSettings.hexString(from: folderNameColor))-\(PanelAppearanceSettings.hexString(from: fileNameColor))-\(PanelAppearanceSettings.hexString(from: cursorNameColor))-\(cursorBgToken)-beauty\(UserDefaults.standard.bool(forKey: PanelAppearanceSettings.beautyModeEnabledKey) ? 1 : 0)-zoom\(Int(CursorIconZoom.effectiveScale * 100))s\(PanelAppearanceSettings.resolvedCursorIconZoomSpread)-\(PanelAppearanceSettings.listFontToken)-cg\(colorGeneration)"
-        if context.coordinator.lastAppearanceToken != appearanceToken {
-            context.coordinator.lastAppearanceToken = appearanceToken
+        let pictureToken = ThumbnailAppearance.pictureToken(
+            previewSize: previewSize,
+            quickLook: useQuickLookPreviews,
+            folderTint: folderTintCacheToken(),
+            upIconScale: upIconScale,
+            upIconWeight: upIconWeight,
+            upIconSymbol: upIconSymbol)
+        let paintToken = ThumbnailAppearance.paintToken(
+            folderName: folderNameColor,
+            fileName: fileNameColor,
+            cursorName: cursorNameColor,
+            cursorBackground: cursorBackgroundColor,
+            generation: colorGeneration)
+        if context.coordinator.lastPictureToken != pictureToken {
+            context.coordinator.lastPictureToken = pictureToken
             context.coordinator.resetThumbnailCache()
             collectionView.reloadData()
         }
+        // Только раскраска — ячейки перенастроить, эскизы не трогать (см. ThumbnailAppearance).
+        let paintChanged = context.coordinator.lastPaintToken != paintToken
+        if paintChanged { context.coordinator.lastPaintToken = paintToken }
         collectionView.keyHandler = keyHandler
         collectionView.onItemClick = { [weak coordinator = context.coordinator] index, flags in
             coordinator?.handlePrimaryClick(at: index, modifierFlags: flags)
@@ -199,7 +213,7 @@ struct FileListThumbnailsView: NSViewRepresentable {
             }
         }
 
-        var needsVisibleRefresh = false
+        var needsVisibleRefresh = paintChanged
 
         let previousCursor = context.coordinator.lastCursorIndex
         let cursorChanged = previousCursor != viewModel.cursorIndex
@@ -293,7 +307,8 @@ struct FileListThumbnailsView: NSViewRepresentable {
         var lastRenamingPath: String?
         var lastRenameText: String
         var lastColumnsPerRow: Int = 1
-        var lastAppearanceToken: String
+        var lastPictureToken: String
+        var lastPaintToken: String
 
         private let thumbnailProvider = ThumbnailProvider()
 
@@ -324,7 +339,8 @@ struct FileListThumbnailsView: NSViewRepresentable {
             lastScrollResetToken = parent.viewModel.scrollResetToken
             lastRenamingPath = parent.renamingPath
             lastRenameText = parent.renameText
-            lastAppearanceToken = ""
+            lastPictureToken = ""
+            lastPaintToken = ""
             super.init()
         }
 
@@ -1157,6 +1173,40 @@ final class ThumbnailsCollectionView: NSCollectionView {
     override var selectionIndexPaths: Set<IndexPath> {
         get { [] }
         set {}
+    }
+}
+
+/// Из чего складывается вид ячейки — двумя частями, и это не мелочь.
+///
+/// Раньше цвет имени и готовая картинка жили в одном признаке: любое изменение выбрасывало
+/// ВСЕ готовые эскизы, а выброшенный эскиз на миг становится обычным значком, пока читается
+/// заново. Правило «гаснущая свежесть» просит перекраску каждые пятнадцать секунд — и
+/// картинки в панели мигали раз в пятнадцать секунд, будто папка открывается заново.
+enum ThumbnailAppearance {
+
+    /// Признак самой картинки: её размер, предпросмотр, вид папок, стрелка «наверх».
+    /// Изменился — готовые эскизы больше не годятся.
+    static func pictureToken(previewSize: CGFloat, quickLook: Bool, folderTint: String,
+                             upIconScale: CGFloat, upIconWeight: CGFloat,
+                             upIconSymbol: String) -> String {
+        "\(Int(previewSize.rounded()))-\(quickLook)-\(folderTint)"
+            + "-us\(Int((upIconScale * 100).rounded()))"
+            + "-uw\(Int(upIconWeight.rounded()))-sym\(upIconSymbol)"
+    }
+
+    /// Признак раскраски: цвета имён и курсора, красота, наплыв значка, шрифт списка и
+    /// счётчик перекрасок. Изменился — ячейки перенастраиваются, эскизы остаются.
+    static func paintToken(folderName: NSColor, fileName: NSColor, cursorName: NSColor,
+                           cursorBackground: NSColor?, generation: Int) -> String {
+        let cursorBg = cursorBackground.map { PanelAppearanceSettings.hexString(from: $0) } ?? "sys"
+        let beauty = UserDefaults.standard.bool(forKey: PanelAppearanceSettings.beautyModeEnabledKey)
+        return PanelAppearanceSettings.hexString(from: folderName)
+            + "-" + PanelAppearanceSettings.hexString(from: fileName)
+            + "-" + PanelAppearanceSettings.hexString(from: cursorName)
+            + "-\(cursorBg)-beauty\(beauty ? 1 : 0)"
+            + "-zoom\(Int(CursorIconZoom.effectiveScale * 100))"
+            + "s\(PanelAppearanceSettings.resolvedCursorIconZoomSpread)"
+            + "-\(PanelAppearanceSettings.listFontToken)-cg\(generation)"
     }
 }
 
