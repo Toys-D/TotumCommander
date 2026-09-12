@@ -447,7 +447,9 @@ struct FileListThumbnailsView: NSViewRepresentable {
             let folderIP: IndexPath? = {
                 guard let ip = hitIP, parent.viewModel.items.indices.contains(ip.item) else { return nil }
                 let it = parent.viewModel.items[ip.item]
-                return (it.isDirectory && it.name != "..") ? ip : nil
+                // «..» тоже цель: это папка уровнем выше — см. PanelDropTarget.
+                return PanelDropTarget.isDroppable(
+                    item: it, insideArchive: parent.viewModel.insideArchive) ? ip : nil
             }()
             updateDropHighlight(to: folderIP, in: collectionView)
 
@@ -484,11 +486,9 @@ struct FileListThumbnailsView: NSViewRepresentable {
             // indexPath is now always `.on` some cell (to suppress the insertion line) and can't
             // be trusted to mean "into this folder". nil → drop into the current directory.
             var targetFolder: FileItem?
-            if let ip = dropFolderIP, parent.viewModel.items.indices.contains(ip.item) {
-                let item = parent.viewModel.items[ip.item]
-                if item.isDirectory, item.name != ".." {
-                    targetFolder = item
-                }
+            if let ip = dropFolderIP {
+                targetFolder = PanelDropTarget.folder(at: ip.item, in: parent.viewModel.items,
+                                                      insideArchive: parent.viewModel.insideArchive)
             }
             updateDropHighlight(to: nil, in: collectionView)
 

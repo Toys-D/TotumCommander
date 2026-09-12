@@ -3694,10 +3694,9 @@ final class PanelViewController: NSViewController,
                 tableView.setDropRow(row, dropOperation: .on)
                 return .copy
             }
-            if viewModel.items.indices.contains(row) {
-                let target = viewModel.items[row]
-                tableView.setDropRow(target.isDirectory && target.name != ".." ? row : -1,
-                                     dropOperation: .on)
+            if PanelDropTarget.folder(at: row, in: viewModel.items,
+                                      insideArchive: viewModel.insideArchive) != nil {
+                tableView.setDropRow(row, dropOperation: .on)
             } else {
                 tableView.setDropRow(-1, dropOperation: .on)
             }
@@ -3718,14 +3717,11 @@ final class PanelViewController: NSViewController,
 
         let shouldMove = dropShouldMove(info)
 
-        // If hovering over a directory, highlight it as drop target
-        if viewModel.items.indices.contains(row) {
-            let target = viewModel.items[row]
-            if target.isDirectory, target.name != ".." {
-                tableView.setDropRow(row, dropOperation: .on)
-            } else {
-                tableView.setDropRow(-1, dropOperation: .on)
-            }
+        // If hovering over a directory, highlight it as drop target. ".." counts too: it IS
+        // the folder one level up — see PanelDropTarget.
+        if PanelDropTarget.folder(at: row, in: viewModel.items,
+                                  insideArchive: viewModel.insideArchive) != nil {
+            tableView.setDropRow(row, dropOperation: .on)
         } else {
             tableView.setDropRow(-1, dropOperation: .on)
         }
@@ -3748,12 +3744,10 @@ final class PanelViewController: NSViewController,
                 extractDroppedEntriesOut(archiveEntries)
                 return true
             }
-            var targetFolder: FileItem?
-            if viewModel.items.indices.contains(row) {
-                let item = viewModel.items[row]
-                if item.isDirectory, item.name != ".." { targetFolder = item }
-            }
-            let destination = targetFolder?.path ?? viewModel.currentPath
+            let targetFolder = PanelDropTarget.folder(at: row, in: viewModel.items,
+                                                      insideArchive: viewModel.insideArchive)
+            let destination = PanelDropTarget.destination(folder: targetFolder,
+                                                          currentPath: viewModel.currentPath)
             extractDroppedEntries(archiveEntries, to: destination)
             return true
         }
@@ -3764,16 +3758,12 @@ final class PanelViewController: NSViewController,
         let localPaths = isRemoteDrop ? [] : droppedFilePaths(from: info)
         guard isRemoteDrop || !localPaths.isEmpty else { return false }
 
-        var targetFolder: FileItem?
-        if viewModel.items.indices.contains(row) {
-            let item = viewModel.items[row]
-            if item.isDirectory, item.name != ".." {
-                targetFolder = item
-            }
-        }
+        let targetFolder = PanelDropTarget.folder(at: row, in: viewModel.items,
+                                                  insideArchive: viewModel.insideArchive)
 
         let shouldMove = dropShouldMove(info)
-        let destination = targetFolder?.path ?? viewModel.currentPath
+        let destination = PanelDropTarget.destination(folder: targetFolder,
+                                                      currentPath: viewModel.currentPath)
 
         let droppedItems: [FileItem]
         if isRemoteDrop {
@@ -5798,7 +5788,8 @@ final class PanelViewController: NSViewController,
                     }
                 }
                 guard !items.isEmpty else { return }
-                let destination = targetFolder?.path ?? self.viewModel.currentPath
+                let destination = PanelDropTarget.destination(
+                    folder: targetFolder, currentPath: self.viewModel.currentPath)
                 cplog("[DROP] onDropPaths targetFolder=\(targetFolder?.name ?? "nil(current dir)") destination=\(destination) shouldMove=\(shouldMove) items=\(items.map(\.name))")
                 // Open the dialog a beat AFTER the drop via a runloop TIMER (not GCD — that
                 // would starve the modal's SwiftUI buttons). Lets the drag session + system
@@ -5822,7 +5813,8 @@ final class PanelViewController: NSViewController,
                     self.extractDroppedEntriesOut(entries)
                     return
                 }
-                let destination = targetFolder?.path ?? self.viewModel.currentPath
+                let destination = PanelDropTarget.destination(
+                    folder: targetFolder, currentPath: self.viewModel.currentPath)
                 self.extractDroppedEntries(entries, to: destination)
             },
             onKeyDown: { [weak self] event -> Bool in
