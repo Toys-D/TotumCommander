@@ -2528,3 +2528,14 @@
 "settings.contextMenu.addToMain" = "Добавить в меню";
 "settings.contextMenu.addToExtra" = "Добавить под «Ещё»";
 "settings.contextMenu.noMatches" = "Ничего не найдено";
+
+/* 3D-модели */
+"preview.mode.model" = "Модель";
+"viewer.model.unsupported" = "«%@» — не тот формат, который мы читаем как модель.";
+"viewer.model.unreadable" = "Модель не прочитана";
+"viewer.model.tooBig" = "Файл слишком велик для просмотра: %@";
+"viewer.model.meshes" = "Сеток: %@";
+"viewer.model.vertices" = "Вершин: %@";
+"viewer.model.faces" = "Граней: %@";
+"viewer.model.wireframe" = "Показать каркас";
+"viewer.model.reset" = "Поставить камеру заново";

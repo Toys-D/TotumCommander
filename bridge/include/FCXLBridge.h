@@ -9,3 +9,4 @@
 #import "FCXLWatcherBridge.h"
 #import "FCXLNetworkBridge.h"
 #import "FCXLDjVuBridge.h"
+#import "FCXLModelBridge.h"

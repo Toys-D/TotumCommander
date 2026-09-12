@@ -150,6 +150,9 @@ struct UnifiedFileViewer: View {
     /// прокрутку трекпадом ради вида бумажной страницы, а номера страниц, полоса сбоку и
     /// закладки прекрасно работают и в ленте.
     @State private var drawing: DXFDocument?
+    /// Прочитанная трёхмерная модель и причина, если прочитать не удалось.
+    @State private var model3D: Model3DScene?
+    @State private var modelError: String?
     @State private var mediaPlayer: AVPlayer?
     @State private var folderEntries: [FolderEntry] = []
     @State private var folderCount: Int = 0
@@ -655,6 +658,22 @@ struct UnifiedFileViewer: View {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     Text(L("viewer.pdfNotLoaded")).foregroundStyle(.secondary)
+                }
+            case .model:
+                if let model3D {
+                    ModelPreviewView(model: model3D)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if isLoading {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let modelError {
+                    Text(modelError)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    Text(L("viewer.model.unreadable")).foregroundStyle(.secondary)
                 }
             case .book:
                 if let book {
@@ -2117,6 +2136,29 @@ struct UnifiedFileViewer: View {
                     isLoading = false
                 }
             }
+        case .model:
+            isLoading = true
+            model3D = nil
+            modelError = nil
+            loadTask = Task.detached(priority: .userInitiated) {
+                // Чтение и сборка сцены — не на главной нити: у крупной модели это секунды.
+                // Сцена в этот момент ещё ничья, ни в одном окне не показана, поэтому
+                // собирать её здесь безопасно.
+                let outcome: Result<Model3DScene, Error>
+                do { outcome = .success(try Model3DLoader.load(path: filePath)) }
+                catch { outcome = .failure(error) }
+                await MainActor.run {
+                    switch outcome {
+                    case .success(let loaded):
+                        model3D = loaded
+                        modelError = nil
+                    case .failure(let error):
+                        model3D = nil
+                        modelError = error.localizedDescription
+                    }
+                    isLoading = false
+                }
+            }
         case .book:
             isLoading = true
             let bridge = CoreBridgeService()
@@ -2251,6 +2293,7 @@ struct UnifiedFileViewer: View {
         // Only offered for what textutil can actually read (Word-processing files).
         case .document: return !isWordProcessingDocument(extension: item.fileExtension)
         case .djvu: return cat != .djvu
+        case .model: return cat != .model
         case .book: return cat != .book
         case .font: return cat != .font
         case .postScript: return cat != .postScript
