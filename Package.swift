@@ -448,6 +448,7 @@ let package = Package(
                 "Services/ImageEditing.swift",
                 "Services/DockProgressManager.swift",
                 "Services/Model3DLoader.swift",
+                "Services/ModelTextures.swift",
                 "Services/NotificationService.swift",
                 "Services/OperationLogService.swift",
                 "Views/Common/OperationLogView.swift",

@@ -140,7 +140,190 @@ final class Model3DTests: XCTestCase {
             XCTAssertGreaterThan(model.vertexCount, 0, name)
             XCTAssertGreaterThan(model.faceCount, 0, name)
             XCTAssertTrue(model.radius.isFinite && model.radius > 0, name)
+            // В журнал — сколько материалов получили картинку: по этой строке видно,
+            // нашлись ли текстуры у своего набора моделей.
+            let all = Self.materials(in: model.scene)
+            let textured = all.filter { $0.diffuse.contents is NSImage }.count
+            let glowing = all.filter { $0.emission.contents is NSImage }.count
+            print("  \(name): сеток \(model.meshCount), материалов \(all.count),"
+                  + " с картинкой \(textured), со свечением \(glowing),"
+                  + " оттенков на снимке \(Self.shades(of: model))")
         }
+    }
+
+    // MARK: - Текстуры с чужой машины
+
+    /// Та самая жалоба: «текстуры есть, а почему не подтягиваются».
+    ///
+    /// Модель из Blender под Windows называет свои картинки как `C:/baseColor.png` —
+    /// такого пути на Mac нет, и модель выходит белой, хотя картинки лежат рядом с ней.
+    /// Здесь такая модель собирается на месте, в отдельной папке (в хранилище двоичных
+    /// картинок не держим), и проверяется весь путь: имя нашлось, карта нормалей встала,
+    /// свечение погасло и модель РИСУЕТСЯ не одним белым пятном.
+    func test_текстураСЧужимПутёмНаходитсяПоИмени() throws {
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("fcxl-model-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        try Self.write(png: NSColor.systemOrange, to: folder.appendingPathComponent("skin.png"))
+        try Self.write(png: NSColor.systemBlue, to: folder.appendingPathComponent("skin_normal.png"))
+        // Ka 1 1 1 — то, что Model I/O принимает за свечение; Ke в файле нет намеренно.
+        let mtl = """
+        newmtl painted
+        Ka 1.000000 1.000000 1.000000
+        Ks 0.500000 0.500000 0.500000
+        map_Kd C:/skin.png
+        map_Bump -bm 1.000000 C:\\tex\\skin_normal.png
+        """
+        try mtl.write(to: folder.appendingPathComponent("thing.mtl"), atomically: true,
+                      encoding: .utf8)
+        try Self.cubeOBJ(material: "painted", mtlFile: "thing.mtl")
+            .write(to: folder.appendingPathComponent("thing.obj"), atomically: true, encoding: .utf8)
+
+        let model = try Model3DLoader.load(path: folder.appendingPathComponent("thing.obj").path)
+        XCTAssertEqual(model.reader, .apple)
+        let materials = Self.materials(in: model.scene)
+        let painted = try XCTUnwrap(materials.first)
+        XCTAssertTrue(painted.diffuse.contents is NSImage, "цветная карта не нашлась по имени")
+        XCTAssertTrue(painted.normal.contents is NSImage, "карта нормалей не нашлась")
+        let emission = painted.emission.contents as? NSColor
+        XCTAssertEqual(emission?.usingColorSpace(.sRGB)?.brightnessComponent ?? 1, 0, accuracy: 0.01,
+                       "белое свечение от Ka заливает модель ровным белым")
+    }
+
+    /// Порядок поиска картинки: как написано, рядом по относительному пути, потом по имени.
+    func test_гдеИщемКартинкуМатериала() {
+        let folder = "/models/thing"
+        let candidates = ModelTextureRescue.candidates(reference: "C:\\tex\\skin.png",
+                                                       modelFolder: folder)
+        XCTAssertEqual(candidates.first, folder + "/C:/tex/skin.png", "сперва как написано")
+        XCTAssertTrue(candidates.contains(folder + "/skin.png"), "потом по имени рядом с моделью")
+        XCTAssertTrue(candidates.contains(folder + "/textures/skin.png"), "и в соседних папках")
+        // Абсолютный путь пробуется как есть — модель могла прийти со своей же машины.
+        XCTAssertEqual(ModelTextureRescue.candidates(reference: "/tmp/a/skin.png",
+                                                     modelFolder: folder).first,
+                       "/tmp/a/skin.png")
+        XCTAssertTrue(ModelTextureRescue.candidates(reference: "  ", modelFolder: folder).isEmpty)
+    }
+
+    func test_находитПервыйСуществующий() {
+        let folder = "/models"
+        let found = ModelTextureRescue.locate(reference: "D:\\art\\skin.png", modelFolder: folder) {
+            $0 == folder + "/textures/skin.png"
+        }
+        XCTAssertEqual(found, folder + "/textures/skin.png")
+        XCTAssertNil(ModelTextureRescue.locate(reference: "D:/skin.png", modelFolder: folder) { _ in false })
+    }
+
+    /// Разбор .mtl — включая ключи с числами перед путём и пробелы в имени файла.
+    func test_разборФайлаМатериалов() {
+        let text = """
+        # Blender 5.2.0 LTS MTL File
+        newmtl lights
+        Ka 1.000000 1.000000 1.000000
+        Kd 0.000000 0.000000 0.000000
+        map_Ke C:/lights_emissive.png
+
+        newmtl slug_launcher
+        Ke 0.000000 0.000000 0.000000
+        map_Kd C:/slug launcher baseColor.png
+        map_Bump -bm 1.000000 C:/slug_launcher_normal.png
+        """
+        let parsed = WavefrontMTL.parse(text)
+        XCTAssertEqual(parsed.count, 2)
+        XCTAssertEqual(parsed["lights"]?.emission, "C:/lights_emissive.png")
+        XCTAssertEqual(parsed["lights"]?.diffuseColour, [0, 0, 0])
+        XCTAssertEqual(parsed["slug_launcher"]?.diffuse, "C:/slug launcher baseColor.png",
+                       "пробелы в имени файла — часть пути")
+        XCTAssertEqual(parsed["slug_launcher"]?.normal, "C:/slug_launcher_normal.png",
+                       "-bm 1.000000 — это ключ, а не путь")
+        XCTAssertEqual(parsed["slug_launcher"]?.emissionColour, [0, 0, 0])
+    }
+
+    func test_гаситьСвечениеТолькоКогдаФайлОНёмМолчит() {
+        var material = WavefrontMaterial()
+        XCTAssertTrue(WavefrontMTL.emissionShouldBeBlack(material: material, currentIsImage: false))
+        material.emissionColour = [0.2, 0.2, 0.2]
+        XCTAssertFalse(WavefrontMTL.emissionShouldBeBlack(material: material, currentIsImage: false))
+        material = WavefrontMaterial()
+        material.emission = "glow.png"
+        XCTAssertFalse(WavefrontMTL.emissionShouldBeBlack(material: material, currentIsImage: false))
+        XCTAssertFalse(WavefrontMTL.emissionShouldBeBlack(material: nil, currentIsImage: false),
+                       "без .mtl не трогаем")
+        XCTAssertFalse(WavefrontMTL.emissionShouldBeBlack(material: WavefrontMaterial(),
+                                                          currentIsImage: true),
+                       "картинку свечения не гасим")
+    }
+
+    func test_имяФайлаМатериаловБерётсяИзСамойМодели() {
+        XCTAssertEqual(WavefrontMTL.materialFileName(inOBJ: "# x\nmtllib Sem título.mtl\nv 0 0 0"),
+                       "Sem título.mtl")
+        XCTAssertNil(WavefrontMTL.materialFileName(inOBJ: "v 0 0 0"))
+    }
+
+    /// Сколько различимых оттенков даёт снимок модели. Один — плоский силуэт: ровно так
+    /// выглядела модель, пока её свечение оставалось белым.
+    static func shades(of model: Model3DScene) -> Int {
+        guard let device = MTLCreateSystemDefaultDevice() else { return -1 }
+        let renderer = SCNRenderer(device: device, options: nil)
+        renderer.scene = model.scene
+        renderer.autoenablesDefaultLighting = true
+        renderer.pointOfView = camera(for: model)
+        let image = renderer.snapshot(atTime: 0, with: CGSize(width: 160, height: 160),
+                                      antialiasingMode: .none)
+        guard let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff) else { return -1 }
+        var seen = Set<Int>()
+        for y in 0..<rep.pixelsHigh {
+            for x in 0..<rep.pixelsWide {
+                guard let colour = rep.colorAt(x: x, y: y), colour.alphaComponent > 0.1 else { continue }
+                let key = Int(colour.redComponent * 20) * 441
+                    + Int(colour.greenComponent * 20) * 21 + Int(colour.blueComponent * 20)
+                seen.insert(key)
+            }
+        }
+        return seen.count
+    }
+
+    private static func materials(in scene: SCNScene) -> [SCNMaterial] {
+        var result: [SCNMaterial] = []
+        func walk(_ node: SCNNode) {
+            result.append(contentsOf: node.geometry?.materials ?? [])
+            node.childNodes.forEach(walk)
+        }
+        walk(scene.rootNode)
+        return result
+    }
+
+    private static func write(png colour: NSColor, to url: URL) throws {
+        let image = NSImage(size: NSSize(width: 8, height: 8))
+        image.lockFocus()
+        colour.setFill()
+        NSRect(x: 0, y: 0, width: 8, height: 8).fill()
+        image.unlockFocus()
+        let data = try XCTUnwrap(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))?
+            .representation(using: .png, properties: [:]))
+        try data.write(to: url)
+    }
+
+    /// Куб с нормалями и развёрткой — чтобы текстуре было куда лечь.
+    private static func cubeOBJ(material: String, mtlFile: String) -> String {
+        """
+        mtllib \(mtlFile)
+        v 0 0 0
+        v 1 0 0
+        v 1 1 0
+        v 0 1 0
+        vt 0 0
+        vt 1 0
+        vt 1 1
+        vt 0 1
+        vn 0 0 1
+        usemtl \(material)
+        f 1/1/1 2/2/1 3/3/1
+        f 1/1/1 3/3/1 4/4/1
+        """
     }
 
     // MARK: - Получается ли картинка

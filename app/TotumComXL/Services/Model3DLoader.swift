@@ -129,8 +129,115 @@ enum Model3DLoader {
             asset.loadTextures()
             scene = SCNScene(mdlAsset: asset)
         }
+        rescueMaterials(in: scene, modelURL: url, ext: ext)
         let counts = counted(scene.rootNode)
         return finished(scene: scene, counts: counts, reader: .apple)
+    }
+
+    /// Довести материалы до вида, в котором модель видно.
+    ///
+    /// Две беды, обе замерены на настоящей модели из Blender. Первая: путь к текстуре
+    /// внутри файла — с чужой машины (`C:/slug_launcher_baseColor.png`), Model I/O
+    /// доносит его до SceneKit как строку, а тот по такому пути ничего не читает —
+    /// ищем файл по ИМЕНИ рядом с моделью. Вторая: Model I/O превращает «окружающий
+    /// свет» Ka в свечение материала, и белый Ka заливает модель ровным белым — на
+    /// снимке был ровно один оттенок. Обе правки — только там, где система не справилась.
+    private static func rescueMaterials(in scene: SCNScene, modelURL: URL, ext: String) {
+        let folder = modelURL.deletingLastPathComponent().path
+        let mtl = ext == "obj" ? wavefrontMaterials(for: modelURL) : [:]
+        for material in materials(in: scene.rootNode) {
+            let named = material.name.flatMap { mtl[$0] }
+            // Своя картинка: либо спасаем ту, что назвала система, либо берём из .mtl.
+            if let reference = textReference(material.diffuse.contents),
+               let image = ModelTextureRescue.image(reference: reference, modelFolder: folder) {
+                material.diffuse.contents = image
+            } else if !(material.diffuse.contents is NSImage),
+                      let reference = named?.diffuse,
+                      let image = ModelTextureRescue.image(reference: reference, modelFolder: folder) {
+                material.diffuse.contents = image
+            } else if !(material.diffuse.contents is NSImage), let colour = named?.diffuseColour {
+                material.diffuse.contents = nsColour(colour)
+            }
+            // Карта нормалей: Model I/O теряет map_Bump по дороге, а без неё модель —
+            // гладкая болванка.
+            if !(material.normal.contents is NSImage), let reference = named?.normal,
+               let image = ModelTextureRescue.image(reference: reference, modelFolder: folder) {
+                material.normal.contents = image
+            }
+            if let reference = textReference(material.normal.contents),
+               let image = ModelTextureRescue.image(reference: reference, modelFolder: folder) {
+                material.normal.contents = image
+            }
+            // Свечение.
+            if let reference = named?.emission ?? textReference(material.emission.contents),
+               let image = ModelTextureRescue.image(reference: reference, modelFolder: folder) {
+                material.emission.contents = image
+            } else if let colour = named?.emissionColour {
+                material.emission.contents = nsColour(colour)
+            } else if WavefrontMTL.emissionShouldBeBlack(
+                        material: named,
+                        currentIsImage: material.emission.contents is NSImage) {
+                material.emission.contents = NSColor.black
+            }
+            if let reference = named?.specular ?? textReference(material.specular.contents),
+               let image = ModelTextureRescue.image(reference: reference, modelFolder: folder) {
+                material.specular.contents = image
+            }
+            // Остальные карты — просто спасаем путь, если система оставила строку.
+            for property in [material.metalness, material.roughness, material.ambientOcclusion,
+                             material.displacement, material.transparent] {
+                if let reference = textReference(property.contents),
+                   let image = ModelTextureRescue.image(reference: reference, modelFolder: folder) {
+                    property.contents = image
+                }
+            }
+        }
+    }
+
+    /// Ссылка на файл, оставленная системой вместо картинки, — строкой или ссылкой.
+    private static func textReference(_ contents: Any?) -> String? {
+        switch contents {
+        case let text as String: return text.isEmpty ? nil : text
+        case let url as URL: return url.path
+        case let url as NSURL: return url.path
+        default: return nil
+        }
+    }
+
+    private static func nsColour(_ components: [Double]) -> NSColor {
+        NSColor(srgbRed: CGFloat(components.count > 0 ? components[0] : 0),
+                green: CGFloat(components.count > 1 ? components[1] : 0),
+                blue: CGFloat(components.count > 2 ? components[2] : 0),
+                alpha: 1)
+    }
+
+    /// Материалы .obj — из файла, на который он сам ссылается (`mtllib`), иначе из
+    /// одноимённого рядом.
+    private static func wavefrontMaterials(for modelURL: URL) -> [String: WavefrontMaterial] {
+        let folder = modelURL.deletingLastPathComponent()
+        var candidates: [URL] = []
+        if let text = try? String(contentsOf: modelURL, encoding: .utf8),
+           let name = WavefrontMTL.materialFileName(inOBJ: text) {
+            candidates.append(folder.appendingPathComponent(name))
+        }
+        candidates.append(modelURL.deletingPathExtension().appendingPathExtension("mtl"))
+        for candidate in candidates {
+            if let text = try? String(contentsOf: candidate, encoding: .utf8) {
+                let parsed = WavefrontMTL.parse(text)
+                if !parsed.isEmpty { return parsed }
+            }
+        }
+        return [:]
+    }
+
+    private static func materials(in node: SCNNode) -> [SCNMaterial] {
+        var result: [SCNMaterial] = []
+        func walk(_ node: SCNNode) {
+            result.append(contentsOf: node.geometry?.materials ?? [])
+            node.childNodes.forEach(walk)
+        }
+        walk(node)
+        return result
     }
 
     private static func libraryScene(url: URL) throws -> Model3DScene {
@@ -183,9 +290,12 @@ enum Model3DLoader {
         // Картинка материала: сперва вшитая в файл (так делает .glb), иначе — рядом с ним.
         if let data = mesh.textureData, let image = NSImage(data: data) {
             material.diffuse.contents = image
-        } else if let relative = mesh.texturePath {
-            let file = folder.appendingPathComponent(relative)
-            if let image = NSImage(contentsOf: file) { material.diffuse.contents = image }
+        } else if let reference = mesh.texturePath,
+                  let image = ModelTextureRescue.image(reference: reference,
+                                                       modelFolder: folder.path) {
+            // Не просто «рядом с моделью»: путь в файле бывает с чужой машины
+            // (C:\textures\…), и верить в нём можно только имени файла.
+            material.diffuse.contents = image
         }
         geometry.materials = [material]
         geometry.name = mesh.name
