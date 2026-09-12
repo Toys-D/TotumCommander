@@ -5,10 +5,28 @@
 #import <assimp/postprocess.h>
 #import <assimp/scene.h>
 
+#import <algorithm>
+#import <cmath>
 #import <string>
 #import <vector>
 
 static NSString *const kFCXLModelErrorDomain = @"FCXLModelBridge";
+
+NSString *const FCXLModelTextureBaseColor = @"baseColor";
+NSString *const FCXLModelTextureNormal = @"normal";
+NSString *const FCXLModelTextureEmissive = @"emissive";
+NSString *const FCXLModelTextureRoughness = @"roughness";
+NSString *const FCXLModelTextureMetallic = @"metallic";
+NSString *const FCXLModelTextureOcclusion = @"occlusion";
+NSString *const FCXLModelTextureSpecular = @"specular";
+
+@interface FCXLModelTexture ()
+@property (nonatomic, nullable) NSString *path;
+@property (nonatomic, nullable) NSData *data;
+@end
+
+@implementation FCXLModelTexture
+@end
 
 @interface FCXLModelMesh ()
 @property (nonatomic) NSData *positions;
@@ -18,8 +36,12 @@ static NSString *const kFCXLModelErrorDomain = @"FCXLModelBridge";
 @property (nonatomic) NSUInteger vertexCount;
 @property (nonatomic) NSUInteger faceCount;
 @property (nonatomic, nullable) NSColor *diffuseColor;
-@property (nonatomic, nullable) NSString *texturePath;
-@property (nonatomic, nullable) NSData *textureData;
+@property (nonatomic) NSDictionary<NSString *, FCXLModelTexture *> *textures;
+@property (nonatomic, nullable) NSNumber *metallic;
+@property (nonatomic, nullable) NSNumber *roughness;
+@property (nonatomic, nullable) NSNumber *opacity;
+@property (nonatomic, nullable) NSColor *emissiveColor;
+@property (nonatomic, nullable) NSString *materialName;
 @property (nonatomic, nullable) NSString *name;
 @end
 
@@ -52,16 +74,90 @@ NSColor *_Nullable diffuseColour(const aiMaterial *material) {
 
 /// Путь к картинке материала — или её номер внутри файла, если картинка вшита.
 /// Assimp помечает вшитые звёздочкой: «*0».
-std::string diffuseTexture(const aiMaterial *material) {
+std::string textureReference(const aiMaterial *material,
+                             const std::vector<aiTextureType> &types) {
     if (material == nullptr) { return {}; }
     aiString path;
-    for (aiTextureType type : {aiTextureType_BASE_COLOR, aiTextureType_DIFFUSE}) {
+    for (aiTextureType type : types) {
         if (material->GetTextureCount(type) > 0 &&
             material->GetTexture(type, 0, &path) == AI_SUCCESS) {
             return std::string(path.C_Str());
         }
     }
     return {};
+}
+
+/// Какие виды карт Assimp отдаёт под каждое наше гнездо. Виды перечислены по порядку
+/// предпочтения: сначала как их называет glTF/PBR, потом старые имена (OBJ, FBX).
+const std::vector<std::pair<NSString *, std::vector<aiTextureType>>> &textureSlots() {
+    static const std::vector<std::pair<NSString *, std::vector<aiTextureType>>> slots = {
+        {FCXLModelTextureBaseColor, {aiTextureType_BASE_COLOR, aiTextureType_DIFFUSE}},
+        {FCXLModelTextureNormal,    {aiTextureType_NORMALS, aiTextureType_NORMAL_CAMERA,
+                                     aiTextureType_HEIGHT}},
+        {FCXLModelTextureEmissive,  {aiTextureType_EMISSION_COLOR, aiTextureType_EMISSIVE}},
+        {FCXLModelTextureRoughness, {aiTextureType_DIFFUSE_ROUGHNESS}},
+        {FCXLModelTextureMetallic,  {aiTextureType_METALNESS}},
+        {FCXLModelTextureOcclusion, {aiTextureType_AMBIENT_OCCLUSION, aiTextureType_LIGHTMAP}},
+        {FCXLModelTextureSpecular,  {aiTextureType_SPECULAR}},
+    };
+    return slots;
+}
+
+/// Нормали, пригодные для света.
+///
+/// Бывает, что файл несёт массив нормалей из одних НУЛЕЙ — так пишут некоторые
+/// экспортёры (проверено на своих же .glb и .fbx: средняя длина нормали 0.000 на всех
+/// 1819 вершинах). Assimp такое не лечит: aiProcess_GenSmoothNormals считает нормали
+/// только когда их нет ВОВСЕ, а нули — это «есть». Модель тогда выходит ровным плоским
+/// пятном: на снимке ровно один оттенок, свету не за что зацепиться.
+///
+/// Поэтому проверяем и, если нормали негодные, считаем свои — средние по граням,
+/// сходящимся в вершине.
+NSData *usableNormals(const aiMesh *mesh) {
+    const unsigned count = mesh->mNumVertices;
+    if (count == 0) { return [NSData data]; }
+    if (mesh->mNormals != nullptr) {
+        // Хватает и выборки: массив либо осмысленный целиком, либо нулевой целиком.
+        double sum = 0;
+        const unsigned step = std::max(1u, count / 64);
+        unsigned taken = 0;
+        for (unsigned v = 0; v < count; v += step) {
+            const aiVector3D n = mesh->mNormals[v];
+            sum += std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+            taken++;
+        }
+        if (taken > 0 && sum / taken > 0.5) {
+            return [NSData dataWithBytes:mesh->mNormals length:sizeof(aiVector3D) * count];
+        }
+    }
+    std::vector<aiVector3D> normals(count, aiVector3D(0, 0, 0));
+    for (unsigned f = 0; f < mesh->mNumFaces; f++) {
+        const aiFace &face = mesh->mFaces[f];
+        if (face.mNumIndices != 3) { continue; }
+        const unsigned a = face.mIndices[0], b = face.mIndices[1], c = face.mIndices[2];
+        if (a >= count || b >= count || c >= count) { continue; }
+        const aiVector3D edge1 = mesh->mVertices[b] - mesh->mVertices[a];
+        const aiVector3D edge2 = mesh->mVertices[c] - mesh->mVertices[a];
+        const aiVector3D face_normal = edge1 ^ edge2;   // векторное произведение
+        normals[a] += face_normal;
+        normals[b] += face_normal;
+        normals[c] += face_normal;
+    }
+    for (auto &normal : normals) {
+        const float length = std::sqrt(normal.x * normal.x + normal.y * normal.y
+                                       + normal.z * normal.z);
+        if (length > 1e-8f) { normal /= length; } else { normal = aiVector3D(0, 1, 0); }
+    }
+    return [NSData dataWithBytes:normals.data() length:sizeof(aiVector3D) * count];
+}
+
+/// Число из материала или nil, если файл о нём молчит.
+NSNumber *_Nullable materialNumber(const aiMaterial *material, const char *key,
+                                   unsigned type, unsigned index) {
+    if (material == nullptr) { return nil; }
+    float value = 0;
+    if (material->Get(key, type, index, value) != AI_SUCCESS) { return nil; }
+    return @(value);
 }
 
 }  // namespace
@@ -125,9 +221,7 @@ std::string diffuseTexture(const aiMaterial *material) {
         // aiVector3D — это ровно три float, поэтому весь массив копируется одним куском.
         out.positions = [NSData dataWithBytes:mesh->mVertices
                                        length:sizeof(aiVector3D) * mesh->mNumVertices];
-        out.normals = mesh->HasNormals()
-            ? [NSData dataWithBytes:mesh->mNormals length:sizeof(aiVector3D) * mesh->mNumVertices]
-            : [NSData data];
+        out.normals = usableNormals(mesh);
 
         if (mesh->HasTextureCoords(0)) {
             // Развёртка у Assimp трёхмерная (u, v, w); SceneKit ждёт две координаты —
@@ -159,23 +253,44 @@ std::string diffuseTexture(const aiMaterial *material) {
         const aiMaterial *material = (mesh->mMaterialIndex < scene->mNumMaterials)
             ? scene->mMaterials[mesh->mMaterialIndex] : nullptr;
         out.diffuseColor = diffuseColour(material);
-        const std::string texture = diffuseTexture(material);
-        if (!texture.empty()) {
-            if (texture[0] == '*') {
+        if (material != nullptr) {
+            aiString materialName;
+            if (material->Get(AI_MATKEY_NAME, materialName) == AI_SUCCESS &&
+                materialName.length > 0) {
+                out.materialName = [NSString stringWithUTF8String:materialName.C_Str()];
+            }
+            out.metallic = materialNumber(material, AI_MATKEY_METALLIC_FACTOR);
+            out.roughness = materialNumber(material, AI_MATKEY_ROUGHNESS_FACTOR);
+            out.opacity = materialNumber(material, AI_MATKEY_OPACITY);
+            aiColor4D emissive(0, 0, 0, 1);
+            if (material->Get(AI_MATKEY_COLOR_EMISSIVE, emissive) == AI_SUCCESS) {
+                out.emissiveColor = [NSColor colorWithSRGBRed:emissive.r green:emissive.g
+                                                         blue:emissive.b alpha:1];
+            }
+        }
+
+        NSMutableDictionary<NSString *, FCXLModelTexture *> *textures = [NSMutableDictionary dictionary];
+        for (const auto &slot : textureSlots()) {
+            const std::string reference = textureReference(material, slot.second);
+            if (reference.empty()) { continue; }
+            FCXLModelTexture *texture = [FCXLModelTexture new];
+            if (reference[0] == '*') {
                 // Картинка внутри файла: «*3» — это номер в списке scene->mTextures.
-                const unsigned index = (unsigned)atoi(texture.c_str() + 1);
+                const unsigned index = (unsigned)atoi(reference.c_str() + 1);
                 if (index < scene->mNumTextures) {
                     const aiTexture *embedded = scene->mTextures[index];
                     if (embedded->mHeight == 0) {
                         // Сжатая картинка (png/jpg) лежит как есть — её прочтёт NSImage.
-                        out.textureData = [NSData dataWithBytes:embedded->pcData
-                                                         length:embedded->mWidth];
+                        texture.data = [NSData dataWithBytes:embedded->pcData
+                                                      length:embedded->mWidth];
                     }
                 }
             } else {
-                out.texturePath = [NSString stringWithUTF8String:texture.c_str()];
+                texture.path = [NSString stringWithUTF8String:reference.c_str()];
             }
+            if (texture.path != nil || texture.data != nil) { textures[slot.first] = texture; }
         }
+        out.textures = textures;
 
         totalVertices += out.vertexCount;
         totalFaces += out.faceCount;

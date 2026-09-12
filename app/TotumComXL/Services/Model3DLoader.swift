@@ -284,22 +284,55 @@ enum Model3DLoader {
                                          primitiveCount: Int(mesh.faceCount), bytesPerIndex: 4)
         let geometry = SCNGeometry(sources: sources, elements: [element])
         let material = SCNMaterial()
+        material.name = mesh.materialName
         material.lightingModel = .physicallyBased
         material.isDoubleSided = true    // у половины моделей нормали смотрят внутрь
         if let colour = mesh.diffuseColor { material.diffuse.contents = colour }
-        // Картинка материала: сперва вшитая в файл (так делает .glb), иначе — рядом с ним.
-        if let data = mesh.textureData, let image = NSImage(data: data) {
-            material.diffuse.contents = image
-        } else if let reference = mesh.texturePath,
-                  let image = ModelTextureRescue.image(reference: reference,
-                                                       modelFolder: folder.path) {
-            // Не просто «рядом с моделью»: путь в файле бывает с чужой машины
-            // (C:\textures\…), и верить в нём можно только имени файла.
-            material.diffuse.contents = image
+        // Числа материала: без металличности и шероховатости физически верный материал
+        // выходит матовой болванкой — чёрный кузов «металлик» так и остаётся чёрным
+        // силуэтом, сколько света вокруг ни ставь.
+        if let metallic = mesh.metallic { material.metalness.contents = metallic.doubleValue }
+        if let roughness = mesh.roughness { material.roughness.contents = roughness.doubleValue }
+        if let opacity = mesh.opacity, opacity.doubleValue < 0.999 {
+            material.transparency = CGFloat(opacity.doubleValue)
+        }
+        if let emissive = mesh.emissiveColor?.usingColorSpace(.sRGB),
+           emissive.brightnessComponent > 0.01 {
+            material.emission.contents = emissive
+        }
+        // Карты по гнёздам. Путь может быть и с чужой машины, и внутрь файла — обе
+        // возможности разбирает texture(_:folder:).
+        let slots: [(String, SCNMaterialProperty)] = [
+            (FCXLModelTextureBaseColor, material.diffuse),
+            (FCXLModelTextureNormal, material.normal),
+            (FCXLModelTextureEmissive, material.emission),
+            (FCXLModelTextureRoughness, material.roughness),
+            (FCXLModelTextureMetallic, material.metalness),
+            (FCXLModelTextureOcclusion, material.ambientOcclusion),
+            (FCXLModelTextureSpecular, material.specular)
+        ]
+        for (slot, property) in slots {
+            if let texture = mesh.textures[slot],
+               let image = self.image(for: texture, folder: folder) {
+                property.contents = image
+            }
+            // Развёртка у моделей часто выходит за 0…1; при обрезке (так у SceneKit по
+            // умолчанию) край картинки размазывается по всей поверхности.
+            property.wrapS = .repeat
+            property.wrapT = .repeat
         }
         geometry.materials = [material]
         geometry.name = mesh.name
         return geometry
+    }
+
+    /// Картинка гнезда: вшитая в файл — из байтов, иначе ищем по имени рядом с моделью.
+    private static func image(for texture: FCXLModelTexture, folder: URL) -> NSImage? {
+        if let data = texture.data, let image = NSImage(data: data) { return image }
+        if let path = texture.path {
+            return ModelTextureRescue.image(reference: path, modelFolder: folder.path)
+        }
+        return nil
     }
 
     private static func counted(_ node: SCNNode) -> (meshes: Int, vertices: Int, faces: Int) {
@@ -316,9 +349,85 @@ enum Model3DLoader {
         return (meshes, vertices, faces)
     }
 
+    /// Свет вокруг модели.
+    ///
+    /// Без него зеркальные и металлические материалы не видно вовсе: физически верный
+    /// материал показывает то, что ОТРАЖАЕТ, а отражать нечего — и машина с кузовом
+    /// «металлик» выходит чёрным силуэтом. Замерено на настоящей модели: средняя яркость
+    /// снимка 10 из 255.
+    ///
+    /// Поэтому даём сцене простое окружение: светлее сверху, темнее снизу — как небо над
+    /// землёй. Своё окружение файла (бывает в usdz) не трогаем.
+    /// Шесть граней куба окружения: небо сверху, земля снизу, по бокам — переход.
+    ///
+    /// Именно куб, а не одна картинка: SceneKit принимает в окружение либо готовую
+    /// кубическую карту (шесть изображений), либо развёртку — одиночную картинку он
+    /// молча не берёт, и свет не меняется вовсе (проверено: средняя яркость снимка та же).
+    static func environmentCube(size: Int = 64) -> [NSImage] {
+        func face(_ top: CGFloat, _ bottom: CGFloat) -> NSImage {
+            let image = NSImage(size: NSSize(width: size, height: size))
+            image.lockFocus()
+            if top == bottom {
+                NSColor(white: top, alpha: 1).setFill()
+                NSRect(x: 0, y: 0, width: size, height: size).fill()
+            } else {
+                NSGradient(starting: NSColor(white: bottom, alpha: 1),
+                           ending: NSColor(white: top, alpha: 1))?
+                    .draw(in: NSRect(x: 0, y: 0, width: size, height: size), angle: 90)
+            }
+            image.unlockFocus()
+            return image
+        }
+        // Значения подобраны замером: слишком яркое окружение засвечивает матовую
+        // модель в ровное белое пятно, слишком тусклое оставляет зеркальную чёрной.
+        let side = face(Self.environmentSky, Self.environmentGround)
+        return [side, side, face(Self.environmentSky, Self.environmentSky),   // +X, -X, +Y
+                face(Self.environmentGround, Self.environmentGround), side, side]  // -Y, +Z, -Z
+    }
+
+    /// Подобрано замером на трёх настоящих моделях (чёрная машина «металлик», белая
+    /// матовая фигура, оружие с текстурами): ярче — матовое выцветает в ровное пятно,
+    /// тусклее — зеркальное остаётся чёрным силуэтом.
+    static let environmentSky: CGFloat = 0.9
+    static let environmentGround: CGFloat = 0.25
+    static let environmentIntensity: CGFloat = 1.8
+
+    /// Камера для модели — одна на просмотрщик и на проверки, чтобы «как в тесте» и «как
+    /// на экране» не расходились.
+    ///
+    /// Плёночная кривая (wantsHDR) здесь не роскошь: без неё яркое место просто упирается
+    /// в белое. Замерено — белая матовая модель без неё даёт РОВНО ОДИН оттенок на
+    /// снимке: всё, что светлее единицы, обрезается в чистый белый, и формы не видно.
+    static func camera(for model: Model3DScene) -> SCNNode {
+        let distance = cameraDistance(radius: model.radius)
+        let camera = SCNCamera()
+        camera.fieldOfView = 60
+        // Ближнюю и дальнюю границы тоже от размера: постоянные 1 и 100 режут и мелкую
+        // модель, и крупную.
+        camera.zNear = Double(distance) / 100
+        camera.zFar = Double(distance) * 20
+        camera.wantsHDR = true
+        camera.wantsExposureAdaptation = false   // подстройка «на глаз» мешает сравнивать
+        camera.whitePoint = 1.6
+        camera.bloomIntensity = 0
+        let node = SCNNode()
+        node.camera = camera
+        node.position = SCNVector3(model.center.x, model.center.y,
+                                   model.center.z + CGFloat(distance))
+        node.look(at: model.center)
+        return node
+    }
+
+    private static func lightScene(_ scene: SCNScene) {
+        guard scene.lightingEnvironment.contents == nil else { return }
+        scene.lightingEnvironment.contents = environmentCube()
+        scene.lightingEnvironment.intensity = environmentIntensity
+    }
+
     private static func finished(scene: SCNScene,
                                  counts: (meshes: Int, vertices: Int, faces: Int),
                                  reader: Model3DReader) -> Model3DScene {
+        lightScene(scene)
         let (minimum, maximum) = scene.rootNode.boundingBox
         let center = SCNVector3((minimum.x + maximum.x) / 2,
                                 (minimum.y + maximum.y) / 2,

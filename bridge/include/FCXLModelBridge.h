@@ -3,6 +3,22 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+/// Картинка материала: либо путь (может быть и с чужой машины — искать по имени), либо
+/// сами байты, если она лежит ВНУТРИ файла модели (так устроен .glb).
+@interface FCXLModelTexture : NSObject
+@property (nonatomic, readonly, nullable) NSString *path;
+@property (nonatomic, readonly, nullable) NSData *data;
+@end
+
+/// Имена гнёзд, по которым раскладываются картинки материала.
+extern NSString *const FCXLModelTextureBaseColor;
+extern NSString *const FCXLModelTextureNormal;
+extern NSString *const FCXLModelTextureEmissive;
+extern NSString *const FCXLModelTextureRoughness;
+extern NSString *const FCXLModelTextureMetallic;
+extern NSString *const FCXLModelTextureOcclusion;
+extern NSString *const FCXLModelTextureSpecular;
+
 /// Одна сетка модели — ровно в том виде, в каком её принимает SceneKit: вершины,
 /// нормали и развёртка плотными массивами float, номера граней — uint32.
 ///
@@ -23,10 +39,18 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) NSUInteger faceCount;
 /// Цвет материала, если он задан.
 @property (nonatomic, readonly, nullable) NSColor *diffuseColor;
-/// Картинка материала: путь рядом с моделью…
-@property (nonatomic, readonly, nullable) NSString *texturePath;
-/// …или сами байты, если она лежит ВНУТРИ файла (так устроен .glb).
-@property (nonatomic, readonly, nullable) NSData *textureData;
+/// Картинки материала по гнёздам: цвет, нормали, свечение, шероховатость, металл…
+///
+/// Не одна «текстура», а все: физически верный материал без металличности и
+/// шероховатости выходит матовой болванкой — чёрный кузов «металлик» так и остаётся
+/// чёрным силуэтом, сколько света вокруг ни ставь.
+@property (nonatomic, readonly) NSDictionary<NSString *, FCXLModelTexture *> *textures;
+/// Числа материала — из них SceneKit делает блеск и отражения. nil, если файл молчит.
+@property (nonatomic, readonly, nullable) NSNumber *metallic;
+@property (nonatomic, readonly, nullable) NSNumber *roughness;
+@property (nonatomic, readonly, nullable) NSNumber *opacity;
+@property (nonatomic, readonly, nullable) NSColor *emissiveColor;
+@property (nonatomic, readonly, nullable) NSString *materialName;
 @property (nonatomic, readonly, nullable) NSString *name;
 
 @end

@@ -145,6 +145,42 @@ final class Model3DTests: XCTestCase {
             let all = Self.materials(in: model.scene)
             let textured = all.filter { $0.diffuse.contents is NSImage }.count
             let glowing = all.filter { $0.emission.contents is NSImage }.count
+            if ProcessInfo.processInfo.environment["FCXL_MODEL_DUMP"] != nil {
+                var rows: [(Int, String)] = []
+                func walk(_ node: SCNNode) {
+                    if let g = node.geometry {
+                        let v = g.sources(for: .vertex).first?.vectorCount ?? 0
+                        let m = g.materials.first
+                        var what = "нет"
+                        if let image = m?.diffuse.contents as? NSImage {
+                            let rep = NSBitmapImageRep(data: image.tiffRepresentation ?? Data())
+                            var sum = 0.0; var count = 0
+                            if let rep {
+                                for y in stride(from: 0, to: rep.pixelsHigh, by: 16) {
+                                    for x in stride(from: 0, to: rep.pixelsWide, by: 16) {
+                                        if let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) {
+                                            sum += Double(c.brightnessComponent); count += 1
+                                        }
+                                    }
+                                }
+                            }
+                            what = "картинка \(Int(image.size.width))×\(Int(image.size.height))"
+                                + " яркость \(count > 0 ? Int(sum / Double(count) * 255) : -1)"
+                        } else if let colour = (m?.diffuse.contents as? NSColor)?.usingColorSpace(.sRGB) {
+                            what = "цвет \(Int(colour.brightnessComponent * 255))"
+                        }
+                        let metal = (m?.metalness.contents as? Double).map { String(format: "%.2f", $0) } ?? "-"
+                        let rough = (m?.roughness.contents as? Double).map { String(format: "%.2f", $0) } ?? "-"
+                        rows.append((v, "\(m?.name ?? "-") — \(what) uv=\(g.sources(for: .texcoord).count) норм=\(g.sources(for: .normal).first?.vectorCount ?? 0)"
+                                     + " металл=\(metal) шероховатость=\(rough)"))
+                    }
+                    node.childNodes.forEach(walk)
+                }
+                walk(model.scene.rootNode)
+                for row in rows.sorted(by: { $0.0 > $1.0 }).prefix(6) {
+                    print("    \(row.0) вершин: \(row.1)")
+                }
+            }
             print("  \(name): сеток \(model.meshCount), материалов \(all.count),"
                   + " с картинкой \(textured), со свечением \(glowing),"
                   + " оттенков на снимке \(Self.shades(of: model))")
@@ -283,6 +319,14 @@ final class Model3DTests: XCTestCase {
                 seen.insert(key)
             }
         }
+        // Снимок можно и сохранить — когда разбираешься, почему модель выглядит не так:
+        //   FCXL_MODEL_SHOTS=/куда/класть swift test --filter Model3DTests
+        if let folder = ProcessInfo.processInfo.environment["FCXL_MODEL_SHOTS"], !folder.isEmpty,
+           let data = image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))?
+            .representation(using: .png, properties: [:]) {
+            let name = "shot-\(seen.count)-\(UUID().uuidString.prefix(4)).png"
+            try? data.write(to: URL(fileURLWithPath: folder).appendingPathComponent(name))
+        }
         return seen.count
     }
 
@@ -326,6 +370,41 @@ final class Model3DTests: XCTestCase {
         """
     }
 
+    /// Файл может нести массив нормалей из одних нулей — так пишут некоторые экспортёры.
+    /// Библиотека такое не лечит (её «посчитать нормали» работает, только когда их нет
+    /// вовсе), и модель выходила ровным плоским пятном: замерено — ровно один оттенок
+    /// на снимке. Мост обязан заметить это и посчитать нормали сам.
+    func test_нулевыеНормалиПересчитываются() throws {
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("fcxl-normals-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("flat.obj")
+        try """
+        v 0 0 0
+        v 1 0 0
+        v 0 1 0
+        vn 0 0 0
+        vn 0 0 0
+        vn 0 0 0
+        f 1//1 2//2 3//3
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        let loaded = try FCXLModelBridge.loadModel(atPath: file.path)
+        let mesh = try XCTUnwrap(loaded.meshes.first)
+        XCTAssertEqual(mesh.normals.count, Int(mesh.vertexCount) * 12, "нормаль на каждую вершину")
+        let lengths: [Float] = mesh.normals.withUnsafeBytes { raw in
+            let floats = raw.bindMemory(to: Float.self)
+            return (0..<Int(mesh.vertexCount)).map { index in
+                let x = floats[index * 3], y = floats[index * 3 + 1], z = floats[index * 3 + 2]
+                return (x * x + y * y + z * z).squareRoot()
+            }
+        }
+        for length in lengths {
+            XCTAssertEqual(length, 1, accuracy: 0.001, "нормаль должна быть единичной")
+        }
+    }
+
     // MARK: - Получается ли картинка
 
     /// Проверка целиком: прочитать, поставить камеру по размеру модели и нарисовать за
@@ -347,17 +426,7 @@ final class Model3DTests: XCTestCase {
     }
 
     private static func camera(for model: Model3DScene) -> SCNNode {
-        let distance = Model3DLoader.cameraDistance(radius: model.radius)
-        let camera = SCNCamera()
-        camera.fieldOfView = 60
-        camera.zNear = Double(distance) / 100
-        camera.zFar = Double(distance) * 20
-        let node = SCNNode()
-        node.camera = camera
-        node.position = SCNVector3(model.center.x, model.center.y,
-                                   model.center.z + CGFloat(distance))
-        node.look(at: model.center)
-        return node
+        Model3DLoader.camera(for: model)
     }
 
     private static func opaquePoints(in image: NSImage) -> Int {

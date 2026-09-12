@@ -121,21 +121,9 @@ private struct ModelSceneView: NSViewRepresentable {
     }
 
     /// Камера — по размеру модели: иначе она или не влезает в кадр, или теряется точкой
-    /// в середине. Модели бывают и в миллиметрах, и в километрах.
+    /// в середине. Модели бывают и в миллиметрах, и в километрах. Считается в
+    /// Model3DLoader — там же, где её проверяют тесты.
     private func placeCamera(for model: Model3DScene, in view: SCNView) {
-        let distance = Model3DLoader.cameraDistance(radius: model.radius)
-        let camera = SCNCamera()
-        camera.fieldOfView = 60
-        // Ближнюю и дальнюю границы тоже от размера: постоянные 1 и 100 режут и мелкую
-        // модель, и крупную.
-        camera.zNear = Double(distance) / 100
-        camera.zFar = Double(distance) * 20
-        let node = SCNNode()
-        node.camera = camera
-        node.position = SCNVector3(model.center.x,
-                                   model.center.y,
-                                   model.center.z + CGFloat(distance))
-        node.look(at: model.center)
-        view.pointOfView = node
+        view.pointOfView = Model3DLoader.camera(for: model)
     }
 }
