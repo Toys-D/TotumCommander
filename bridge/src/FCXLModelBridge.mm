@@ -23,6 +23,7 @@ NSString *const FCXLModelTextureSpecular = @"specular";
 @interface FCXLModelTexture ()
 @property (nonatomic, nullable) NSString *path;
 @property (nonatomic, nullable) NSData *data;
+@property (nonatomic) NSInteger uvChannel;
 @end
 
 @implementation FCXLModelTexture
@@ -32,6 +33,7 @@ NSString *const FCXLModelTextureSpecular = @"specular";
 @property (nonatomic) NSData *positions;
 @property (nonatomic) NSData *normals;
 @property (nonatomic) NSData *texCoords;
+@property (nonatomic) NSArray<NSData *> *texCoordSets;
 @property (nonatomic) NSData *indices;
 @property (nonatomic) NSUInteger vertexCount;
 @property (nonatomic) NSUInteger faceCount;
@@ -41,6 +43,7 @@ NSString *const FCXLModelTextureSpecular = @"specular";
 @property (nonatomic, nullable) NSNumber *roughness;
 @property (nonatomic, nullable) NSNumber *opacity;
 @property (nonatomic, nullable) NSColor *emissiveColor;
+@property (nonatomic, nullable) NSNumber *emissiveStrength;
 @property (nonatomic, nullable) NSString *materialName;
 @property (nonatomic, nullable) NSString *name;
 @end
@@ -74,14 +77,21 @@ NSColor *_Nullable diffuseColour(const aiMaterial *material) {
 
 /// Путь к картинке материала — или её номер внутри файла, если картинка вшита.
 /// Assimp помечает вшитые звёздочкой: «*0».
-std::string textureReference(const aiMaterial *material,
-                             const std::vector<aiTextureType> &types) {
+struct TextureReference {
+    std::string path;
+    unsigned uvChannel = 0;
+};
+
+TextureReference textureReference(const aiMaterial *material,
+                                  const std::vector<aiTextureType> &types) {
     if (material == nullptr) { return {}; }
     aiString path;
     for (aiTextureType type : types) {
+        unsigned channel = 0;
         if (material->GetTextureCount(type) > 0 &&
-            material->GetTexture(type, 0, &path) == AI_SUCCESS) {
-            return std::string(path.C_Str());
+            material->GetTexture(type, 0, &path, nullptr, &channel,
+                                 nullptr, nullptr, nullptr) == AI_SUCCESS) {
+            return {std::string(path.C_Str()), channel};
         }
     }
     return {};
@@ -223,6 +233,19 @@ NSNumber *_Nullable materialNumber(const aiMaterial *material, const char *key,
                                        length:sizeof(aiVector3D) * mesh->mNumVertices];
         out.normals = usableNormals(mesh);
 
+        NSMutableArray<NSData *> *uvSets = [NSMutableArray array];
+        for (unsigned set = 0; set < AI_MAX_NUMBER_OF_TEXTURECOORDS; set++) {
+            if (!mesh->HasTextureCoords(set)) { break; }
+            std::vector<float> uv;
+            uv.reserve(mesh->mNumVertices * 2);
+            for (unsigned v = 0; v < mesh->mNumVertices; v++) {
+                uv.push_back(mesh->mTextureCoords[set][v].x);
+                uv.push_back(mesh->mTextureCoords[set][v].y);
+            }
+            [uvSets addObject:[NSData dataWithBytes:uv.data() length:uv.size() * sizeof(float)]];
+        }
+        out.texCoordSets = uvSets;
+
         if (mesh->HasTextureCoords(0)) {
             // Развёртка у Assimp трёхмерная (u, v, w); SceneKit ждёт две координаты —
             // третью отбрасываем, иначе поедут все шаги в буфере.
@@ -262,6 +285,7 @@ NSNumber *_Nullable materialNumber(const aiMaterial *material, const char *key,
             out.metallic = materialNumber(material, AI_MATKEY_METALLIC_FACTOR);
             out.roughness = materialNumber(material, AI_MATKEY_ROUGHNESS_FACTOR);
             out.opacity = materialNumber(material, AI_MATKEY_OPACITY);
+            out.emissiveStrength = materialNumber(material, AI_MATKEY_EMISSIVE_INTENSITY);
             aiColor4D emissive(0, 0, 0, 1);
             if (material->Get(AI_MATKEY_COLOR_EMISSIVE, emissive) == AI_SUCCESS) {
                 out.emissiveColor = [NSColor colorWithSRGBRed:emissive.r green:emissive.g
@@ -271,9 +295,11 @@ NSNumber *_Nullable materialNumber(const aiMaterial *material, const char *key,
 
         NSMutableDictionary<NSString *, FCXLModelTexture *> *textures = [NSMutableDictionary dictionary];
         for (const auto &slot : textureSlots()) {
-            const std::string reference = textureReference(material, slot.second);
+            const TextureReference found = textureReference(material, slot.second);
+            const std::string reference = found.path;
             if (reference.empty()) { continue; }
             FCXLModelTexture *texture = [FCXLModelTexture new];
+            texture.uvChannel = found.uvChannel;
             if (reference[0] == '*') {
                 // Картинка внутри файла: «*3» — это номер в списке scene->mTextures.
                 const unsigned index = (unsigned)atoi(reference.c_str() + 1);

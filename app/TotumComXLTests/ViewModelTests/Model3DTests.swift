@@ -164,20 +164,49 @@ final class Model3DTests: XCTestCase {
                                     }
                                 }
                             }
+                            var rgb = (r: 0.0, g: 0.0, b: 0.0)
+                            if let rep {
+                                var taken = 0.0
+                                for y in stride(from: 0, to: rep.pixelsHigh, by: 8) {
+                                    for x in stride(from: 0, to: rep.pixelsWide, by: 8) {
+                                        if let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) {
+                                            rgb.r += Double(c.redComponent)
+                                            rgb.g += Double(c.greenComponent)
+                                            rgb.b += Double(c.blueComponent)
+                                            taken += 1
+                                        }
+                                    }
+                                }
+                                if taken > 0 { rgb = (rgb.r / taken, rgb.g / taken, rgb.b / taken) }
+                            }
                             what = "картинка \(Int(image.size.width))×\(Int(image.size.height))"
+                                + " цвет(\(Int(rgb.r * 255)),\(Int(rgb.g * 255)),\(Int(rgb.b * 255)))"
                                 + " яркость \(count > 0 ? Int(sum / Double(count) * 255) : -1)"
                         } else if let colour = (m?.diffuse.contents as? NSColor)?.usingColorSpace(.sRGB) {
                             what = "цвет \(Int(colour.brightnessComponent * 255))"
                         }
                         let metal = (m?.metalness.contents as? Double).map { String(format: "%.2f", $0) } ?? "-"
                         let rough = (m?.roughness.contents as? Double).map { String(format: "%.2f", $0) } ?? "-"
-                        rows.append((v, "\(m?.name ?? "-") — \(what) uv=\(g.sources(for: .texcoord).count) норм=\(g.sources(for: .normal).first?.vectorCount ?? 0)"
-                                     + " металл=\(metal) шероховатость=\(rough)"))
+                        var glow = "нет"
+                        if let image = m?.emission.contents as? NSImage {
+                            glow = "картинка \(Int(image.size.width))×\(Int(image.size.height))"
+                                + " канал \(m?.emission.mappingChannel ?? 0)"
+                        } else if let colour = (m?.emission.contents as? NSColor)?.usingColorSpace(.sRGB) {
+                            glow = "цвет \(Int(colour.brightnessComponent * 255))"
+                        }
+                        rows.append((v, "\(m?.name ?? "-") — \(what) свечение: \(glow)"
+                                     + " uv=\(g.sources(for: .texcoord).count) норм=\(g.sources(for: .normal).first?.vectorCount ?? 0)"
+                                     + " металл=\(metal) шероховатость=\(rough)"
+                                     + " прозрачность=\(String(format: "%.2f", m?.transparency ?? 1))"))
                     }
                     node.childNodes.forEach(walk)
                 }
                 walk(model.scene.rootNode)
-                for row in rows.sorted(by: { $0.0 > $1.0 }).prefix(6) {
+                let filter = ProcessInfo.processInfo.environment["FCXL_MODEL_DUMP"] ?? ""
+                let wanted = (filter == "1" || filter.isEmpty)
+                    ? Array(rows.sorted(by: { $0.0 > $1.0 }).prefix(6))
+                    : rows.filter { $0.1.localizedCaseInsensitiveContains(filter) }
+                for row in wanted {
                     print("    \(row.0) вершин: \(row.1)")
                 }
             }
@@ -319,13 +348,27 @@ final class Model3DTests: XCTestCase {
                 seen.insert(key)
             }
         }
-        // Снимок можно и сохранить — когда разбираешься, почему модель выглядит не так:
+        // Снимки можно и сохранить — когда разбираешься, почему модель выглядит не так:
         //   FCXL_MODEL_SHOTS=/куда/класть swift test --filter Model3DTests
-        if let folder = ProcessInfo.processInfo.environment["FCXL_MODEL_SHOTS"], !folder.isEmpty,
-           let data = image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))?
-            .representation(using: .png, properties: [:]) {
-            let name = "shot-\(seen.count)-\(UUID().uuidString.prefix(4)).png"
-            try? data.write(to: URL(fileURLWithPath: folder).appendingPathComponent(name))
+        // Четыре стороны, а не одна: текстуры бывают не на всех боках, и вид спереди
+        // ничего не скажет о заднем фонаре.
+        if let folder = ProcessInfo.processInfo.environment["FCXL_MODEL_SHOTS"], !folder.isEmpty {
+            for (index, turn) in [0.0, Double.pi / 2, Double.pi, -Double.pi / 2].enumerated() {
+                let node = camera(for: model)
+                let distance = Model3DLoader.cameraDistance(radius: model.radius)
+                node.position = SCNVector3(model.center.x + CGFloat(sin(turn)) * distance * 0.95,
+                                           model.center.y + distance * 0.25,
+                                           model.center.z + CGFloat(cos(turn)) * distance * 0.95)
+                node.look(at: model.center)
+                renderer.pointOfView = node
+                let side = renderer.snapshot(atTime: 0, with: CGSize(width: 800, height: 800),
+                                             antialiasingMode: .multisampling4X)
+                if let data = side.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))?
+                    .representation(using: .png, properties: [:]) {
+                    let name = "\(UUID().uuidString.prefix(4))-сторона\(index).png"
+                    try? data.write(to: URL(fileURLWithPath: folder).appendingPathComponent(name))
+                }
+            }
         }
         return seen.count
     }
@@ -457,5 +500,85 @@ final class Model3DTests: XCTestCase {
         XCTAssertTrue(line.contains("3"))
         XCTAssertTrue(line.contains("2") && line.contains("480"), "число разбито по разрядам")
         XCTAssertEqual(line.components(separatedBy: "·").count, 3)
+    }
+}
+
+/// Сила свечения из самого файла glTF: библиотека чтения её не передаёт, читаем сами.
+final class GLTFEmissiveStrengthTests: XCTestCase {
+
+    private let json = """
+    {"materials": [
+      {"name": "lens", "extensions": {"KHR_materials_emissive_strength": {"emissiveStrength": 10.0}}},
+      {"name": "paint"},
+      {"name": "weak", "extensions": {"KHR_materials_emissive_strength": {"emissiveStrength": 1.0}}}
+    ]}
+    """
+
+    func test_читаетСилуСвеченияПоИмениМатериала() throws {
+        let table = GLTFEmissiveStrength.table(json: try XCTUnwrap(json.data(using: .utf8)))
+        XCTAssertEqual(table["lens"], 10)
+        XCTAssertNil(table["paint"], "без расширения — нечего применять")
+        XCTAssertNil(table["weak"], "единица ничего не меняет")
+    }
+
+    /// В .glb тот же JSON лежит первым куском двоичного файла.
+    func test_находитJSONВнутриДвоичногоGLB() throws {
+        let payload = try XCTUnwrap(json.data(using: .utf8))
+        var glb = Data()
+        func append(_ value: UInt32) {
+            var little = value.littleEndian
+            withUnsafeBytes(of: &little) { glb.append(contentsOf: $0) }
+        }
+        append(0x46546C67)                    // «glTF»
+        append(2)                             // версия
+        append(UInt32(28 + payload.count))    // общая длина
+        append(UInt32(payload.count))
+        append(0x4E4F534A)                    // «JSON»
+        glb.append(payload)
+        let chunk = try XCTUnwrap(GLTFEmissiveStrength.jsonChunk(inGLB: glb))
+        XCTAssertEqual(GLTFEmissiveStrength.table(json: chunk)["lens"], 10)
+        XCTAssertNil(GLTFEmissiveStrength.jsonChunk(inGLB: Data([1, 2, 3])), "не glb — nil")
+    }
+
+    func test_неGLTFФайлыНеТрогаем() {
+        XCTAssertTrue(GLTFEmissiveStrength.table(forModelAt: "/tmp/модель.obj").isEmpty)
+    }
+}
+
+/// Цвет и картинка в материале перемножаются, а не соперничают.
+final class ModelTintTests: XCTestCase {
+
+    private func image(_ colour: NSColor) -> NSImage {
+        let image = NSImage(size: NSSize(width: 4, height: 4))
+        image.lockFocus()
+        colour.setFill()
+        NSRect(x: 0, y: 0, width: 4, height: 4).fill()
+        image.unlockFocus()
+        return image
+    }
+
+    private func brightness(_ image: NSImage) -> CGFloat {
+        guard let rep = image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)),
+              let colour = rep.colorAt(x: 1, y: 1)?.usingColorSpace(.sRGB) else { return -1 }
+        return colour.brightnessComponent
+    }
+
+    /// Белая картинка стекла и чёрный цвет материала дают тёмное стекло — так в файле и
+    /// написано; пока мы просто заменяли цвет картинкой, фонарь был белым пятном.
+    func test_белаяКартинкаНаЧёрномЦветеТемнеет() throws {
+        let tinted = try XCTUnwrap(ModelTextureRescue.tinted(image(.white), by: .black))
+        XCTAssertLessThan(brightness(tinted), 0.1)
+    }
+
+    func test_почтиБелыйЦветНичегоНеМеняет() {
+        XCTAssertNil(ModelTextureRescue.tinted(image(.white), by: NSColor(white: 0.995, alpha: 1)),
+                     "лишней работы не делаем")
+    }
+
+    func test_силаСвеченияДелаетКартинкуСветлее() throws {
+        let dim = image(NSColor(srgbRed: 0.2, green: 0, blue: 0, alpha: 1))
+        let bright = try XCTUnwrap(ModelTextureRescue.brightened(dim, by: 6))
+        XCTAssertGreaterThan(brightness(bright), brightness(dim) * 2)
+        XCTAssertNil(ModelTextureRescue.brightened(dim, by: 1), "единица ничего не меняет")
     }
 }

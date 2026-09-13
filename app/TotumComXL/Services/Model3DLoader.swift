@@ -249,8 +249,9 @@ enum Model3DLoader {
         }
         let scene = SCNScene()
         let folder = url.deletingLastPathComponent()
+        let glow = GLTFEmissiveStrength.table(forModelAt: url.path)
         for mesh in loaded.meshes {
-            guard let geometry = geometry(from: mesh, folder: folder) else { continue }
+            guard let geometry = geometry(from: mesh, folder: folder, glow: glow) else { continue }
             scene.rootNode.addChildNode(SCNNode(geometry: geometry))
         }
         let counts = (meshes: loaded.meshes.count,
@@ -261,7 +262,8 @@ enum Model3DLoader {
     }
 
     /// Из сырых чисел моста — геометрия SceneKit.
-    private static func geometry(from mesh: FCXLModelMesh, folder: URL) -> SCNGeometry? {
+    private static func geometry(from mesh: FCXLModelMesh, folder: URL,
+                                glow: [String: Double] = [:]) -> SCNGeometry? {
         let vertices = Int(mesh.vertexCount)
         guard vertices > 0, mesh.faceCount > 0, !mesh.positions.isEmpty else { return nil }
         var sources = [SCNGeometrySource(data: mesh.positions, semantic: .vertex,
@@ -274,8 +276,14 @@ enum Model3DLoader {
                                              componentsPerVector: 3, bytesPerComponent: 4,
                                              dataOffset: 0, dataStride: 12))
         }
-        if !mesh.texCoords.isEmpty {
-            sources.append(SCNGeometrySource(data: mesh.texCoords, semantic: .texcoord,
+        // Все наборы развёртки, а не только первый: разные карты пользуются разными
+        // наборами. У этой машины цвет фонаря лежит в наборе 0, а красное стекло —
+        // в наборе 1; наложишь вторым набором первый — фонарь останется белым.
+        let uvSets = mesh.texCoordSets.isEmpty
+            ? (mesh.texCoords.isEmpty ? [] : [mesh.texCoords])
+            : mesh.texCoordSets
+        for set in uvSets where !set.isEmpty {
+            sources.append(SCNGeometrySource(data: set, semantic: .texcoord,
                                              vectorCount: vertices, usesFloatComponents: true,
                                              componentsPerVector: 2, bytesPerComponent: 4,
                                              dataOffset: 0, dataStride: 8))
@@ -288,6 +296,8 @@ enum Model3DLoader {
         material.lightingModel = .physicallyBased
         material.isDoubleSided = true    // у половины моделей нормали смотрят внутрь
         if let colour = mesh.diffuseColor { material.diffuse.contents = colour }
+        // Дальше, если у материала есть картинка цвета, она заменит этот цвет — уже
+        // умноженная на него.
         // Числа материала: без металличности и шероховатости физически верный материал
         // выходит матовой болванкой — чёрный кузов «металлик» так и остаётся чёрным
         // силуэтом, сколько света вокруг ни ставь.
@@ -299,6 +309,12 @@ enum Model3DLoader {
         if let emissive = mesh.emissiveColor?.usingColorSpace(.sRGB),
            emissive.brightnessComponent > 0.01 {
             material.emission.contents = emissive
+        }
+        // Сила свечения из файла: у стекла фонаря она бывает десятикратной, и без неё
+        // красное стекло еле теплится. Выше разумного не поднимаем — иначе кадр
+        // засвечивается в белое.
+        if let strength = mesh.emissiveStrength?.doubleValue, strength > 1 {
+            material.emission.intensity = CGFloat(min(strength, 6))
         }
         // Карты по гнёздам. Путь может быть и с чужой машины, и внутрь файла — обе
         // возможности разбирает texture(_:folder:).
@@ -313,8 +329,26 @@ enum Model3DLoader {
         ]
         for (slot, property) in slots {
             if let texture = mesh.textures[slot],
-               let image = self.image(for: texture, folder: folder) {
+               var image = self.image(for: texture, folder: folder) {
+                // Свой цвет материала умножается на картинку, а не заменяется ею: у стекла
+                // фонаря картинка белая, а цвет чёрный — красным его делает свечение
+                // поверх. Без умножения фонарь выходил белым пятном.
+                if slot == FCXLModelTextureBaseColor, let tint = mesh.diffuseColor,
+                   let tinted = ModelTextureRescue.tinted(image, by: tint) {
+                    image = tinted
+                }
+                // Сила свечения из файла — запечённая в картинку: иначе красное стекло
+                // фонаря остаётся тёмным (см. GLTFEmissiveStrength).
+                if slot == FCXLModelTextureEmissive,
+                   let strength = mesh.materialName.flatMap({ glow[$0] })
+                        ?? mesh.emissiveStrength?.doubleValue,
+                   let brighter = ModelTextureRescue.brightened(image,
+                                                                by: CGFloat(min(strength, 8))) {
+                    image = brighter
+                }
                 property.contents = image
+                // Каким набором развёртки накладывать — так, как сказал файл.
+                property.mappingChannel = max(0, min(texture.uvChannel, uvSets.count - 1))
             }
             // Развёртка у моделей часто выходит за 0…1; при обрезке (так у SceneKit по
             // умолчанию) край картинки размазывается по всей поверхности.

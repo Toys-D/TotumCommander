@@ -8,6 +8,12 @@ NS_ASSUME_NONNULL_BEGIN
 @interface FCXLModelTexture : NSObject
 @property (nonatomic, readonly, nullable) NSString *path;
 @property (nonatomic, readonly, nullable) NSData *data;
+/// Каким набором развёртки её накладывать.
+///
+/// Наборов у модели бывает несколько, и разные карты пользуются разными: у этой машины
+/// цвет фонаря лежит в наборе 0, а красное стекло — в наборе 1. Наложишь вторую картинку
+/// первым набором — попадёшь не туда, и фонарь останется белым.
+@property (nonatomic, readonly) NSInteger uvChannel;
 @end
 
 /// Имена гнёзд, по которым раскладываются картинки материала.
@@ -33,6 +39,8 @@ extern NSString *const FCXLModelTextureSpecular;
 @property (nonatomic, readonly) NSData *normals;
 /// Развёртка: по два float на вершину; пусто, если модель без развёртки.
 @property (nonatomic, readonly) NSData *texCoords;
+/// Все наборы развёртки — в том же порядке, в каком на них ссылается uvChannel.
+@property (nonatomic, readonly) NSArray<NSData *> *texCoordSets;
 /// Номера вершин по три на треугольник.
 @property (nonatomic, readonly) NSData *indices;
 @property (nonatomic, readonly) NSUInteger vertexCount;
@@ -50,6 +58,9 @@ extern NSString *const FCXLModelTextureSpecular;
 @property (nonatomic, readonly, nullable) NSNumber *roughness;
 @property (nonatomic, readonly, nullable) NSNumber *opacity;
 @property (nonatomic, readonly, nullable) NSColor *emissiveColor;
+/// Сила свечения (в glTF это KHR_materials_emissive_strength): у фонаря она бывает
+/// десятикратной, и без неё стекло светится еле-еле.
+@property (nonatomic, readonly, nullable) NSNumber *emissiveStrength;
 @property (nonatomic, readonly, nullable) NSString *materialName;
 @property (nonatomic, readonly, nullable) NSString *name;
 

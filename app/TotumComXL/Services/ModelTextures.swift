@@ -66,6 +66,54 @@ enum ModelTextureRescue {
         }
     }
 
+    /// Картинка, умноженная на цвет.
+    ///
+    /// В физически верном материале цвет и картинка НЕ соперничают, а перемножаются:
+    /// у стекла фонаря картинка белая, а свой цвет — чёрный, и красным его делает
+    /// свечение поверх. Пока мы просто заменяли цвет картинкой, фонарь выходил белым
+    /// пятном вместо тёмного стекла.
+    ///
+    /// Почти белый цвет ничего не меняет — такую работу не делаем вовсе.
+    static func tinted(_ image: NSImage, by colour: NSColor) -> NSImage? {
+        guard let srgb = colour.usingColorSpace(.sRGB) else { return nil }
+        let red = srgb.redComponent, green = srgb.greenComponent, blue = srgb.blueComponent
+        guard min(red, min(green, blue)) < 0.98 else { return nil }
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return nil }
+        let result = NSImage(size: size)
+        result.lockFocus()
+        image.draw(in: NSRect(origin: .zero, size: size))
+        srgb.withAlphaComponent(1).setFill()
+        NSRect(origin: .zero, size: size).fill(using: .multiply)
+        result.unlockFocus()
+        return result
+    }
+
+    /// Картинка, умноженная на число (ярче единицы — светлее).
+    ///
+    /// Нужна для силы свечения из glTF: у стекла фонаря она бывает десятикратной. Ставить
+    /// её через `SCNMaterialProperty.intensity` не выходит — замерено, на снимке ничего не
+    /// меняется, — поэтому запекаем в саму картинку.
+    static func brightened(_ image: NSImage, by factor: CGFloat) -> NSImage? {
+        guard factor > 1.01, image.size.width > 0, image.size.height > 0 else { return nil }
+        let size = image.size
+        let result = NSImage(size: size)
+        let rect = NSRect(origin: .zero, size: size)
+        result.lockFocus()
+        image.draw(in: rect)
+        // Сложение с самой собой нужное число раз — чем светлее исходная точка, тем
+        // быстрее она упирается в белое, как и должно быть.
+        var left = factor - 1
+        while left > 0.01 {
+            NSGraphicsContext.current?.compositingOperation = .plusLighter
+            image.draw(in: rect, from: .zero, operation: .plusLighter,
+                       fraction: min(left, 1))
+            left -= 1
+        }
+        result.unlockFocus()
+        return result
+    }
+
     /// Картинка по ссылке из модели — или nil, если её нигде нет.
     static func image(reference: String, modelFolder: String) -> NSImage? {
         guard let path = locate(reference: reference, modelFolder: modelFolder) else { return nil }
@@ -174,5 +222,55 @@ enum WavefrontMTL {
             if !name.isEmpty { return name }
         }
         return nil
+    }
+}
+
+/// Сила свечения материалов из самого файла glTF.
+///
+/// В glTF она живёт в расширении `KHR_materials_emissive_strength`, а библиотека чтения
+/// его не передаёт: у стекла фонаря в файле стоит десятикратная сила, и без неё стекло
+/// остаётся тёмным. Читаем сами — это обычный JSON, а у .glb он лежит первым куском
+/// двоичного файла.
+enum GLTFEmissiveStrength {
+
+    /// Имя материала → сила свечения. Пусто, если файл не glTF или расширения в нём нет.
+    static func table(forModelAt path: String) -> [String: Double] {
+        let ext = (path as NSString).pathExtension.lowercased()
+        guard ext == "gltf" || ext == "glb" else { return [:] }
+        guard let data = FileManager.default.contents(atPath: path) else { return [:] }
+        guard let json = ext == "glb" ? jsonChunk(inGLB: data) : data else { return [:] }
+        return table(json: json)
+    }
+
+    /// Первый кусок .glb — это JSON: заголовок 12 байт, затем длина и метка «JSON».
+    static func jsonChunk(inGLB data: Data) -> Data? {
+        guard data.count > 20 else { return nil }
+        func word(at offset: Int) -> UInt32 {
+            data.withUnsafeBytes { raw in
+                var value: UInt32 = 0
+                for index in 0..<4 { value |= UInt32(raw[offset + index]) << (8 * index) }
+                return value
+            }
+        }
+        guard word(at: 0) == 0x46546C67 else { return nil }   // «glTF»
+        let length = Int(word(at: 12))
+        guard word(at: 16) == 0x4E4F534A, length > 0,        // «JSON»
+              20 + length <= data.count else { return nil }
+        return data.subdata(in: 20..<(20 + length))
+    }
+
+    static func table(json: Data) -> [String: Double] {
+        guard let root = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+              let materials = root["materials"] as? [[String: Any]] else { return [:] }
+        var result: [String: Double] = [:]
+        for material in materials {
+            guard let name = material["name"] as? String,
+                  let extensions = material["extensions"] as? [String: Any],
+                  let strength = extensions["KHR_materials_emissive_strength"] as? [String: Any],
+                  let value = strength["emissiveStrength"] as? Double, value > 1
+            else { continue }
+            result[name] = value
+        }
+        return result
     }
 }
