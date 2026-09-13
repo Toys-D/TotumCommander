@@ -143,17 +143,17 @@ enum Model3DLoader {
     /// свет» Ka в свечение материала, и белый Ka заливает модель ровным белым — на
     /// снимке был ровно один оттенок. Обе правки — только там, где система не справилась.
     private static func rescueMaterials(in scene: SCNScene, modelURL: URL, ext: String) {
-        let folder = modelURL.deletingLastPathComponent().path
+        let finder = ModelTextureFinder(modelFolder: modelURL.deletingLastPathComponent())
         let mtl = ext == "obj" ? wavefrontMaterials(for: modelURL) : [:]
         for material in materials(in: scene.rootNode) {
             let named = material.name.flatMap { mtl[$0] }
             // Своя картинка: либо спасаем ту, что назвала система, либо берём из .mtl.
             if let reference = textReference(material.diffuse.contents),
-               let image = ModelTextureRescue.image(reference: reference, modelFolder: folder) {
+               let image = finder.image(for: reference) {
                 material.diffuse.contents = image
             } else if !(material.diffuse.contents is NSImage),
                       let reference = named?.diffuse,
-                      let image = ModelTextureRescue.image(reference: reference, modelFolder: folder) {
+                      let image = finder.image(for: reference) {
                 material.diffuse.contents = image
             } else if !(material.diffuse.contents is NSImage), let colour = named?.diffuseColour {
                 material.diffuse.contents = nsColour(colour)
@@ -161,16 +161,16 @@ enum Model3DLoader {
             // Карта нормалей: Model I/O теряет map_Bump по дороге, а без неё модель —
             // гладкая болванка.
             if !(material.normal.contents is NSImage), let reference = named?.normal,
-               let image = ModelTextureRescue.image(reference: reference, modelFolder: folder) {
+               let image = finder.image(for: reference) {
                 material.normal.contents = image
             }
             if let reference = textReference(material.normal.contents),
-               let image = ModelTextureRescue.image(reference: reference, modelFolder: folder) {
+               let image = finder.image(for: reference) {
                 material.normal.contents = image
             }
             // Свечение.
             if let reference = named?.emission ?? textReference(material.emission.contents),
-               let image = ModelTextureRescue.image(reference: reference, modelFolder: folder) {
+               let image = finder.image(for: reference) {
                 material.emission.contents = image
             } else if let colour = named?.emissionColour {
                 material.emission.contents = nsColour(colour)
@@ -180,14 +180,14 @@ enum Model3DLoader {
                 material.emission.contents = NSColor.black
             }
             if let reference = named?.specular ?? textReference(material.specular.contents),
-               let image = ModelTextureRescue.image(reference: reference, modelFolder: folder) {
+               let image = finder.image(for: reference) {
                 material.specular.contents = image
             }
             // Остальные карты — просто спасаем путь, если система оставила строку.
             for property in [material.metalness, material.roughness, material.ambientOcclusion,
                              material.displacement, material.transparent] {
                 if let reference = textReference(property.contents),
-                   let image = ModelTextureRescue.image(reference: reference, modelFolder: folder) {
+                   let image = finder.image(for: reference) {
                     property.contents = image
                 }
             }
@@ -250,10 +250,10 @@ enum Model3DLoader {
             throw Model3DError.unreadable(reason: reason(for: error))
         }
         let scene = SCNScene()
-        let folder = url.deletingLastPathComponent()
+        let finder = ModelTextureFinder(modelFolder: url.deletingLastPathComponent())
         let glow = GLTFEmissiveStrength.table(forModelAt: url.path)
         for mesh in meshes {
-            guard let geometry = geometry(from: mesh, folder: folder, glow: glow) else { continue }
+            guard let geometry = geometry(from: mesh, finder: finder, glow: glow) else { continue }
             scene.rootNode.addChildNode(SCNNode(geometry: geometry))
         }
         let counts = (meshes: meshes.count,
@@ -276,7 +276,7 @@ enum Model3DLoader {
     }
 
     /// Из сырых чисел — геометрия SceneKit.
-    private static func geometry(from mesh: Model3DMesh, folder: URL,
+    private static func geometry(from mesh: Model3DMesh, finder: ModelTextureFinder,
                                 glow: [String: Double] = [:]) -> SCNGeometry? {
         let vertices = mesh.vertexCount
         guard vertices > 0, mesh.faceCount > 0, !mesh.positions.isEmpty else { return nil }
@@ -339,7 +339,7 @@ enum Model3DLoader {
         ]
         for (slot, property) in slots {
             if let texture = mesh.textures[slot],
-               var image = self.image(for: texture, folder: folder) {
+               var image = self.image(for: texture, finder: finder) {
                 // Свой цвет материала умножается на картинку, а не заменяется ею: у стекла
                 // фонаря картинка белая, а цвет чёрный — красным его делает свечение
                 // поверх. Без умножения фонарь выходил белым пятном.
@@ -370,11 +370,10 @@ enum Model3DLoader {
     }
 
     /// Картинка гнезда: вшитая в файл — из байтов, иначе ищем по имени рядом с моделью.
-    private static func image(for texture: Model3DTexture, folder: URL) -> NSImage? {
+    private static func image(for texture: Model3DTexture,
+                              finder: ModelTextureFinder) -> NSImage? {
         if let data = texture.data, let image = NSImage(data: data) { return image }
-        if let path = texture.path {
-            return ModelTextureRescue.image(reference: path, modelFolder: folder.path)
-        }
+        if let path = texture.path { return finder.image(for: path) }
         return nil
     }
 
