@@ -2522,3 +2522,16 @@ A frequent culprit is Parallels Desktop (usually F6): open its Settings ▸ Shor
 "settings.contextMenu.addToMain" = "Add to the menu";
 "settings.contextMenu.addToExtra" = "Add under \"More\"";
 "settings.contextMenu.noMatches" = "Nothing found";
+
+/* 3D-модели */
+"preview.mode.model" = "Model";
+"viewer.model.unsupported" = "“%@” is not a format we read as a model.";
+"viewer.model.unreadable" = "The model could not be read";
+"viewer.model.tooBig" = "Too large to preview: %@";
+"viewer.model.meshes" = "Meshes: %@";
+"viewer.model.vertices" = "Vertices: %@";
+"viewer.model.faces" = "Faces: %@";
+"viewer.model.wireframe" = "Show the wireframe";
+"viewer.model.reset" = "Put the camera back";
+"viewer.model.readerDied" = "The file crashed the model reader — the app is fine";
+"viewer.model.readerSlow" = "Reading the model took too long and was stopped";

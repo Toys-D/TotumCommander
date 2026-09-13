@@ -1,0 +1,604 @@
+import AppKit
+import FCXLBridgeObjC
+import Metal
+import ModelIO
+import SceneKit
+import XCTest
+@testable import TotumComXLApp
+
+/// Трёхмерные модели в просмотрщике: кто какой формат читает и получается ли картинка.
+final class Model3DTests: XCTestCase {
+
+    /// Образцы. В хранилище лежат три крошечных (obj, stl, gltf — меньше килобайта на
+    /// всех); папку можно подменить переменной среды и прогнать этот же тест по своему
+    /// набору моделей, ничего не добавляя в хранилище:
+    ///   FCXL_MODEL_FIXTURES=/путь/к/моделям swift test --filter Model3DTests
+    private static var fixtures: String {
+        if let own = ProcessInfo.processInfo.environment["FCXL_MODEL_FIXTURES"], !own.isEmpty {
+            return own.hasSuffix("/") ? own : own + "/"
+        }
+        return FileManager.default.currentDirectoryPath + "/app/TotumComXLTests/Fixtures/Models/"
+    }
+
+    private func fixture(_ name: String) throws -> String {
+        let path = Self.fixtures + name
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: path), "нет образца \(name)")
+        return path
+    }
+
+    // MARK: - Кто читает
+
+    func test_форматыApple_ИдутСистемнымПутём() {
+        for ext in ["obj", "stl", "ply", "abc", "usd", "usda", "usdc", "usdz", "dae", "scn"] {
+            XCTAssertEqual(Model3DFormats.reader(forExtension: ext), .apple, ext)
+        }
+    }
+
+    func test_остальныеФорматы_ИдутЧерезБиблиотеку() {
+        for ext in ["gltf", "glb", "fbx", "3ds", "blend", "3mf", "x3d", "step"] {
+            XCTAssertEqual(Model3DFormats.reader(forExtension: ext), .library, ext)
+        }
+    }
+
+    func test_расширениеБезРазницыВРегистреИТочке() {
+        XCTAssertEqual(Model3DFormats.reader(forExtension: "OBJ"), .apple)
+        XCTAssertEqual(Model3DFormats.reader(forExtension: ".Gltf"), .library)
+    }
+
+    /// Чужое не берём: чертёж остаётся чертежом, а `xml`, `raw` и `mesh` библиотека
+    /// заявляет как модели — в файловом менеджере это значит совсем другое.
+    func test_чужиеРасширенияНеЗабираем() {
+        for ext in ["dxf", "xml", "raw", "mesh", "txt", "png", "pdf", "dwg", "iges", "max", "c4d"] {
+            XCTAssertNil(Model3DFormats.reader(forExtension: ext), ext)
+        }
+    }
+
+    /// Сторож: всё, что мы обещаем читать библиотекой, она и правда читает. Обновится
+    /// библиотека, выпадет формат — тест скажет об этом, а не пользователь.
+    func test_библиотекаПодтверждаетСвойСписок() {
+        let readable = Set(FCXLModelBridge.readableExtensions())
+        XCTAssertGreaterThan(readable.count, 40, "мост не отвечает — не собрана библиотека?")
+        let promised = Model3DFormats.libraryExtensions
+        XCTAssertTrue(promised.isSubset(of: readable),
+                      "библиотека больше не читает: \(promised.subtracting(readable).sorted())")
+    }
+
+    /// И системный список — не на слово: спрашиваем сам Model I/O (dae и scn у SceneKit,
+    /// их Model I/O не знает — они здесь исключение и проверяются чтением образца).
+    func test_ModelIOПодтверждаетСвойСписок() {
+        for ext in Model3DFormats.appleExtensions.subtracting(["dae", "scn"]) {
+            XCTAssertTrue(MDLAsset.canImportFileExtension(ext), ext)
+        }
+    }
+
+    // MARK: - Камера и пределы
+
+    func test_камераОтодвигаетсяПоРазмеруМодели() {
+        let near = Model3DLoader.cameraDistance(radius: 1)
+        let far = Model3DLoader.cameraDistance(radius: 10)
+        XCTAssertGreaterThan(far, near * 9, "вдесятеро крупнее — вдесятеро дальше")
+        // Узкий угол обзора требует большего расстояния, чем широкий.
+        XCTAssertGreaterThan(Model3DLoader.cameraDistance(radius: 1, fovDegrees: 20),
+                             Model3DLoader.cameraDistance(radius: 1, fovDegrees: 90))
+    }
+
+    func test_камераНеВырождаетсяНаПустойМодели() {
+        let distance = Model3DLoader.cameraDistance(radius: 0)
+        XCTAssertTrue(distance.isFinite)
+        XCTAssertGreaterThan(distance, 0)
+        XCTAssertTrue(Model3DLoader.cameraDistance(radius: 1, fovDegrees: 0).isFinite,
+                      "нулевой угол обзора не должен давать бесконечность")
+    }
+
+    func test_слишкомБольшойФайлНеОткрываем() {
+        XCTAssertFalse(Model3DLoader.isTooBig(size: 10_000_000))
+        XCTAssertTrue(Model3DLoader.isTooBig(size: Model3DLoader.sizeLimit + 1))
+    }
+
+    // MARK: - Чтение образцов
+
+    func test_читаетOBJСистемнымПутём() throws {
+        let model = try Model3DLoader.load(path: try fixture("cube.obj"))
+        XCTAssertEqual(model.reader, .apple)
+        XCTAssertGreaterThan(model.meshCount, 0)
+        XCTAssertGreaterThan(model.vertexCount, 0)
+        XCTAssertGreaterThan(model.radius, 0)
+    }
+
+    func test_читаетSTLСистемнымПутём() throws {
+        let model = try Model3DLoader.load(path: try fixture("pyramid.stl"))
+        XCTAssertEqual(model.reader, .apple)
+        XCTAssertGreaterThan(model.faceCount, 0)
+    }
+
+    /// Главное приобретение: glTF, которого у Apple нет.
+    func test_читаетGLTFБиблиотекой() throws {
+        let model = try Model3DLoader.load(path: try fixture("triangle.gltf"))
+        XCTAssertEqual(model.reader, .library)
+        XCTAssertEqual(model.meshCount, 1)
+        XCTAssertEqual(model.vertexCount, 3)
+        XCTAssertEqual(model.faceCount, 1)
+    }
+
+    func test_чужойФайлОтвергаетсяВнятно() {
+        let path = FileManager.default.currentDirectoryPath + "/Package.swift"
+        XCTAssertThrowsError(try Model3DLoader.load(path: path)) { error in
+            XCTAssertEqual(error as? Model3DError, .unsupported(ext: "swift"))
+        }
+    }
+
+    /// Каждая модель в папке образцов читается — сколько бы их там ни лежало и какого бы
+    /// формата они ни были. Тем же кодом, каким её прочтёт просмотрщик.
+    func test_всеОбразцыВПапкеЧитаются() throws {
+        let folder = Self.fixtures
+        // Обход с заходом в подпапки: набор образцов бывает разложен по форматам.
+        let enumerator = FileManager.default.enumerator(atPath: folder)
+        var names: [String] = []
+        while let entry = enumerator?.nextObject() as? String { names.append(entry) }
+        let models = names.filter { Model3DFormats.isModel(extension: ($0 as NSString).pathExtension) }
+        try XCTSkipIf(models.isEmpty, "в папке образцов нет моделей")
+        // Ошибки не прячем, но и не обрываем обход первой же: в наборе бывают нарочно
+        // битые файлы, и важно, что мы отвечаем «не прочитано», а не падаем.
+        var failures: [String] = []
+        for name in models.sorted() {
+            let model: Model3DScene
+            do { model = try Model3DLoader.load(path: folder + name) }
+            catch {
+                failures.append("\(name): \(error.localizedDescription)")
+                print("  НЕ ПРОЧИТАНО \(name): \(error.localizedDescription)")
+                continue
+            }
+            if ProcessInfo.processInfo.environment["FCXL_MODEL_STRICT"] == nil {
+                let all = Self.materials(in: model.scene)
+                let textured = all.filter { $0.diffuse.contents is NSImage }.count
+                print("  ОК \(name): сеток \(model.meshCount), вершин \(model.vertexCount),"
+                      + " материалов \(all.count), с картинкой \(textured)")
+                continue
+            }
+            XCTAssertGreaterThan(model.meshCount, 0, name)
+            XCTAssertGreaterThan(model.vertexCount, 0, name)
+            XCTAssertGreaterThan(model.faceCount, 0, name)
+            XCTAssertTrue(model.radius.isFinite && model.radius > 0, name)
+            _ = failures
+            // В журнал — сколько материалов получили картинку: по этой строке видно,
+            // нашлись ли текстуры у своего набора моделей.
+            let all = Self.materials(in: model.scene)
+            let textured = all.filter { $0.diffuse.contents is NSImage }.count
+            let glowing = all.filter { $0.emission.contents is NSImage }.count
+            if ProcessInfo.processInfo.environment["FCXL_MODEL_DUMP"] != nil {
+                var rows: [(Int, String)] = []
+                func walk(_ node: SCNNode) {
+                    if let g = node.geometry {
+                        let v = g.sources(for: .vertex).first?.vectorCount ?? 0
+                        let m = g.materials.first
+                        var what = "нет"
+                        if let image = m?.diffuse.contents as? NSImage {
+                            let rep = NSBitmapImageRep(data: image.tiffRepresentation ?? Data())
+                            var sum = 0.0; var count = 0
+                            if let rep {
+                                for y in stride(from: 0, to: rep.pixelsHigh, by: 16) {
+                                    for x in stride(from: 0, to: rep.pixelsWide, by: 16) {
+                                        if let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) {
+                                            sum += Double(c.brightnessComponent); count += 1
+                                        }
+                                    }
+                                }
+                            }
+                            var rgb = (r: 0.0, g: 0.0, b: 0.0)
+                            if let rep {
+                                var taken = 0.0
+                                for y in stride(from: 0, to: rep.pixelsHigh, by: 8) {
+                                    for x in stride(from: 0, to: rep.pixelsWide, by: 8) {
+                                        if let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) {
+                                            rgb.r += Double(c.redComponent)
+                                            rgb.g += Double(c.greenComponent)
+                                            rgb.b += Double(c.blueComponent)
+                                            taken += 1
+                                        }
+                                    }
+                                }
+                                if taken > 0 { rgb = (rgb.r / taken, rgb.g / taken, rgb.b / taken) }
+                            }
+                            what = "картинка \(Int(image.size.width))×\(Int(image.size.height))"
+                                + " цвет(\(Int(rgb.r * 255)),\(Int(rgb.g * 255)),\(Int(rgb.b * 255)))"
+                                + " яркость \(count > 0 ? Int(sum / Double(count) * 255) : -1)"
+                        } else if let colour = (m?.diffuse.contents as? NSColor)?.usingColorSpace(.sRGB) {
+                            what = "цвет \(Int(colour.brightnessComponent * 255))"
+                        }
+                        let metal = (m?.metalness.contents as? Double).map { String(format: "%.2f", $0) } ?? "-"
+                        let rough = (m?.roughness.contents as? Double).map { String(format: "%.2f", $0) } ?? "-"
+                        var glow = "нет"
+                        if let image = m?.emission.contents as? NSImage {
+                            glow = "картинка \(Int(image.size.width))×\(Int(image.size.height))"
+                                + " канал \(m?.emission.mappingChannel ?? 0)"
+                        } else if let colour = (m?.emission.contents as? NSColor)?.usingColorSpace(.sRGB) {
+                            glow = "цвет \(Int(colour.brightnessComponent * 255))"
+                        }
+                        rows.append((v, "\(m?.name ?? "-") — \(what) свечение: \(glow)"
+                                     + " uv=\(g.sources(for: .texcoord).count) норм=\(g.sources(for: .normal).first?.vectorCount ?? 0)"
+                                     + " металл=\(metal) шероховатость=\(rough)"
+                                     + " прозрачность=\(String(format: "%.2f", m?.transparency ?? 1))"))
+                    }
+                    node.childNodes.forEach(walk)
+                }
+                walk(model.scene.rootNode)
+                let filter = ProcessInfo.processInfo.environment["FCXL_MODEL_DUMP"] ?? ""
+                let wanted = (filter == "1" || filter.isEmpty)
+                    ? Array(rows.sorted(by: { $0.0 > $1.0 }).prefix(6))
+                    : rows.filter { $0.1.localizedCaseInsensitiveContains(filter) }
+                for row in wanted {
+                    print("    \(row.0) вершин: \(row.1)")
+                }
+            }
+            print("  \(name): сеток \(model.meshCount), материалов \(all.count),"
+                  + " с картинкой \(textured), со свечением \(glowing),"
+                  + " оттенков на снимке \(Self.shades(of: model))")
+        }
+    }
+
+    // MARK: - Текстуры с чужой машины
+
+    /// Та самая жалоба: «текстуры есть, а почему не подтягиваются».
+    ///
+    /// Модель из Blender под Windows называет свои картинки как `C:/baseColor.png` —
+    /// такого пути на Mac нет, и модель выходит белой, хотя картинки лежат рядом с ней.
+    /// Здесь такая модель собирается на месте, в отдельной папке (в хранилище двоичных
+    /// картинок не держим), и проверяется весь путь: имя нашлось, карта нормалей встала,
+    /// свечение погасло и модель РИСУЕТСЯ не одним белым пятном.
+    func test_текстураСЧужимПутёмНаходитсяПоИмени() throws {
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("fcxl-model-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        try Self.write(png: NSColor.systemOrange, to: folder.appendingPathComponent("skin.png"))
+        try Self.write(png: NSColor.systemBlue, to: folder.appendingPathComponent("skin_normal.png"))
+        // Ka 1 1 1 — то, что Model I/O принимает за свечение; Ke в файле нет намеренно.
+        let mtl = """
+        newmtl painted
+        Ka 1.000000 1.000000 1.000000
+        Ks 0.500000 0.500000 0.500000
+        map_Kd C:/skin.png
+        map_Bump -bm 1.000000 C:\\tex\\skin_normal.png
+        """
+        try mtl.write(to: folder.appendingPathComponent("thing.mtl"), atomically: true,
+                      encoding: .utf8)
+        try Self.cubeOBJ(material: "painted", mtlFile: "thing.mtl")
+            .write(to: folder.appendingPathComponent("thing.obj"), atomically: true, encoding: .utf8)
+
+        let model = try Model3DLoader.load(path: folder.appendingPathComponent("thing.obj").path)
+        XCTAssertEqual(model.reader, .apple)
+        let materials = Self.materials(in: model.scene)
+        let painted = try XCTUnwrap(materials.first)
+        XCTAssertTrue(painted.diffuse.contents is NSImage, "цветная карта не нашлась по имени")
+        XCTAssertTrue(painted.normal.contents is NSImage, "карта нормалей не нашлась")
+        let emission = painted.emission.contents as? NSColor
+        XCTAssertEqual(emission?.usingColorSpace(.sRGB)?.brightnessComponent ?? 1, 0, accuracy: 0.01,
+                       "белое свечение от Ka заливает модель ровным белым")
+    }
+
+    /// Порядок поиска картинки: как написано, рядом по относительному пути, потом по имени.
+    func test_гдеИщемКартинкуМатериала() {
+        let folder = "/models/thing"
+        let candidates = ModelTextureRescue.candidates(reference: "C:\\tex\\skin.png",
+                                                       modelFolder: folder)
+        XCTAssertEqual(candidates.first, folder + "/C:/tex/skin.png", "сперва как написано")
+        XCTAssertTrue(candidates.contains(folder + "/skin.png"), "потом по имени рядом с моделью")
+        XCTAssertTrue(candidates.contains(folder + "/textures/skin.png"), "и в соседних папках")
+        // Абсолютный путь пробуется как есть — модель могла прийти со своей же машины.
+        XCTAssertEqual(ModelTextureRescue.candidates(reference: "/tmp/a/skin.png",
+                                                     modelFolder: folder).first,
+                       "/tmp/a/skin.png")
+        XCTAssertTrue(ModelTextureRescue.candidates(reference: "  ", modelFolder: folder).isEmpty)
+    }
+
+    func test_находитПервыйСуществующий() {
+        let folder = "/models"
+        let found = ModelTextureRescue.locate(reference: "D:\\art\\skin.png", modelFolder: folder) {
+            $0 == folder + "/textures/skin.png"
+        }
+        XCTAssertEqual(found, folder + "/textures/skin.png")
+        XCTAssertNil(ModelTextureRescue.locate(reference: "D:/skin.png", modelFolder: folder) { _ in false })
+    }
+
+    /// Разбор .mtl — включая ключи с числами перед путём и пробелы в имени файла.
+    func test_разборФайлаМатериалов() {
+        let text = """
+        # Blender 5.2.0 LTS MTL File
+        newmtl lights
+        Ka 1.000000 1.000000 1.000000
+        Kd 0.000000 0.000000 0.000000
+        map_Ke C:/lights_emissive.png
+
+        newmtl slug_launcher
+        Ke 0.000000 0.000000 0.000000
+        map_Kd C:/slug launcher baseColor.png
+        map_Bump -bm 1.000000 C:/slug_launcher_normal.png
+        """
+        let parsed = WavefrontMTL.parse(text)
+        XCTAssertEqual(parsed.count, 2)
+        XCTAssertEqual(parsed["lights"]?.emission, "C:/lights_emissive.png")
+        XCTAssertEqual(parsed["lights"]?.diffuseColour, [0, 0, 0])
+        XCTAssertEqual(parsed["slug_launcher"]?.diffuse, "C:/slug launcher baseColor.png",
+                       "пробелы в имени файла — часть пути")
+        XCTAssertEqual(parsed["slug_launcher"]?.normal, "C:/slug_launcher_normal.png",
+                       "-bm 1.000000 — это ключ, а не путь")
+        XCTAssertEqual(parsed["slug_launcher"]?.emissionColour, [0, 0, 0])
+    }
+
+    func test_гаситьСвечениеТолькоКогдаФайлОНёмМолчит() {
+        var material = WavefrontMaterial()
+        XCTAssertTrue(WavefrontMTL.emissionShouldBeBlack(material: material, currentIsImage: false))
+        material.emissionColour = [0.2, 0.2, 0.2]
+        XCTAssertFalse(WavefrontMTL.emissionShouldBeBlack(material: material, currentIsImage: false))
+        material = WavefrontMaterial()
+        material.emission = "glow.png"
+        XCTAssertFalse(WavefrontMTL.emissionShouldBeBlack(material: material, currentIsImage: false))
+        XCTAssertFalse(WavefrontMTL.emissionShouldBeBlack(material: nil, currentIsImage: false),
+                       "без .mtl не трогаем")
+        XCTAssertFalse(WavefrontMTL.emissionShouldBeBlack(material: WavefrontMaterial(),
+                                                          currentIsImage: true),
+                       "картинку свечения не гасим")
+    }
+
+    func test_имяФайлаМатериаловБерётсяИзСамойМодели() {
+        XCTAssertEqual(WavefrontMTL.materialFileName(inOBJ: "# x\nmtllib Sem título.mtl\nv 0 0 0"),
+                       "Sem título.mtl")
+        XCTAssertNil(WavefrontMTL.materialFileName(inOBJ: "v 0 0 0"))
+    }
+
+    /// Сколько различимых оттенков даёт снимок модели. Один — плоский силуэт: ровно так
+    /// выглядела модель, пока её свечение оставалось белым.
+    static func shades(of model: Model3DScene) -> Int {
+        guard let device = MTLCreateSystemDefaultDevice() else { return -1 }
+        let renderer = SCNRenderer(device: device, options: nil)
+        renderer.scene = model.scene
+        renderer.autoenablesDefaultLighting = true
+        renderer.pointOfView = camera(for: model)
+        let image = renderer.snapshot(atTime: 0, with: CGSize(width: 160, height: 160),
+                                      antialiasingMode: .none)
+        guard let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff) else { return -1 }
+        var seen = Set<Int>()
+        for y in 0..<rep.pixelsHigh {
+            for x in 0..<rep.pixelsWide {
+                guard let colour = rep.colorAt(x: x, y: y), colour.alphaComponent > 0.1 else { continue }
+                let key = Int(colour.redComponent * 20) * 441
+                    + Int(colour.greenComponent * 20) * 21 + Int(colour.blueComponent * 20)
+                seen.insert(key)
+            }
+        }
+        // Снимки можно и сохранить — когда разбираешься, почему модель выглядит не так:
+        //   FCXL_MODEL_SHOTS=/куда/класть swift test --filter Model3DTests
+        // Четыре стороны, а не одна: текстуры бывают не на всех боках, и вид спереди
+        // ничего не скажет о заднем фонаре.
+        if let folder = ProcessInfo.processInfo.environment["FCXL_MODEL_SHOTS"], !folder.isEmpty {
+            for (index, turn) in [0.0, Double.pi / 2, Double.pi, -Double.pi / 2].enumerated() {
+                let node = camera(for: model)
+                let distance = Model3DLoader.cameraDistance(radius: model.radius)
+                node.position = SCNVector3(model.center.x + CGFloat(sin(turn)) * distance * 0.95,
+                                           model.center.y + distance * 0.25,
+                                           model.center.z + CGFloat(cos(turn)) * distance * 0.95)
+                node.look(at: model.center)
+                renderer.pointOfView = node
+                let side = renderer.snapshot(atTime: 0, with: CGSize(width: 800, height: 800),
+                                             antialiasingMode: .multisampling4X)
+                if let data = side.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))?
+                    .representation(using: .png, properties: [:]) {
+                    let name = "\(UUID().uuidString.prefix(4))-сторона\(index).png"
+                    try? data.write(to: URL(fileURLWithPath: folder).appendingPathComponent(name))
+                }
+            }
+        }
+        return seen.count
+    }
+
+    private static func materials(in scene: SCNScene) -> [SCNMaterial] {
+        var result: [SCNMaterial] = []
+        func walk(_ node: SCNNode) {
+            result.append(contentsOf: node.geometry?.materials ?? [])
+            node.childNodes.forEach(walk)
+        }
+        walk(scene.rootNode)
+        return result
+    }
+
+    private static func write(png colour: NSColor, to url: URL) throws {
+        let image = NSImage(size: NSSize(width: 8, height: 8))
+        image.lockFocus()
+        colour.setFill()
+        NSRect(x: 0, y: 0, width: 8, height: 8).fill()
+        image.unlockFocus()
+        let data = try XCTUnwrap(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))?
+            .representation(using: .png, properties: [:]))
+        try data.write(to: url)
+    }
+
+    /// Куб с нормалями и развёрткой — чтобы текстуре было куда лечь.
+    private static func cubeOBJ(material: String, mtlFile: String) -> String {
+        """
+        mtllib \(mtlFile)
+        v 0 0 0
+        v 1 0 0
+        v 1 1 0
+        v 0 1 0
+        vt 0 0
+        vt 1 0
+        vt 1 1
+        vt 0 1
+        vn 0 0 1
+        usemtl \(material)
+        f 1/1/1 2/2/1 3/3/1
+        f 1/1/1 3/3/1 4/4/1
+        """
+    }
+
+    /// Файл может нести массив нормалей из одних нулей — так пишут некоторые экспортёры.
+    /// Библиотека такое не лечит (её «посчитать нормали» работает, только когда их нет
+    /// вовсе), и модель выходила ровным плоским пятном: замерено — ровно один оттенок
+    /// на снимке. Мост обязан заметить это и посчитать нормали сам.
+    func test_нулевыеНормалиПересчитываются() throws {
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("fcxl-normals-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("flat.obj")
+        try """
+        v 0 0 0
+        v 1 0 0
+        v 0 1 0
+        vn 0 0 0
+        vn 0 0 0
+        vn 0 0 0
+        f 1//1 2//2 3//3
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        let loaded = try FCXLModelBridge.loadModel(atPath: file.path)
+        let mesh = try XCTUnwrap(loaded.meshes.first)
+        XCTAssertEqual(mesh.normals.count, Int(mesh.vertexCount) * 12, "нормаль на каждую вершину")
+        let lengths: [Float] = mesh.normals.withUnsafeBytes { raw in
+            let floats = raw.bindMemory(to: Float.self)
+            return (0..<Int(mesh.vertexCount)).map { index in
+                let x = floats[index * 3], y = floats[index * 3 + 1], z = floats[index * 3 + 2]
+                return (x * x + y * y + z * z).squareRoot()
+            }
+        }
+        for length in lengths {
+            XCTAssertEqual(length, 1, accuracy: 0.001, "нормаль должна быть единичной")
+        }
+    }
+
+    // MARK: - Получается ли картинка
+
+    /// Проверка целиком: прочитать, поставить камеру по размеру модели и нарисовать за
+    /// кадром. Если камера смотрит мимо — точек не будет, и тест это поймает.
+    func test_модельРисуетсяИПопадаетВКадр() throws {
+        let device = MTLCreateSystemDefaultDevice()
+        try XCTSkipIf(device == nil, "нет Metal")
+        for name in ["cube.obj", "triangle.gltf", "pyramid.stl"] {
+            let model = try Model3DLoader.load(path: try fixture(name))
+            let renderer = SCNRenderer(device: device, options: nil)
+            renderer.scene = model.scene
+            renderer.autoenablesDefaultLighting = true
+            renderer.pointOfView = Self.camera(for: model)
+            let image = renderer.snapshot(atTime: 0, with: CGSize(width: 128, height: 128),
+                                          antialiasingMode: .none)
+            let drawn = Self.opaquePoints(in: image)
+            XCTAssertGreaterThan(drawn, 20, "\(name): модель не попала в кадр")
+        }
+    }
+
+    private static func camera(for model: Model3DScene) -> SCNNode {
+        Model3DLoader.camera(for: model)
+    }
+
+    private static func opaquePoints(in image: NSImage) -> Int {
+        guard let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff) else { return 0 }
+        var drawn = 0
+        for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
+            for x in stride(from: 0, to: rep.pixelsWide, by: 2) {
+                if let colour = rep.colorAt(x: x, y: y), colour.alphaComponent > 0.05 { drawn += 1 }
+            }
+        }
+        return drawn
+    }
+
+    // MARK: - Просмотрщик знает, что это модель
+
+    func test_просмотрщикОтноситФайлыКМоделям() {
+        for name in ["a.obj", "b.gltf", "c.glb", "d.usdz", "e.fbx", "f.dae", "g.stl"] {
+            XCTAssertEqual(fileCategory(forFileName: name), .model, name)
+        }
+        XCTAssertEqual(fileCategory(forFileName: "plan.dxf"), .drawing, "чертёж остаётся чертежом")
+        XCTAssertEqual(fileCategory(forFileName: "photo.raw"), .image)
+        XCTAssertEqual(autoMode(for: .model), .model)
+    }
+
+    func test_строкаОСоставеМодели() {
+        let line = ModelStats.line(meshes: 3, vertices: 1240, faces: 2480)
+        XCTAssertTrue(line.contains("3"))
+        XCTAssertTrue(line.contains("2") && line.contains("480"), "число разбито по разрядам")
+        XCTAssertEqual(line.components(separatedBy: "·").count, 3)
+    }
+}
+
+/// Сила свечения из самого файла glTF: библиотека чтения её не передаёт, читаем сами.
+final class GLTFEmissiveStrengthTests: XCTestCase {
+
+    private let json = """
+    {"materials": [
+      {"name": "lens", "extensions": {"KHR_materials_emissive_strength": {"emissiveStrength": 10.0}}},
+      {"name": "paint"},
+      {"name": "weak", "extensions": {"KHR_materials_emissive_strength": {"emissiveStrength": 1.0}}}
+    ]}
+    """
+
+    func test_читаетСилуСвеченияПоИмениМатериала() throws {
+        let table = GLTFEmissiveStrength.table(json: try XCTUnwrap(json.data(using: .utf8)))
+        XCTAssertEqual(table["lens"], 10)
+        XCTAssertNil(table["paint"], "без расширения — нечего применять")
+        XCTAssertNil(table["weak"], "единица ничего не меняет")
+    }
+
+    /// В .glb тот же JSON лежит первым куском двоичного файла.
+    func test_находитJSONВнутриДвоичногоGLB() throws {
+        let payload = try XCTUnwrap(json.data(using: .utf8))
+        var glb = Data()
+        func append(_ value: UInt32) {
+            var little = value.littleEndian
+            withUnsafeBytes(of: &little) { glb.append(contentsOf: $0) }
+        }
+        append(0x46546C67)                    // «glTF»
+        append(2)                             // версия
+        append(UInt32(28 + payload.count))    // общая длина
+        append(UInt32(payload.count))
+        append(0x4E4F534A)                    // «JSON»
+        glb.append(payload)
+        let chunk = try XCTUnwrap(GLTFEmissiveStrength.jsonChunk(inGLB: glb))
+        XCTAssertEqual(GLTFEmissiveStrength.table(json: chunk)["lens"], 10)
+        XCTAssertNil(GLTFEmissiveStrength.jsonChunk(inGLB: Data([1, 2, 3])), "не glb — nil")
+    }
+
+    func test_неGLTFФайлыНеТрогаем() {
+        XCTAssertTrue(GLTFEmissiveStrength.table(forModelAt: "/tmp/модель.obj").isEmpty)
+    }
+}
+
+/// Цвет и картинка в материале перемножаются, а не соперничают.
+final class ModelTintTests: XCTestCase {
+
+    private func image(_ colour: NSColor) -> NSImage {
+        let image = NSImage(size: NSSize(width: 4, height: 4))
+        image.lockFocus()
+        colour.setFill()
+        NSRect(x: 0, y: 0, width: 4, height: 4).fill()
+        image.unlockFocus()
+        return image
+    }
+
+    private func brightness(_ image: NSImage) -> CGFloat {
+        guard let rep = image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)),
+              let colour = rep.colorAt(x: 1, y: 1)?.usingColorSpace(.sRGB) else { return -1 }
+        return colour.brightnessComponent
+    }
+
+    /// Белая картинка стекла и чёрный цвет материала дают тёмное стекло — так в файле и
+    /// написано; пока мы просто заменяли цвет картинкой, фонарь был белым пятном.
+    func test_белаяКартинкаНаЧёрномЦветеТемнеет() throws {
+        let tinted = try XCTUnwrap(ModelTextureRescue.tinted(image(.white), by: .black))
+        XCTAssertLessThan(brightness(tinted), 0.1)
+    }
+
+    func test_почтиБелыйЦветНичегоНеМеняет() {
+        XCTAssertNil(ModelTextureRescue.tinted(image(.white), by: NSColor(white: 0.995, alpha: 1)),
+                     "лишней работы не делаем")
+    }
+
+    func test_силаСвеченияДелаетКартинкуСветлее() throws {
+        let dim = image(NSColor(srgbRed: 0.2, green: 0, blue: 0, alpha: 1))
+        let bright = try XCTUnwrap(ModelTextureRescue.brightened(dim, by: 6))
+        XCTAssertGreaterThan(brightness(bright), brightness(dim) * 2)
+        XCTAssertNil(ModelTextureRescue.brightened(dim, by: 1), "единица ничего не меняет")
+    }
+}

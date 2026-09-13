@@ -139,7 +139,8 @@ let package = Package(
                 "src/FCXLNTFSBridge.mm",
                 "src/FCXLWatcherBridge.mm",
                 "src/FCXLNetworkBridge.mm",
-                "src/FCXLDjVuBridge.mm"
+                "src/FCXLDjVuBridge.mm",
+                "src/FCXLModelBridge.mm"
             ],
             publicHeadersPath: "include",
             cxxSettings: [
@@ -147,7 +148,12 @@ let package = Package(
                 .headerSearchPath("../core/include"),
                 .headerSearchPath("../third_party/ntfs-3g"),
                 .unsafeFlags([
-                    "-I/opt/homebrew/include"
+                    "-I/opt/homebrew/include",
+                    // Assimp — форматы моделей, которых нет у Apple (glTF, FBX, 3DS…).
+                    // Формула в Homebrew не keg-only, но путь через opt устойчив к смене
+                    // версии, а второй — для Intel-машин с /usr/local.
+                    "-I/opt/homebrew/opt/assimp/include",
+                    "-I/usr/local/opt/assimp/include"
                 ])
             ],
             linkerSettings: [
@@ -156,8 +162,11 @@ let package = Package(
                 .linkedFramework("CoreFoundation"),
                 .linkedFramework("AppKit"),
                 .linkedLibrary("djvulibre"),
+                .linkedLibrary("assimp"),
                 .unsafeFlags([
-                    "-L/opt/homebrew/lib"
+                    "-L/opt/homebrew/lib",
+                    "-L/opt/homebrew/opt/assimp/lib",
+                    "-L/usr/local/opt/assimp/lib"
                 ])
             ]
         ),
@@ -316,6 +325,7 @@ let package = Package(
                 "Views/Viewer/PDFPageCache.swift",
                 "Views/Viewer/PDFContextMenu.swift",
                 "Views/Viewer/MarkdownPreview.swift",
+                "Views/Viewer/ModelPreviewView.swift",
                 "Services/BookmarkNames.swift",
                 "Services/FileColorRules.swift",
                 "Views/Viewer/MediaPreviewView.swift",
@@ -437,6 +447,12 @@ let package = Package(
                 "Services/DefaultStyle.swift",
                 "Services/ImageEditing.swift",
                 "Services/DockProgressManager.swift",
+                "Services/Model3DLoader.swift",
+                "Services/ModelBlob.swift",
+                "Services/ModelReaderProcess.swift",
+                "Services/ModelTextureFinder.swift",
+                "Services/ModelTextures.swift",
+                "Services/PanelDropTarget.swift",
                 "Services/NotificationService.swift",
                 "Services/OperationLogService.swift",
                 "Views/Common/OperationLogView.swift",
@@ -557,6 +573,7 @@ let package = Package(
                 "ViewModelTests/FieldEchoTests.swift",
                 "ViewModelTests/LANScannerBudgetTests.swift",
                 "ViewModelTests/LANDiscoveryTests.swift",
+                "ViewModelTests/PanelDropTargetTests.swift",
                 "ViewModelTests/PanelSlotTests.swift",
                 "ViewModelTests/NetworkBrowseStatusTests.swift",
                 "ViewModelTests/AppResourcesTests.swift",
@@ -612,6 +629,9 @@ let package = Package(
                 "ViewModelTests/TunnelContextMenuTests.swift",
                 "ViewModelTests/TunnelSmallWindowTests.swift",
                 "ViewModelTests/CursorFollowTests.swift",
+                "ViewModelTests/Model3DTests.swift",
+                "ViewModelTests/ModelReaderTests.swift",
+                "ViewModelTests/ModelTextureFinderTests.swift",
                 "ViewModelTests/ThumbnailCellLayoutTests.swift",
                 "ViewModelTests/TunnelOverflowTests.swift",
                 "ViewModelTests/ThemedMirrorTests.swift",

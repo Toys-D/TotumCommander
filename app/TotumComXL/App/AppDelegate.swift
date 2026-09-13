@@ -23,6 +23,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if CommandLine.arguments.contains("--fcxl-resource-check") {
             exit(AppResources.selfCheck() ? 0 : 1)
         }
+        // Чтение трёхмерной модели для самой программы — отдельным процессом. Библиотека
+        // чтения падает на некоторых файлах (замерено на её же наборе образцов), и падать
+        // должен вот этот служебный запуск, а не файловый менеджер. См. ModelReaderProcess.
+        if let request = ModelReaderProcess.request(in: CommandLine.arguments) {
+            exit(ModelReaderProcess.serve(input: request.input, output: request.output))
+        }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate

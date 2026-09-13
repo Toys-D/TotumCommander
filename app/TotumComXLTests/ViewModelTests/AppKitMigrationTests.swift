@@ -344,8 +344,8 @@ final class PreviewHelpersTests: XCTestCase {
 
     func test_previewMode_allCases() {
         let allModes: [PreviewMode] = [.auto, .quickLook, .image, .text, .hex, .video, .pdf,
-                                       .document, .djvu, .book, .drawing, .font, .postScript,
-                                       .info]
+                                       .document, .djvu, .book, .drawing, .model, .font,
+                                       .postScript, .info]
         XCTAssertEqual(PreviewMode.allCases.count, allModes.count)
         for mode in allModes {
             XCTAssertFalse(mode.iconName.isEmpty, "\(mode) should have an icon name")

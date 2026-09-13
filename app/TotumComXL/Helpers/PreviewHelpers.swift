@@ -14,6 +14,7 @@ enum FileCategory {
     case djvu            // scanned documents — rendered in-app via DjVuLibre (macOS has no DjVu support)
     case book            // FB2 and EPUB — read page by page, like a real book
     case drawing         // CAD drawings (DXF) — read and drawn in-app; macOS shows them as text
+    case model           // 3D-модели: obj/stl/usdz/dae читает сам macOS, glTF/FBX/3DS — Assimp
     case font            // ttf/otf/ttc — rendered in-app as a type specimen (sample text at sizes)
     case postScript      // eps/ps — macOS dropped its PostScript rasteriser, so we render via bundled Ghostscript
     case text
@@ -87,6 +88,10 @@ func fileCategory(forFileName name: String) -> FileCategory {
 /// CAD drawings this program reads itself. DXF is the exchange format every CAD tool writes;
 /// macOS has no idea what it is and shows it as a wall of numbers.
 private let drawingExts: Set<String> = ["dxf"]
+
+/// Трёхмерные модели. Сам список живёт в Model3DFormats — там же, где написано, кто
+/// какой формат читает; здесь он только берётся, чтобы два списка не разошлись.
+private var modelExts: Set<String> { Model3DFormats.all }
 
 private let markdownExts: Set<String> = ["md", "markdown", "mdown", "mkd", "mdx", "rmd", "qmd"]
 
@@ -184,9 +189,10 @@ private let binaryExts: Set<String> = [
     // macOS / iOS resources
     "car", "nib", "xib", "storyboard",
     "momd", "mom", "omo", "dat", "pak", "rsrc",
-    // 3D / CAD / DCC
-    "blend", "blend1", "blend2",
-    "fbx", "glb", "usdz", "usd", "usda", "usdc",
+    // 3D / CAD / DCC — только то, что мы НЕ показываем: рабочие файлы редакторов и
+    // форматы САПР, которых не читает ни macOS, ни Assimp. Всё, что показываем,
+    // перечислено в Model3DFormats и уходит в .model.
+    "blend1", "blend2",
     "mb", "ma", "mll",                        // Maya
     "max", "prj", "matlib",                   // 3ds Max
     "c4d",                                    // Cinema 4D
@@ -194,9 +200,7 @@ private let binaryExts: Set<String> = [
     "ztl", "zpr",                             // ZBrush
     "hip", "hipnc", "hiplc", "bgeo", "geo",   // Houdini
     "spp", "sbsar", "sbs",                    // Substance
-    "abc",                                    // Alembic
-    "3ds", "stl", "ply", "off",
-    "dwg", "step", "stp", "iges", "igs",   // .dxf is read in-app — see drawingExts
+    "dwg", "iges", "igs",                  // .dxf is read in-app — see drawingExts
     "skp",                                    // SketchUp
     // Adobe / design (non-image: project files)
     "prproj", "aep", "xd", "sketch", "fig",
@@ -242,6 +246,10 @@ func fileCategory(extension fileExtension: String) -> FileCategory {
     // open as a wall of tags instead of a book.
     if bookExts.contains(ext)        { return .book }
     if drawingExts.contains(ext)     { return .drawing }
+    // Раньше текста: gltf, dae и x3d — это XML и JSON, и по текстовым правилам они
+    // открылись бы стеной разметки вместо модели. Раньше binaryExts — по той же причине,
+    // что и книги: половина этих расширений лежала там как «двоичное, не читать».
+    if modelExts.contains(ext)       { return .model }
     if markdownExts.contains(ext)    { return .markdown }
     if textExts.contains(ext)        { return .text }
     if fontExts.contains(ext)        { return .font }
@@ -279,6 +287,7 @@ enum PreviewMode: String, CaseIterable, Identifiable {
     case djvu
     case book
     case drawing
+    case model
     case font
     case postScript
     case info
@@ -309,6 +318,8 @@ enum PreviewMode: String, CaseIterable, Identifiable {
             return "book"
         case .drawing:
             return "scribble"
+        case .model:
+            return "cube"
         case .font:
             return "textformat"
         case .postScript:
@@ -342,6 +353,8 @@ enum PreviewMode: String, CaseIterable, Identifiable {
             return L("preview.mode.book")
         case .drawing:
             return L("preview.mode.drawing")
+        case .model:
+            return L("preview.mode.model")
         case .font:
             return L("preview.mode.font")
         case .postScript:
@@ -375,6 +388,8 @@ enum PreviewMode: String, CaseIterable, Identifiable {
             return L("preview.mode.book")
         case .drawing:
             return L("preview.mode.drawing")
+        case .model:
+            return L("preview.mode.model")
         case .font:
             return L("preview.mode.font")
         case .postScript:
@@ -417,6 +432,8 @@ func autoMode(for category: FileCategory) -> PreviewMode {
                              // the embedded QLPreviewView which blocks copy.
     case .djvu:
         return .djvu
+    case .model:
+        return .model
     case .book:
         return .book
     case .drawing:
