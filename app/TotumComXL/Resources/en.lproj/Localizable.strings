@@ -2533,3 +2533,5 @@ A frequent culprit is Parallels Desktop (usually F6): open its Settings ▸ Shor
 "viewer.model.faces" = "Faces: %@";
 "viewer.model.wireframe" = "Show the wireframe";
 "viewer.model.reset" = "Put the camera back";
+"viewer.model.readerDied" = "The file crashed the model reader — the app is fine";
+"viewer.model.readerSlow" = "Reading the model took too long and was stopped";

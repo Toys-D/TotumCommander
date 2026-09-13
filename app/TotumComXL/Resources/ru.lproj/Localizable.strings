@@ -2539,3 +2539,5 @@
 "viewer.model.faces" = "Граней: %@";
 "viewer.model.wireframe" = "Показать каркас";
 "viewer.model.reset" = "Поставить камеру заново";
+"viewer.model.readerDied" = "Файл повалил разбор модели — программа цела";
+"viewer.model.readerSlow" = "Разбор модели затянулся и был прерван";

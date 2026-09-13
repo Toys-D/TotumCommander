@@ -241,30 +241,44 @@ enum Model3DLoader {
     }
 
     private static func libraryScene(url: URL) throws -> Model3DScene {
-        let loaded: FCXLModelScene
+        let meshes: [Model3DMesh]
         do {
-            loaded = try FCXLModelBridge.loadModel(atPath: url.path)
+            // Читает отдельный процесс: на некоторых файлах разбор падает, и падать
+            // должен он, а не файловый менеджер. См. ModelReaderProcess.
+            meshes = try ModelReaderProcess.read(path: url.path)
         } catch {
-            throw Model3DError.unreadable(reason: error.localizedDescription)
+            throw Model3DError.unreadable(reason: reason(for: error))
         }
         let scene = SCNScene()
         let folder = url.deletingLastPathComponent()
         let glow = GLTFEmissiveStrength.table(forModelAt: url.path)
-        for mesh in loaded.meshes {
+        for mesh in meshes {
             guard let geometry = geometry(from: mesh, folder: folder, glow: glow) else { continue }
             scene.rootNode.addChildNode(SCNNode(geometry: geometry))
         }
-        let counts = (meshes: loaded.meshes.count,
-                      vertices: Int(loaded.vertexCount),
-                      faces: Int(loaded.faceCount))
+        let counts = (meshes: meshes.count,
+                      vertices: meshes.reduce(0) { $0 + $1.vertexCount },
+                      faces: meshes.reduce(0) { $0 + $1.faceCount })
         guard counts.meshes > 0 else { throw Model3DError.unreadable(reason: "no meshes") }
         return finished(scene: scene, counts: counts, reader: .library)
     }
 
-    /// Из сырых чисел моста — геометрия SceneKit.
-    private static func geometry(from mesh: FCXLModelMesh, folder: URL,
+    /// Отчего не прочиталось — словами, которые что-то значат для человека.
+    private static func reason(for error: Error) -> String {
+        switch error {
+        case ModelReaderProcess.Failure.died(let how):
+            return L("viewer.model.readerDied") + " (" + how + ")"
+        case ModelReaderProcess.Failure.timedOut:
+            return L("viewer.model.readerSlow")
+        default:
+            return (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// Из сырых чисел — геометрия SceneKit.
+    private static func geometry(from mesh: Model3DMesh, folder: URL,
                                 glow: [String: Double] = [:]) -> SCNGeometry? {
-        let vertices = Int(mesh.vertexCount)
+        let vertices = mesh.vertexCount
         guard vertices > 0, mesh.faceCount > 0, !mesh.positions.isEmpty else { return nil }
         var sources = [SCNGeometrySource(data: mesh.positions, semantic: .vertex,
                                          vectorCount: vertices, usesFloatComponents: true,
@@ -279,9 +293,7 @@ enum Model3DLoader {
         // Все наборы развёртки, а не только первый: разные карты пользуются разными
         // наборами. У этой машины цвет фонаря лежит в наборе 0, а красное стекло —
         // в наборе 1; наложишь вторым набором первый — фонарь останется белым.
-        let uvSets = mesh.texCoordSets.isEmpty
-            ? (mesh.texCoords.isEmpty ? [] : [mesh.texCoords])
-            : mesh.texCoordSets
+        let uvSets = mesh.uvSets
         for set in uvSets where !set.isEmpty {
             sources.append(SCNGeometrySource(data: set, semantic: .texcoord,
                                              vectorCount: vertices, usesFloatComponents: true,
@@ -289,7 +301,7 @@ enum Model3DLoader {
                                              dataOffset: 0, dataStride: 8))
         }
         let element = SCNGeometryElement(data: mesh.indices, primitiveType: .triangles,
-                                         primitiveCount: Int(mesh.faceCount), bytesPerIndex: 4)
+                                         primitiveCount: mesh.faceCount, bytesPerIndex: 4)
         let geometry = SCNGeometry(sources: sources, elements: [element])
         let material = SCNMaterial()
         material.name = mesh.materialName
@@ -301,11 +313,9 @@ enum Model3DLoader {
         // Числа материала: без металличности и шероховатости физически верный материал
         // выходит матовой болванкой — чёрный кузов «металлик» так и остаётся чёрным
         // силуэтом, сколько света вокруг ни ставь.
-        if let metallic = mesh.metallic { material.metalness.contents = metallic.doubleValue }
-        if let roughness = mesh.roughness { material.roughness.contents = roughness.doubleValue }
-        if let opacity = mesh.opacity, opacity.doubleValue < 0.999 {
-            material.transparency = CGFloat(opacity.doubleValue)
-        }
+        if let metallic = mesh.metallic { material.metalness.contents = metallic }
+        if let roughness = mesh.roughness { material.roughness.contents = roughness }
+        if let opacity = mesh.opacity, opacity < 0.999 { material.transparency = CGFloat(opacity) }
         if let emissive = mesh.emissiveColor?.usingColorSpace(.sRGB),
            emissive.brightnessComponent > 0.01 {
             material.emission.contents = emissive
@@ -313,7 +323,7 @@ enum Model3DLoader {
         // Сила свечения из файла: у стекла фонаря она бывает десятикратной, и без неё
         // красное стекло еле теплится. Выше разумного не поднимаем — иначе кадр
         // засвечивается в белое.
-        if let strength = mesh.emissiveStrength?.doubleValue, strength > 1 {
+        if let strength = mesh.emissiveStrength, strength > 1 {
             material.emission.intensity = CGFloat(min(strength, 6))
         }
         // Карты по гнёздам. Путь может быть и с чужой машины, и внутрь файла — обе
@@ -340,8 +350,7 @@ enum Model3DLoader {
                 // Сила свечения из файла — запечённая в картинку: иначе красное стекло
                 // фонаря остаётся тёмным (см. GLTFEmissiveStrength).
                 if slot == FCXLModelTextureEmissive,
-                   let strength = mesh.materialName.flatMap({ glow[$0] })
-                        ?? mesh.emissiveStrength?.doubleValue,
+                   let strength = mesh.materialName.flatMap({ glow[$0] }) ?? mesh.emissiveStrength,
                    let brighter = ModelTextureRescue.brightened(image,
                                                                 by: CGFloat(min(strength, 8))) {
                     image = brighter
@@ -361,7 +370,7 @@ enum Model3DLoader {
     }
 
     /// Картинка гнезда: вшитая в файл — из байтов, иначе ищем по имени рядом с моделью.
-    private static func image(for texture: FCXLModelTexture, folder: URL) -> NSImage? {
+    private static func image(for texture: Model3DTexture, folder: URL) -> NSImage? {
         if let data = texture.data, let image = NSImage(data: data) { return image }
         if let path = texture.path {
             return ModelTextureRescue.image(reference: path, modelFolder: folder.path)
