@@ -1761,15 +1761,8 @@ final class PanelViewModel: ObservableObject {
             return
         }
         if state.insideTrash { state.insideTrash = false }
-        // С полки в её папку: запомнить, что «..» оттуда ведёт назад на полку. Любой
-        // другой переход за пределы той папки полку забывает.
-        if let entry = ShelfReturn.entry(onShelf: state.insideStack, destination: destination,
-                                         shelved: DropStackStore.items().map(\.path)) {
-            shelfEntryPath = entry
-        } else if !ShelfReturn.keepsEntry(after: destination, entry: shelfEntryPath) {
-            shelfEntryPath = nil
-        }
-        if state.insideStack { state.insideStack = false }
+        // Полку здесь НЕ снимаем: снимет loadFileSystemDirectory — единственная воронка всех
+        // настоящих путей, и ей же надо знать, что ушли именно с полки (см. там).
         // Leaving network browser mode
         if state.insideNetworkBrowser {
             state.insideNetworkBrowser = false
@@ -2445,6 +2438,17 @@ final class PanelViewModel: ObservableObject {
         // снятием, — признак «я на полке» оставался, и первое же перечитывание (после
         // копирования, переименования или возврата с другого рабочего стола) выбрасывало
         // человека из папки обратно на полку.
+        //
+        // И здесь же, ДО снятия признака, запоминается вход с полки в её папку: «..» из неё
+        // поведёт назад на полку, а не к настоящему родителю. Именно здесь, а не в
+        // loadDirectory: вход в папку из open() идёт сюда напрямую, и проверка в
+        // loadDirectory его не видела — первая правка потому и не сработала.
+        if let entry = ShelfReturn.entry(onShelf: state.insideStack, destination: destination,
+                                         shelved: DropStackStore.paths) {
+            shelfEntryPath = entry
+        } else if !ShelfReturn.keepsEntry(after: destination, entry: shelfEntryPath) {
+            shelfEntryPath = nil
+        }
         state.insideStack = false
         state.insideTrash = false
         state.insideNetworkBrowser = false
