@@ -2140,6 +2140,8 @@ final class PanelViewController: NSViewController,
         tabsVM.selectTab(at: index)
         let tab = tabsVM.activeTab
         viewModel.scrollOnCursorChange = true
+        // Другая вкладка — другой показ: сортировка решается заново, даже для той же папки.
+        viewModel.forgetAdoptedSort()
 
         // Restore viewMode from the tab AFTER directory loads (avoids header scroll flash)
         let pendingViewMode: ViewMode?
