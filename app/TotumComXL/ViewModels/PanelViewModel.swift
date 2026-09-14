@@ -27,18 +27,35 @@ enum ViewMode: String {
     }
 }
 
-enum PanelSortField: Equatable {
+/// Поле сортировки. Строковые значения хранятся в настройках и во вкладках — не менять.
+enum PanelSortField: String, Equatable, Codable, CaseIterable {
     case name
     case type
-    case fileExtension
+    case fileExtension = "extension"
     case size
-    case dateCreated
-    case dateModified
-    case dateAdded
+    case dateCreated = "created"
+    case dateModified = "modified"
+    case dateAdded = "added"
     case permissions
     case owner
     /// Trash only: the folder an item was deleted from.
     case origin
+
+    /// Ключ названия — тот же, что у столбца и у пункта меню «Сортировать по».
+    var titleKey: String {
+        switch self {
+        case .name: return "column.name"
+        case .type: return "properties.type"
+        case .fileExtension: return "column.ext"
+        case .size: return "column.size"
+        case .dateCreated: return "properties.createdDate"
+        case .dateModified: return "column.date"
+        case .dateAdded: return "column.dateAdded"
+        case .permissions: return "properties.permissions"
+        case .owner: return "properties.owner"
+        case .origin: return "column.origin"
+        }
+    }
 }
 
 enum PanelColumn: String, CaseIterable, Hashable {
@@ -1345,6 +1362,11 @@ final class PanelViewModel: ObservableObject {
             state.viewMode = .detailed
         }
 
+        // Стартовая сортировка — из настроек, а не вечное «имя по возрастанию».
+        let startingSort = SortSettings.defaultSort(in: defaults)
+        data.sortField = startingSort.field
+        data.sortAscending = startingSort.ascending
+
         let resolvedInitialPath = defaults.string(forKey: pathDefaultsKey) ?? initialPath
         state.currentPath = resolvedInitialPath
         if let storedColumns = defaults.array(forKey: visibleColumnsDefaultsKey) as? [String] {
@@ -1580,6 +1602,55 @@ final class PanelViewModel: ObservableObject {
             sortAscending = true
         }
         resortCurrentItemsKeepingSelectionAndCursor()
+        noteSortChanged()
+    }
+
+    // MARK: - Сортировка: умолчание, память по папкам, вкладки
+
+    var currentSort: PanelSort {
+        PanelSort(field: sortField, ascending: sortAscending)
+    }
+
+    /// Папка (или архив, облако), для которой сортировка уже выбрана: перечитывание той же
+    /// папки не должно сбрасывать то, что человек в ней переставил.
+    private var sortAdoptedKey: String?
+
+    /// Следующий показ — заново решить, какой сортировкой его класть, даже если папка та же:
+    /// так переключение вкладки на ту же папку ведёт себя как переход в неё.
+    func forgetAdoptedSort() {
+        sortAdoptedKey = nil
+    }
+
+    /// Выбрать сортировку для папки, которая сейчас будет показана. Зовётся ДО сортировки
+    /// списка, в каждой воронке показа: настоящие папки, архивы, облако.
+    func adoptSort(forEntering destination: String) {
+        let key = sortMemoryKey(for: destination)
+        guard key != sortAdoptedKey else { return }
+        sortAdoptedKey = key
+        let chosen = SortChoice.entering(path: key, memory: SortMemoryStore.shared.memory,
+                                         standard: SortSettings.defaultSort(),
+                                         perFolder: SortSettings.rememberPerFolder())
+        sortField = chosen.field
+        sortAscending = chosen.ascending
+    }
+
+    /// Человек сам переставил сортировку: запомнить за папкой, если память включена.
+    private func noteSortChanged() {
+        var memory = SortMemoryStore.shared.memory
+        let before = memory
+        SortChoice.afterChange(to: currentSort, in: sortMemoryKey(for: currentPath),
+                               memory: &memory, standard: SortSettings.defaultSort(),
+                               perFolder: SortSettings.rememberPerFolder())
+        if memory != before { SortMemoryStore.shared.memory = memory }
+    }
+
+    /// Ключ памяти: у облака свой, чтобы «/Documents» на сервере не путался с местной.
+    private func sortMemoryKey(for path: String) -> String {
+        if isActivelyRemote, let session = remoteSession {
+            return "remote:\(session.id):\(path)"
+        }
+        // «/var/…» и «/private/var/…» — одна папка: «..» возвращает по настоящему пути.
+        return path.hasPrefix("/") ? (path as NSString).standardizingPath : path
     }
 
     // MARK: - Directory Loading
@@ -2694,6 +2765,7 @@ final class PanelViewModel: ObservableObject {
             }
         }
 
+        adoptSort(forEntering: destination)
         var sorted = sortItemsForDisplay(itemsToSort)
 
         // A vault's volume is a root by the filesystem's lights, but the person ENTERED it
@@ -3487,6 +3559,7 @@ final class PanelViewModel: ObservableObject {
             return
         }
 
+        adoptSort(forEntering: currentArchiveDisplayPath(archivePath: activeArchivePath))
         var visibleItems = cachedArchiveItems(for: archiveRelativePath)
         if let upItem = makeArchiveUpItem() {
             visibleItems.insert(upItem, at: 0)

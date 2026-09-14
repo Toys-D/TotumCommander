@@ -1845,6 +1845,13 @@ A frequent culprit is Parallels Desktop (usually F6): open its Settings ▸ Shor
 "settings.git.title" = "Git state";
 "settings.git.show" = "Show Git marks in the list";
 "settings.git.note" = "A column appears before the name: a state letter on files (M modified, ? untracked, ! conflict), and its branch on a repository folder. The state is read from the installed git in the background, so a large repository fills in a moment later.";
+"settings.sort.title" = "Sorting";
+"settings.sort.field" = "Sort by default by";
+"settings.sort.direction" = "Direction";
+"settings.sort.ascending" = "Ascending";
+"settings.sort.descending" = "Descending";
+"settings.sort.perFolder" = "Remember sorting in every folder";
+"settings.sort.perFolderNote" = "On: a folder opens with the sorting you set in it, and a folder without its own uses the default. Off: a click on a column affects only the current listing; moving to any other folder brings the default sorting back.";
 
 /* Help: Git state */
 "git.help.intro" = "Git keeps the history of a folder: you work in it, and it remembers what everything looked like at the last save. Such a folder is called a repository. The panel shows what the history already knows about and what you have changed since — the same facts as “git status”, without the terminal and for the whole folder at once.";

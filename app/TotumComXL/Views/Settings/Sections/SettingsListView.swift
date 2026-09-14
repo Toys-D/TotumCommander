@@ -16,8 +16,35 @@ struct SettingsListView: View {
 
     @AppStorage(PanelAppearanceSettings.gitStatusEnabledKey) private var showGitStatus = true
 
+    @AppStorage(SortSettings.fieldKey) private var defaultSortField: String = PanelSortField.name.rawValue
+    @AppStorage(SortSettings.ascendingKey) private var defaultSortAscending = true
+    @AppStorage(SortSettings.perFolderKey) private var rememberSortPerFolder = false
+
     var body: some View {
         Form {
+            Section {
+                LabeledContent(L("settings.sort.field")) {
+                    FCXLDialogMenuPicker(
+                        items: SortSettings.choices.map(\.rawValue),
+                        selection: $defaultSortField,
+                        title: { raw in L(PanelSortField(rawValue: raw)?.titleKey ?? "") })
+                }
+                LabeledContent(L("settings.sort.direction")) {
+                    FCXLDialogMenuPicker(
+                        items: [true, false],
+                        selection: $defaultSortAscending,
+                        title: { $0 ? L("settings.sort.ascending") : L("settings.sort.descending") },
+                        icon: { $0 ? "arrow.up" : "arrow.down" })
+                }
+                Toggle(L("settings.sort.perFolder"), isOn: $rememberSortPerFolder)
+                Text(L("settings.sort.perFolderNote"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text(L("settings.sort.title"))
+            }
+
             Section {
                 Toggle(L("settings.git.show"), isOn: $showGitStatus)
                 Text(L("settings.git.note"))

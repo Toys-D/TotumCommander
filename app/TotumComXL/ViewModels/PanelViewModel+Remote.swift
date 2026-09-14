@@ -165,6 +165,7 @@ extension PanelViewModel {
                 : remoteItems.filter { !$0.isHidden }
 
             // Build sorted items with ".." entry
+            adoptSort(forEntering: remotePath)
             var sorted = sortItemsForDisplay(filtered)
 
             // Add ".." entry at the top if not at root

@@ -564,10 +564,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenu.addItem(.separator())
         let sortMenu = submenu(viewMenu, L("menu.view.sortBy"), symbol: "arrow.up.arrow.down")
         // Порядок — как MainWindowController.menuSortFields: tag и есть номер в нём.
-        for (index, key) in ["column.name", "column.ext", "properties.type", "column.size",
-                             "column.date", "properties.createdDate", "column.dateAdded",
-                             "properties.owner", "properties.permissions"].enumerated() {
-            add(sortMenu, L(key), #selector(MainWindowController.menuSortBy(_:)), tag: index)
+        for (index, field) in MainWindowController.menuSortFields.enumerated() {
+            add(sortMenu, L(field.titleKey), #selector(MainWindowController.menuSortBy(_:)), tag: index)
         }
         sortMenu.addItem(.separator())
         add(sortMenu, L("menu.view.sortDescending"), #selector(MainWindowController.menuSortDescending(_:)))
