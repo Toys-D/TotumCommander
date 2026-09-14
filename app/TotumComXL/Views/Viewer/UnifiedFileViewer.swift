@@ -121,6 +121,13 @@ struct UnifiedFileViewer: View {
     /// Words chosen by dragging across the picture, and where the drag began.
     @State private var selectedKeys: Set<String> = []
     @State private var selectionAnchor: CGPoint?
+    /// Где стоит мышь над накладкой с текстом — в её же координатах. Правый щелчок
+    /// приходит из AppKit без них, а слово под курсором надо знать.
+    @State private var pictureHoverPoint: CGPoint?
+    @State private var pictureOverlaySize: CGSize = .zero
+    /// Короткая вспышка выделения после ⌘C — единственный знак, что скопировалось.
+    @State private var selectionFlash = false
+    @State private var contextMonitor: Any?
     @State private var djvuReader: FCXLDjVuReader?
     @State private var book: BookDocument?
     @State private var bookState = BookReaderState()
@@ -397,6 +404,7 @@ struct UnifiedFileViewer: View {
             startLoadingPreview()
             installKeyMonitor()
             installScrollMonitor()
+            installContextMonitor()
             loadReaderMarks()
         }
         .onDisappear {
@@ -410,6 +418,7 @@ struct UnifiedFileViewer: View {
             djvuReader = nil
             removeKeyMonitor()
             removeScrollMonitor()
+            removeContextMonitor()
             psRerenderTask?.cancel()
             cancelLoadTask()
             // Скачивание брошенного просмотра никому не нужно — но копия, если она уже
@@ -1744,8 +1753,11 @@ struct UnifiedFileViewer: View {
                         let wordBox = TextRecognitionService.rect(for: word.box, in: size)
                         let key = "\(line.id).\(word.id)"
                         RoundedRectangle(cornerRadius: 2)
-                            .fill(copiedKey == key || selectedKeys.contains(key)
-                                  ? Color.accentColor.opacity(0.55) : Color.clear)
+                            .fill(copiedKey == key
+                                  || (selectedKeys.contains(key) && selectionFlash)
+                                  ? Color.accentColor.opacity(0.85)
+                                  : selectedKeys.contains(key)
+                                    ? Color.accentColor.opacity(0.55) : Color.clear)
                             .frame(width: wordBox.width, height: wordBox.height)
                             .position(x: wordBox.midX, y: wordBox.midY)
                             .help(word.text)
@@ -1757,6 +1769,17 @@ struct UnifiedFileViewer: View {
             }
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             .contentShape(Rectangle())
+            // Мышь над накладкой: правому щелчку (он приходит из AppKit) нужно знать слово
+            // под курсором, а координаты накладки знает только сама накладка.
+            .onContinuousHover(coordinateSpace: .local) { phase in
+                switch phase {
+                case .active(let point):
+                    pictureHoverPoint = point
+                    pictureOverlaySize = size
+                case .ended:
+                    pictureHoverPoint = nil
+                }
+            }
             // Drag across the words the way a person drags across text: everything from where
             // the drag began to where it is now, whole lines in between included. Released, it
             // is on the clipboard — the same promise as a click on a single word.
@@ -1799,6 +1822,64 @@ struct UnifiedFileViewer: View {
         guard !pictureText.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(TextRecognitionService.plainText(pictureText), forType: .string)
+    }
+
+    /// ⌘C и «Скопировать выделенное»: в буфер идёт ровно то, что человек выделил сам —
+    /// не строка целиком и не вся картинка. Выделение остаётся, коротко вспыхнув: копия
+    /// не оставляет на экране никакого следа, а знать, что она была, нужно.
+    @discardableResult
+    private func copySelectedPictureText() -> Bool {
+        let text = TextRecognitionService.text(forKeys: selectedKeys, lines: pictureText)
+        guard !text.isEmpty else { return false }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        selectionFlash = true
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            selectionFlash = false
+        }
+        return true
+    }
+
+    private func selectAllPictureText() {
+        selectedKeys = TextRecognitionService.allKeys(pictureText)
+    }
+
+    /// Правое меню над текстом картинки — своё, как у страницы PDF. Ловится монитором:
+    /// накладка сделана в SwiftUI, а правый щелчок там не поймать иначе, чем системным
+    /// меню, которое выглядит чужим.
+    private func installContextMonitor() {
+        guard contextMonitor == nil else { return }
+        contextMonitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown]) { event in
+            guard isEventForThisViewer(event), !pictureText.isEmpty,
+                  let point = pictureHoverPoint else { return event }
+            let word = TextRecognitionService.word(at: point, lines: pictureText,
+                                                   in: pictureOverlaySize)
+            let line = TextRecognitionService.line(at: point, lines: pictureText,
+                                                   in: pictureOverlaySize)
+            let context = PictureTextMenu.Context(hasSelection: !selectedKeys.isEmpty,
+                                                  word: word?.text, line: line?.text,
+                                                  hasText: true)
+            let menu = PictureTextMenu.menu(for: context) { action in
+                switch action {
+                case .copySelection: copySelectedPictureText()
+                case .copyWord(let text):
+                    copy(text, key: word.map { "\(line?.id ?? 0).\($0.id)" } ?? "")
+                case .copyLine(let text): copy(text, key: line.map { "\($0.id)" } ?? "")
+                case .selectAll: selectAllPictureText()
+                case .copyAll: copyAllText()
+                }
+            }
+            ContextPopupMenuController.shared.show(menu, at: NSEvent.mouseLocation)
+            return nil
+        }
+    }
+
+    private func removeContextMonitor() {
+        if let contextMonitor {
+            NSEvent.removeMonitor(contextMonitor)
+            self.contextMonitor = nil
+        }
     }
 
     /// Put one page of a document on screen as a picture and read it.
@@ -2341,6 +2422,19 @@ struct UnifiedFileViewer: View {
                     return nil
                 default:
                     break
+                }
+            }
+            // ⌘C над распознанным текстом — выделенное в буфер. Иначе клавиша уходит в
+            // меню «Правка → Копировать», а там её никто не принимает: панель не
+            // текстовое поле, и нажатие пропадало без следа. ⌘A — выделить все слова.
+            if event.modifierFlags.contains(.command), !pictureText.isEmpty {
+                let letter = event.charactersIgnoringModifiers?.lowercased()
+                if letter == "c" || letter == "с", !selectedKeys.isEmpty {
+                    if copySelectedPictureText() { return nil }
+                }
+                if letter == "a" || letter == "ф" {
+                    selectAllPictureText()
+                    return nil
                 }
             }
             switch event.keyCode {

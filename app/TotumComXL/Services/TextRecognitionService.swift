@@ -186,6 +186,26 @@ enum TextRecognitionService {
         lines.map(\.text).joined(separator: "\n")
     }
 
+    /// Выделенные слова — одной строкой, в порядке чтения: слова одной строки через
+    /// пробел, строки — через перевод. Ключи те же, что у накладки: «<строка>.<слово>».
+    ///
+    /// Не «что попало в выделение», а «что человек выделил сам»: он тянул мышью по трём
+    /// словам — в буфер идут ровно три, а не вся строка и не вся картинка.
+    static func text(forKeys keys: Set<String>, lines: [RecognizedLine]) -> String {
+        guard !keys.isEmpty else { return "" }
+        var pieces: [String] = []
+        for line in lines {
+            let chosen = line.words.filter { keys.contains("\(line.id).\($0.id)") }.map(\.text)
+            if !chosen.isEmpty { pieces.append(chosen.joined(separator: " ")) }
+        }
+        return pieces.joined(separator: "\n")
+    }
+
+    /// Ключи всех слов картинки — для «Выделить всё».
+    static func allKeys(_ lines: [RecognizedLine]) -> Set<String> {
+        Set(lines.flatMap { line in line.words.map { "\(line.id).\($0.id)" } })
+    }
+
     // MARK: - Putting the boxes back on the picture
 
     /// Vision's normalised box turned into a rectangle on a drawn picture.
