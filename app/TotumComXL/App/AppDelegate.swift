@@ -202,7 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showSettingsWindow(_ sender: Any?) {
         if let existing = settingsWindowController, let w = existing.window {
             // Always open centred (it may have been dragged) and grow from centre.
-            w.setContentSize(SettingsWindowSizeGuard.minimum)
+            w.setContentSize(SettingsWindowSizeGuard.openingSize(for: w))
             SettingsWindowAnimator.centerOnScreen(w)
             SettingsWindowAnimator.growOpen(w)
             restoreSettingsPreview()
@@ -229,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
         window.isMovableByWindowBackground = true
-        window.setContentSize(SettingsWindowSizeGuard.minimum)
+        window.setContentSize(SettingsWindowSizeGuard.openingSize(for: window))
         // Меньше — нельзя: на узком окне список правил раскраски складывается в кашу.
         // Больше — сколько угодно.
         //
@@ -791,10 +791,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// им и работает анимация открытия — проходит мимо ограничения. Делегат правит КАЖДЫЙ
 /// предложенный размер, откуда бы он ни пришёл.
 final class SettingsWindowSizeGuard: NSObject, NSWindowDelegate {
+    /// Меньше — нельзя: на узком окне список правил раскраски складывается в кашу.
     static let minimum = NSSize(width: 660, height: 580)
+    /// С каким открывается. Заметно шире минимума и чуть выше: в нагруженных разделах
+    /// минимального окна не хватало, и его приходилось растягивать при каждом открытии.
+    static let opening = NSSize(width: 820, height: 640)
+    /// Размер, который человек выставил сам, — помнится между открытиями.
+    static let rememberedKey = "fcxl.settingsWindowSize"
+
+    /// С каким размером открыть окно: тот, что человек выставил сам, иначе стандартный —
+    /// но не больше, чем поместится на экране, и не меньше минимума.
+    static func openingSize(remembered: NSSize?, screen: NSSize) -> NSSize {
+        let wanted = remembered ?? opening
+        let roomWidth = max(screen.width * 0.9, minimum.width)
+        let roomHeight = max(screen.height * 0.9, minimum.height)
+        return NSSize(width: max(min(wanted.width, roomWidth), minimum.width),
+                      height: max(min(wanted.height, roomHeight), minimum.height))
+    }
+
+    static var remembered: NSSize? {
+        get {
+            guard let text = UserDefaults.standard.string(forKey: rememberedKey) else { return nil }
+            let parts = text.split(separator: "x").compactMap { Double($0) }
+            guard parts.count == 2 else { return nil }
+            return NSSize(width: parts[0], height: parts[1])
+        }
+        set {
+            guard let size = newValue else {
+                UserDefaults.standard.removeObject(forKey: rememberedKey)
+                return
+            }
+            UserDefaults.standard.set("\(Int(size.width))x\(Int(size.height))", forKey: rememberedKey)
+        }
+    }
+
+    /// Размер для этого экрана — из запомненного или стандартного.
+    static func openingSize(for window: NSWindow?) -> NSSize {
+        let screen = (window?.screen ?? NSScreen.main)?.visibleFrame.size
+            ?? NSSize(width: 1440, height: 900)
+        return openingSize(remembered: remembered, screen: screen)
+    }
 
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
         NSSize(width: max(frameSize.width, Self.minimum.width),
                height: max(frameSize.height, Self.minimum.height))
+    }
+
+    /// Человек потянул за край — этот размер и станет размером следующего открытия.
+    /// Только живое растягивание: программные setFrame анимации сюда не приходят.
+    func windowDidEndLiveResize(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              let size = window.contentView?.frame.size else { return }
+        Self.remembered = size
     }
 }
