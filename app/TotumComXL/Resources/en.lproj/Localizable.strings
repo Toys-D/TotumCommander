@@ -2535,3 +2535,9 @@ A frequent culprit is Parallels Desktop (usually F6): open its Settings ▸ Shor
 "viewer.model.reset" = "Put the camera back";
 "viewer.model.readerDied" = "The file crashed the model reader — the app is fine";
 "viewer.model.readerSlow" = "Reading the model took too long and was stopped";
+
+/* Правое меню над распознанным текстом */
+"viewer.ocr.menu.copySelection" = "Copy Selection";
+"viewer.ocr.menu.copyWord" = "Copy the Word “%@”";
+"viewer.ocr.menu.copyLine" = "Copy the Line “%@”";
+"viewer.ocr.menu.selectAll" = "Select All";

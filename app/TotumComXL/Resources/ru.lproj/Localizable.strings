@@ -2541,3 +2541,9 @@
 "viewer.model.reset" = "Поставить камеру заново";
 "viewer.model.readerDied" = "Файл повалил разбор модели — программа цела";
 "viewer.model.readerSlow" = "Разбор модели затянулся и был прерван";
+
+/* Правое меню над распознанным текстом */
+"viewer.ocr.menu.copySelection" = "Скопировать выделенное";
+"viewer.ocr.menu.copyWord" = "Скопировать слово «%@»";
+"viewer.ocr.menu.copyLine" = "Скопировать строку «%@»";
+"viewer.ocr.menu.selectAll" = "Выделить всё";
