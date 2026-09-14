@@ -722,6 +722,9 @@ final class PanelViewModel: ObservableObject {
     private var trashReturnPath: String = ""
     /// Where the panel was before it opened the shelf.
     private var stackReturnPath: String = ""
+    /// Папка, в которую вошли С ПОЛКИ: пока панель стоит в ней или внутри неё, «..» из неё
+    /// ведёт обратно на полку, а не к настоящему родителю. См. ShelfReturn.
+    private var shelfEntryPath: String?
 
     /// Real path in the Trash → the folder it was deleted from. Built once per listing, because
     /// the answer comes from parsing a .DS_Store and a per-cell lookup would reparse it per row.
@@ -885,17 +888,25 @@ final class PanelViewModel: ObservableObject {
     /// panel and the operations already do works on them unchanged — the shelf is a listing,
     /// not a place.
     func loadStackDirectory() {
-        if !state.insideStack {
+        showStack(returningFrom: nil)
+    }
+
+    /// - returningFrom: папка, из которой вернулись на полку по «..». Тогда точка возврата
+    ///   с полки НЕ перезаписывается (иначе «..» с полки вело бы в эту же папку, а не туда,
+    ///   откуда полку открыли), а курсор встаёт на неё — как при обычном выходе из папки.
+    private func showStack(returningFrom entry: String?) {
+        if !state.insideStack, entry == nil {
             // Remembered so ".." leads back where the user came from rather than to the root.
             stackReturnPath = currentPath
         }
+        shelfEntryPath = nil
         state.insideStack = true
         state.insideTrash = false
         state.insideNetworkBrowser = false
         stopFSWatcher()
         dropPendingDirectoryLoad()
         applyLoadedFileSystemItems(DropStackStore.items(), destination: DropStackStore.stackRoot,
-                                   resetCursor: false, preferredCursorPath: nil,
+                                   resetCursor: false, preferredCursorPath: entry,
                                    clearSelection: false)
     }
 
@@ -1750,6 +1761,14 @@ final class PanelViewModel: ObservableObject {
             return
         }
         if state.insideTrash { state.insideTrash = false }
+        // С полки в её папку: запомнить, что «..» оттуда ведёт назад на полку. Любой
+        // другой переход за пределы той папки полку забывает.
+        if let entry = ShelfReturn.entry(onShelf: state.insideStack, destination: destination,
+                                         shelved: DropStackStore.items().map(\.path)) {
+            shelfEntryPath = entry
+        } else if !ShelfReturn.keepsEntry(after: destination, entry: shelfEntryPath) {
+            shelfEntryPath = nil
+        }
         if state.insideStack { state.insideStack = false }
         // Leaving network browser mode
         if state.insideNetworkBrowser {
@@ -1860,6 +1879,11 @@ final class PanelViewModel: ObservableObject {
         }
         if state.insideStack || DropStackStore.isStackPath(currentPath) {
             goUpStack()
+            return
+        }
+        // Из папки, в которую вошли с полки, «..» ведёт на полку — туда, откуда пришли.
+        if ShelfReturn.leadsBackToShelf(currentPath: currentPath, entry: shelfEntryPath) {
+            showStack(returningFrom: shelfEntryPath)
             return
         }
         if insideArchive {
