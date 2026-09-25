@@ -646,6 +646,8 @@ final class PanelViewController: NSViewController,
     private var quickFilterActions: QuickFilterActionsPanel?
     private var quickFilterListArea: NSLayoutGuide?
     var isQuickFilterActive: Bool { quickFilterBubble != nil }
+    /// Backspace, стёрший маску, не должен следующим же нажатием удалить файл — см. тип.
+    private var backspaceGrace = BackspaceGrace()
 
     /// Is the QuickLook preview panel up? It forwards printable keys down to the panel, so the
     /// bubble would open behind it with no way to dismiss it from there.
@@ -940,7 +942,12 @@ final class PanelViewController: NSViewController,
         case 51:                                  // Backspace — MUST be claimed before the panel's
             // own case 51, which either goes up a folder or asks to DELETE the selection.
             let text = String(viewModel.quickFilterText.dropLast())
-            if text.isEmpty { endQuickFilter() } else { setQuickFilterText(text) }
+            if text.isEmpty {
+                endQuickFilter()
+                backspaceGrace.filterClosed()
+            } else {
+                setQuickFilterText(text)
+            }
             return true
         default:
             if let characters = Self.printableCharacter(from: event) {
@@ -3055,6 +3062,8 @@ final class PanelViewController: NSViewController,
             moveCursor(by: visibleRowCount(), flags: flags)
             return true
         case 51: // Backspace — go up OR delete (based on settings)
+            // Только что стёр маску быстрого поиска — это нажатие ещё «стирание», не команда.
+            if backspaceGrace.swallows(isRepeat: event.isARepeat) { return true }
             let backspaceAsBack = UserDefaults.standard.object(forKey: "fcxl.backspaceAsBack") as? Bool ?? true
             if backspaceAsBack {
                 // Ровно та же дорога, что у «..» и кнопки вверх: goUp знает про корзину,
