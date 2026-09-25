@@ -2879,7 +2879,10 @@ final class PanelViewModel: ObservableObject {
 
         let watcher = FCXLWatcherBridge()
         do {
-            try watcher.watchDirectory(directory) { [weak self] _, _ in
+            try watcher.watchDirectory(directory) { [weak self] path, _ in
+                // Изменение внутри подпапки делает её размер неверным — запись снимается ДО
+                // перечитки, чтобы обход после неё взял именно эту папку, а не все подряд.
+                FolderSizeCache.shared.invalidate(containing: path)
                 // Callback fires on background thread — debounce + dispatch to main
                 Task { @MainActor [weak self] in
                     self?.handleFSEvent()
@@ -2973,7 +2976,12 @@ final class PanelViewModel: ObservableObject {
         let requestID = UUID()
         folderSizeRequestID = requestID
 
-        let directories = allItems.filter { $0.isDirectory && $0.name != ".." }
+        // Только неподтверждённые и залежавшиеся: перечитка на каждую активацию окна и на
+        // каждое событие в папке обходила ВСЕ подпапки заново — секунды и 140 % ЦП на каждый
+        // переход в программу. Свежие записи верны, пока наблюдатель не сообщил об изменении.
+        let stale = Set(FolderSizeCache.shared.foldersToWalk(
+            allItems.filter { $0.isDirectory && $0.name != ".." }.map(\.path), fullSpeed: fullSpeed))
+        let directories = allItems.filter { $0.isDirectory && $0.name != ".." && stale.contains($0.path) }
         guard !directories.isEmpty else { return }
 
         // The adaptive part. The slider buys workers and their priority; by default this is a

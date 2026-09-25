@@ -921,6 +921,9 @@
 "cloud.install.wrongSigner" = "Подпись на скачанном файле принадлежит «%1$@», а ожидалась «%2$@» — файл удалён. Скачайте программу с сайта поставщика вручную.";
 "cloud.install.nothingInside" = "В скачанном образе нет ни пакета, ни программы — файл удалён.";
 "cloud.install.noAddress" = "У этого поставщика нет прямого адреса установщика — откройте страницу загрузки.";
+"settings.search.placeholder" = "Поиск";
+"settings.search.title" = "Результаты поиска";
+"settings.search.noResults" = "Ничего не найдено.";
 "network.localNetwork" = "Локальная сеть";
 "network.ftpDisk" = "FTP-диск";
 "network.scanning" = "Сканирование сети";

@@ -28,7 +28,7 @@ struct SettingsTerminalView: View {
             }
             Section(L("settings.keys.terminal")) {
                 HStack {
-                    Text(L("settings.terminal.shortcut"))
+                    Text(L("settings.terminal.shortcut")).settingAnchor("settings.terminal.shortcut")
                     Spacer()
                     Text("⌘`")
                         .font(.system(.body, design: .monospaced))

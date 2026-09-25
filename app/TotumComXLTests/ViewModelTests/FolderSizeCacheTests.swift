@@ -25,6 +25,33 @@ final class FolderSizeCacheTests: XCTestCase {
 
     // MARK: - Remembering
 
+    /// Подтверждённый размер свеж пять минут: перечитка папки его не обходит заново.
+    func testAFreshSizeIsNotWalkedAgain() {
+        let cache = FolderSizeCache(fileURL: cacheFile())
+        cache.store(size: 10, for: "/a/b")
+        XCTAssertTrue(cache.isFresh(path: "/a/b"))
+        XCTAssertFalse(cache.isFresh(path: "/a/c"), "неизвестная папка — обходить")
+        XCTAssertFalse(cache.isFresh(path: "/a/b", now: Date().addingTimeInterval(FolderSizeCache.verifyInterval + 1)),
+                       "залежалась — обходить")
+        XCTAssertEqual(cache.foldersToWalk(["/a/b", "/a/c"], fullSpeed: false), ["/a/c"])
+        XCTAssertEqual(cache.foldersToWalk(["/a/b", "/a/c"], fullSpeed: true), ["/a/b", "/a/c"],
+                       "по просьбе человека — все")
+    }
+
+    /// Событие в глубине снимает записи всех папок, внутри которых оно случилось, но не соседей.
+    func testAChangeInsideInvalidatesAncestorsOnly() {
+        let cache = FolderSizeCache(fileURL: cacheFile())
+        for path in ["/a", "/a/b", "/a/b/c", "/a/d", "/x"] { cache.store(size: 1, for: path) }
+        cache.invalidate(containing: "/a/b/c/file.txt")
+        XCTAssertNil(cache.size(for: "/a/b/c"))
+        XCTAssertNil(cache.size(for: "/a/b"))
+        XCTAssertNil(cache.size(for: "/a"))
+        XCTAssertEqual(cache.size(for: "/a/d"), 1, "сосед не тронут")
+        XCTAssertEqual(cache.size(for: "/x"), 1)
+        cache.invalidate(containing: "/ab/file")
+        XCTAssertEqual(cache.size(for: "/a/d"), 1, "«/ab» — не внутри «/a»")
+    }
+
     func testARememberedSizeComesBack() {
         let cache = FolderSizeCache(fileURL: cacheFile())
         cache.store(size: 123_456, for: "/Users/dimas/Documents/АВТО")

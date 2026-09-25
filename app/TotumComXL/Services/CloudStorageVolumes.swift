@@ -14,9 +14,25 @@ enum CloudStorageVolumes {
 
     static let root = NSHomeDirectory() + "/Library/CloudStorage"
 
-    /// Папки поставщиков, как они лежат на диске. Читается при каждой отрисовке полосы:
-    /// один список каталога, дёшево.
-    static func volumes(in root: String = root) -> [Volume] {
+    /// Папки поставщиков, как они лежат на диске. Полоса зовёт это при каждой перерисовке,
+    /// и не раз (по кнопке на диск), потому ответ помнится секунду — измерено в пробе
+    /// стеков: чтение каталога шло из отрисовки.
+    private static var memo: (root: String, at: Date, volumes: [Volume])?
+    private static let memoLock = NSLock()
+
+    static func volumes(in root: String = root, now: Date = Date()) -> [Volume] {
+        memoLock.lock()
+        if let memo, memo.root == root, now.timeIntervalSince(memo.at) < 1 {
+            memoLock.unlock()
+            return memo.volumes
+        }
+        memoLock.unlock()
+        let scanned = scan(root)
+        memoLock.lock(); memo = (root, now, scanned); memoLock.unlock()
+        return scanned
+    }
+
+    private static func scan(_ root: String) -> [Volume] {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: root) else { return [] }
         return names.sorted().compactMap { name in

@@ -69,11 +69,11 @@ struct SettingsGeneralView: View {
                     }
             }
             Section {
-                Toggle(L("settings.showHidden"), isOn: $showHiddenFiles)
-                Toggle(L("settings.calculateFolderSizes"), isOn: $calculateFolderSizes)
+                Toggle(L("settings.showHidden"), isOn: $showHiddenFiles).settingAnchor("settings.showHidden")
+                Toggle(L("settings.calculateFolderSizes"), isOn: $calculateFolderSizes).settingAnchor("settings.calculateFolderSizes")
                 if calculateFolderSizes {
                     HStack {
-                        Text(L("settings.folderSizeLoad"))
+                        Text(L("settings.folderSizeLoad")).settingAnchor("settings.folderSizeLoad")
                         Slider(value: Binding(
                             get: { Double(folderSizeLoadPercent) },
                             set: { folderSizeLoadPercent = Int($0.rounded()) }
@@ -87,8 +87,8 @@ struct SettingsGeneralView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                Toggle(L("settings.saveViewModePerTab"), isOn: $saveViewModePerTab)
-                Toggle(L("settings.persistColumnWidths"), isOn: $persistColumnWidths)
+                Toggle(L("settings.saveViewModePerTab"), isOn: $saveViewModePerTab).settingAnchor("settings.saveViewModePerTab")
+                Toggle(L("settings.persistColumnWidths"), isOn: $persistColumnWidths).settingAnchor("settings.persistColumnWidths")
                 LabeledContent(L("settings.diskImageOpen")) {
                     FCXLDialogMenuPicker(
                         items: DiskImageOpenMode.allCases.map(\.rawValue),
@@ -106,7 +106,7 @@ struct SettingsGeneralView: View {
                         selection: $toolbarLook,
                         title: { L(ToolbarLook(rawValue: $0)?.titleKey ?? $0) })
                 }
-                Toggle(L("settings.toolbar.separators"), isOn: $toolbarSeparators)
+                Toggle(L("settings.toolbar.separators"), isOn: $toolbarSeparators).settingAnchor("settings.toolbar.separators")
                 Text(L("settings.toolbar.hint"))
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -155,7 +155,7 @@ struct SettingsGeneralView: View {
             Section(L("settings.section.mouse")) {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text(L("settings.doubleClickInterval"))
+                        Text(L("settings.doubleClickInterval")).settingAnchor("settings.doubleClickInterval")
                         Spacer()
                         Text("\(doubleClickIntervalMilliseconds) \(L("unit.milliseconds"))")
                             .foregroundColor(.secondary)
@@ -185,13 +185,13 @@ struct SettingsGeneralView: View {
                 }
             }
             Section(L("settings.section.dialogs")) {
-                Toggle(L("settings.confirmCopyMove"), isOn: invertedBinding($skipCopyMoveDialog))
-                Toggle(L("settings.confirmDelete"), isOn: invertedBinding($skipDeleteDialog))
-                Toggle(L("settings.confirmPack"), isOn: invertedBinding($skipPackDialog))
-                Toggle(L("settings.confirmExtract"), isOn: invertedBinding($skipExtractDialog))
+                Toggle(L("settings.confirmCopyMove"), isOn: invertedBinding($skipCopyMoveDialog)).settingAnchor("settings.confirmCopyMove")
+                Toggle(L("settings.confirmDelete"), isOn: invertedBinding($skipDeleteDialog)).settingAnchor("settings.confirmDelete")
+                Toggle(L("settings.confirmPack"), isOn: invertedBinding($skipPackDialog)).settingAnchor("settings.confirmPack")
+                Toggle(L("settings.confirmExtract"), isOn: invertedBinding($skipExtractDialog)).settingAnchor("settings.confirmExtract")
             }
             Section(L("settings.section.breadcrumbs")) {
-                Toggle(L("settings.breadcrumbSelectAll"), isOn: $breadcrumbSelectAll)
+                Toggle(L("settings.breadcrumbSelectAll"), isOn: $breadcrumbSelectAll).settingAnchor("settings.breadcrumbSelectAll")
             }
             Section(L("settings.section.control")) {
                 Toggle(L("settings.control.enabled"), isOn: Binding(
@@ -207,7 +207,7 @@ struct SettingsGeneralView: View {
             }
             // The last word in the section: a check that runs by itself, out of the way.
             Section(L("settings.section.updates")) {
-                Toggle(L("settings.updates.check"), isOn: $checkUpdates)
+                Toggle(L("settings.updates.check"), isOn: $checkUpdates).settingAnchor("settings.updates.check")
                 Text(L("settings.updates.hint"))
                     .font(.caption)
                     .foregroundColor(.secondary)

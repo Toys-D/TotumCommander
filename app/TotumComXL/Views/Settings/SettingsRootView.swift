@@ -4,6 +4,9 @@ import SwiftUI
 struct SettingsRootView: View {
     @AppStorage(SettingsSection.lastKey) private var lastSectionRaw: String = SettingsSection.general.rawValue
     @State private var selection: SettingsSection = .general
+    @State private var query: String = ""
+    /// Найденная строка, которую надо подсветить на открытой странице.
+    @State private var spotlight: SettingsSearchHit?
     @State private var window: NSWindow?
     @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
     private var accent: Color { PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple) }
@@ -11,9 +14,17 @@ struct SettingsRootView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                SettingsSidebar(selection: $selection)
+                SettingsSidebar(selection: $selection, query: $query)
                 Divider()
-                SettingsDetailView(section: selection)
+                if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                    SettingsDetailView(section: selection, spotlight: spotlight)
+                } else {
+                    SettingsSearchResultsView(query: query, accent: accent) { hit in
+                        selection = hit.section
+                        spotlight = hit
+                        query = ""
+                    }
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             Divider()

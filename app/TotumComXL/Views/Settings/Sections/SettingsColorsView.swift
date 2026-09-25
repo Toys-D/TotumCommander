@@ -45,9 +45,9 @@ struct SettingsColorsView: View {
                     get: { appearanceMode },
                     set: { appearanceMode = $0; PanelAppearanceSettings.applyAppearanceMode() }
                 )) {
-                    Text(L("settings.appearance.system")).tag(0)
-                    Text(L("settings.appearance.light")).tag(1)
-                    Text(L("settings.appearance.dark")).tag(2)
+                    Text(L("settings.appearance.system")).tag(0).settingAnchor("settings.appearance.system")
+                    Text(L("settings.appearance.light")).tag(1).settingAnchor("settings.appearance.light")
+                    Text(L("settings.appearance.dark")).tag(2).settingAnchor("settings.appearance.dark")
                 }
                 .pickerStyle(.segmented)
                 // NOTE: sibling rows MUST have UNIQUE explicit ids — two rows with the
@@ -114,7 +114,7 @@ struct SettingsColorsView: View {
 
                 // The switch first; the shade appears only while it is on, so there is never a
                 // colour sitting there that changes nothing.
-                Toggle(L("design.alternateRows"), isOn: $alternateRows)
+                Toggle(L("design.alternateRows"), isOn: $alternateRows).settingAnchor("design.alternateRows")
                 if alternateRows {
                     colorRow(alternateRowTitle, hex: alternateRowBinding,
                              allowsReset: true,
@@ -126,8 +126,8 @@ struct SettingsColorsView: View {
                 // Линии сетки: вертикальные между столбцами, горизонтальные между строками —
                 // в подробном и кратком режимах. Цвет на тему и прозрачность одни на обе,
                 // чтобы сетка выглядела цельно; появляются, пока включена хоть одна.
-                Toggle(L("design.gridLines.vertical"), isOn: $gridVertical)
-                Toggle(L("design.gridLines.horizontal"), isOn: $gridHorizontal)
+                Toggle(L("design.gridLines.vertical"), isOn: $gridVertical).settingAnchor("design.gridLines.vertical")
+                Toggle(L("design.gridLines.horizontal"), isOn: $gridHorizontal).settingAnchor("design.gridLines.horizontal")
                 if gridVertical || gridHorizontal {
                     colorRow(gridLineTitle, hex: gridLineBinding,
                              allowsReset: true,
@@ -136,7 +136,7 @@ struct SettingsColorsView: View {
                                 fallback: .gray))
                         .id("gridLineColor-\(isDark ? "dark" : "light")")
                     HStack {
-                        Text(L("design.gridLines.opacity"))
+                        Text(L("design.gridLines.opacity")).settingAnchor("design.gridLines.opacity")
                         Slider(value: $gridLinesOpacity, in: 0.02...1.0)
                         Text("\(Int((gridLinesOpacity * 100).rounded()))%")
                             .foregroundStyle(.secondary)
@@ -165,7 +165,7 @@ struct SettingsColorsView: View {
                     .foregroundStyle(beautySupported ? Color.secondary : Color(nsColor: .systemOrange))
                 // Плавный рост значка и шрифта под курсором — пункт красоты, как и остальные:
                 // действует, только пока она включена.
-                Toggle(L("settings.performance.smoothAnimation"), isOn: $smoothAnimation)
+                Toggle(L("settings.performance.smoothAnimation"), isOn: $smoothAnimation).settingAnchor("settings.performance.smoothAnimation")
                     .disabled(!beautyEnabled || !beautySupported)
                 Text(L("settings.performance.smoothAnimationHint"))
                     .font(.caption)
@@ -175,7 +175,7 @@ struct SettingsColorsView: View {
             }
             Section(L("settings.performance.effects")) {
                 HStack {
-                    Text(L("settings.performance.cursorHeight"))
+                    Text(L("settings.performance.cursorHeight")).settingAnchor("settings.performance.cursorHeight")
                     Slider(value: $cursorHeight, in: 0.3...1.0)
                     Text("\(Int(cursorHeight * 100))%")
                         .foregroundStyle(.secondary)
@@ -184,7 +184,7 @@ struct SettingsColorsView: View {
                 }
                 .disabled(!beautyEnabled || !beautySupported)
                 HStack {
-                    Text(L("settings.performance.cursorWidth"))
+                    Text(L("settings.performance.cursorWidth")).settingAnchor("settings.performance.cursorWidth")
                     Slider(value: $cursorWidth, in: 0.01...1.0)
                     Text("\(Int(cursorWidth * 100))%")
                         .foregroundStyle(.secondary)
@@ -193,7 +193,7 @@ struct SettingsColorsView: View {
                 }
                 .disabled(!beautyEnabled || !beautySupported)
                 HStack {
-                    Text(L("settings.performance.cursorCorner"))
+                    Text(L("settings.performance.cursorCorner")).settingAnchor("settings.performance.cursorCorner")
                     Slider(value: $cursorCorner, in: 0...20)
                     Text("\(Int(cursorCorner))")
                         .foregroundStyle(.secondary)
@@ -217,7 +217,7 @@ struct SettingsColorsView: View {
                 }
                 .disabled(!beautyEnabled || !beautySupported)
                 HStack {
-                    Text(L("settings.performance.cursorBlur"))
+                    Text(L("settings.performance.cursorBlur")).settingAnchor("settings.performance.cursorBlur")
                     Slider(value: $cursorBlur, in: 0...30)
                     Text("\(Int(cursorBlur))")
                         .foregroundStyle(.secondary)
@@ -226,7 +226,7 @@ struct SettingsColorsView: View {
                 }
                 .disabled(!beautyEnabled || !beautySupported)
                 HStack {
-                    Text(L("settings.performance.cursorOffsetX"))
+                    Text(L("settings.performance.cursorOffsetX")).settingAnchor("settings.performance.cursorOffsetX")
                     Slider(value: $cursorOffsetX, in: -100...100)
                     Text("\(Int(cursorOffsetX))")
                         .foregroundStyle(.secondary)
@@ -235,7 +235,7 @@ struct SettingsColorsView: View {
                 }
                 .disabled(!beautyEnabled || !beautySupported)
                 HStack {
-                    Text(L("settings.performance.cursorOffsetY"))
+                    Text(L("settings.performance.cursorOffsetY")).settingAnchor("settings.performance.cursorOffsetY")
                     Slider(value: $cursorOffsetY, in: -30...30)
                     Text("\(Int(cursorOffsetY))")
                         .foregroundStyle(.secondary)
@@ -244,7 +244,7 @@ struct SettingsColorsView: View {
                 }
                 .disabled(!beautyEnabled || !beautySupported)
                 HStack {
-                    Text(L("settings.performance.cursorAnchorX"))
+                    Text(L("settings.performance.cursorAnchorX")).settingAnchor("settings.performance.cursorAnchorX")
                     Slider(value: $cursorAnchorX, in: 0...1)
                     Text("\(Int(cursorAnchorX * 100))%")
                         .foregroundStyle(.secondary)
@@ -253,7 +253,7 @@ struct SettingsColorsView: View {
                 }
                 .disabled(!beautyEnabled || !beautySupported)
                 HStack {
-                    Text(L("settings.performance.cursorAnchorY"))
+                    Text(L("settings.performance.cursorAnchorY")).settingAnchor("settings.performance.cursorAnchorY")
                     Slider(value: $cursorAnchorY, in: 0...1)
                     Text("\(Int(cursorAnchorY * 100))%")
                         .foregroundStyle(.secondary)

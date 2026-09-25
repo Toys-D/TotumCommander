@@ -15,8 +15,8 @@ struct SettingsDividerView: View {
                 slider(L("design.quickLinksGap"), value: $quickLinksGap, in: 0...30, step: 2)
                 slider(L("design.dividerIconSpacing"), value: $dividerIconSpacing, in: 0...10, step: 1)
                 slider(L("design.dividerOffsetY"), value: $dividerOffsetY, in: -100...100, step: 5)
-                Toggle(L("design.dividerShowQuickLinks"), isOn: $dividerShowQuickLinks)
-                Toggle(L("design.dividerShowLabels"), isOn: $dividerShowLabels)
+                Toggle(L("design.dividerShowQuickLinks"), isOn: $dividerShowQuickLinks).settingAnchor("design.dividerShowQuickLinks")
+                Toggle(L("design.dividerShowLabels"), isOn: $dividerShowLabels).settingAnchor("design.dividerShowLabels")
                     .disabled(centerDividerWidth < 40)
                 if centerDividerWidth < 40 {
                     Text(L("design.dividerShowLabels.hint"))

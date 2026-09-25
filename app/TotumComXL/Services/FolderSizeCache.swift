@@ -50,6 +50,39 @@ final class FolderSizeCache: @unchecked Sendable {
         return entries[path]?.size
     }
 
+    /// Сколько подтверждённый размер считается свежим и не пересчитывается при перечитках.
+    /// Перечитка бывает на каждую активацию окна и на каждое событие в папке, а обход дерева
+    /// подпапок стоит секунды и несколько ядер (измерено: 4 потока, 140 % ЦП на папке в
+    /// 24 тысячи файлов). Изменения внутри подпапки ловит наблюдатель и сбрасывает её запись.
+    static let verifyInterval: TimeInterval = 5 * 60
+
+    /// Свежа ли запись: подтверждена не раньше, чем `interval` назад.
+    func isFresh(path: String, within interval: TimeInterval = verifyInterval, now: Date = Date()) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        loadIfNeededLocked()
+        guard let entry = entries[path] else { return false }
+        return now.timeIntervalSince(entry.verifiedAt) < interval
+    }
+
+    /// Что-то изменилось по этому пути: размеры всех папок, внутри которых он лежит, больше
+    /// не верны — их записи снимаются, и следующий обход пересчитает именно их.
+    func invalidate(containing changedPath: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        loadIfNeededLocked()
+        entries = entries.filter { key, _ in
+            !(changedPath == key || changedPath.hasPrefix(key + "/"))
+        }
+    }
+
+    /// Какие папки обходить: по просьбе человека — все, иначе только те, чей размер
+    /// не подтверждён или подтверждён давно.
+    func foldersToWalk(_ paths: [String], fullSpeed: Bool, now: Date = Date()) -> [String] {
+        guard !fullSpeed else { return paths }
+        return paths.filter { !isFresh(path: $0, now: now) }
+    }
+
     // MARK: - Writing
 
     /// Called by the walker after a REAL computation — this is what "verified" means.

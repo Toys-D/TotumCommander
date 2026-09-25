@@ -36,8 +36,8 @@ struct SettingsListView: View {
                         title: { $0 ? L("settings.sort.ascending") : L("settings.sort.descending") },
                         icon: { $0 ? "arrow.up" : "arrow.down" })
                 }
-                Toggle(L("settings.sort.perFolder"), isOn: $rememberSortPerFolder)
-                Text(L("settings.sort.perFolderNote"))
+                Toggle(L("settings.sort.perFolder"), isOn: $rememberSortPerFolder).settingAnchor("settings.sort.perFolder")
+                Text(L("settings.sort.perFolderNote")).settingAnchor("settings.sort.perFolderNote")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -46,8 +46,8 @@ struct SettingsListView: View {
             }
 
             Section {
-                Toggle(L("settings.git.show"), isOn: $showGitStatus)
-                Text(L("settings.git.note"))
+                Toggle(L("settings.git.show"), isOn: $showGitStatus).settingAnchor("settings.git.show")
+                Text(L("settings.git.note")).settingAnchor("settings.git.note")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

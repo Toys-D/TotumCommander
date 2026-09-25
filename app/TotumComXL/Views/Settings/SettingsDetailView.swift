@@ -4,6 +4,9 @@ import SwiftUI
 /// is a Form that scrolls itself; the title is a fixed header above it.
 struct SettingsDetailView: View {
     let section: SettingsSection
+    /// Строка из поиска, которую надо показать и обвести после появления страницы.
+    var spotlight: SettingsSearchHit? = nil
+    @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -15,6 +18,9 @@ struct SettingsDetailView: View {
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .modifier(SettingsSpotlightOverlay(
+            hit: spotlight?.section == section ? spotlight : nil,
+            accent: PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple)))
     }
 
     @ViewBuilder

@@ -34,8 +34,8 @@ struct SettingsKeysView: View {
                 .opacity(spaceAction == "select" ? 0.4 : 1)
             }
             Section(L("settings.keys.viewer")) {
-                Toggle(L("settings.viewerInPanel"), isOn: $viewerInPanel)
-                Toggle(L("settings.editorInPanel"), isOn: $editorInPanel)
+                Toggle(L("settings.viewerInPanel"), isOn: $viewerInPanel).settingAnchor("settings.viewerInPanel")
+                Toggle(L("settings.editorInPanel"), isOn: $editorInPanel).settingAnchor("settings.editorInPanel")
                 if viewerInPanel && quickViewMode == "native" {
                     Text(L("settings.viewerInPanel.hint"))
                         .font(.caption)
@@ -44,13 +44,13 @@ struct SettingsKeysView: View {
                 }
             }
             Section(L("settings.keys.backspace")) {
-                Toggle(L("settings.backspaceAsBack"), isOn: $backspaceAsBack)
+                Toggle(L("settings.backspaceAsBack"), isOn: $backspaceAsBack).settingAnchor("settings.backspaceAsBack")
                 Text(L("settings.backspaceAsBack.hint"))
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
             Section(L("settings.keys.selection")) {
-                Toggle(L("settings.includeCursorInOps"), isOn: $includeCursorInOperations)
+                Toggle(L("settings.includeCursorInOps"), isOn: $includeCursorInOperations).settingAnchor("settings.includeCursorInOps")
                 Text(L("settings.includeCursorInOps.hint"))
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -76,14 +76,14 @@ struct SettingsKeysView: View {
                     }
                 }
                 if needsRelogin {
-                    Text(L("settings.keys.sound.relogin"))
+                    Text(L("settings.keys.sound.relogin")).settingAnchor("settings.keys.sound.relogin")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Section(L("settings.keys.cmdQ")) {
-                Toggle(L("settings.cmdQToQuit"), isOn: $cmdQToQuit)
+                Toggle(L("settings.cmdQToQuit"), isOn: $cmdQToQuit).settingAnchor("settings.cmdQToQuit")
                 Text(L("settings.cmdQToQuit.hint"))
                     .font(.caption)
                     .foregroundColor(.secondary)

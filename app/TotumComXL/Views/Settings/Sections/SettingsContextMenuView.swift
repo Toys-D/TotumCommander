@@ -17,7 +17,7 @@ struct SettingsContextMenuView: View {
     var body: some View {
         Form {
             Section {
-                Text(L("settings.contextMenu.livePreview"))
+                Text(L("settings.contextMenu.livePreview")).settingAnchor("settings.contextMenu.livePreview")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -106,14 +106,14 @@ struct SettingsContextMenuView: View {
 
     private var available: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(L("settings.contextMenu.available"))
+            Text(L("settings.contextMenu.available")).settingAnchor("settings.contextMenu.available")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.secondary)
             searchField
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     if matches.isEmpty {
-                        Text(L("settings.contextMenu.noMatches"))
+                        Text(L("settings.contextMenu.noMatches")).settingAnchor("settings.contextMenu.noMatches")
                             .font(.caption).foregroundColor(.secondary).padding(.vertical, 8)
                     }
                     ForEach(Array(matches.enumerated()), id: \.element.id) { index, choice in

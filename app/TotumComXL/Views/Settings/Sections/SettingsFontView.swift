@@ -21,7 +21,7 @@ struct SettingsFontView: View {
                                          selection: $fontFamily,
                                          title: { $0.isEmpty ? L("settings.font.system") : $0 })
                 }
-                Toggle(L("settings.font.bold"), isOn: $fontBold)
+                Toggle(L("settings.font.bold"), isOn: $fontBold).settingAnchor("settings.font.bold")
                 sliderRow(L("settings.font.size"), value: $fontSize, range: 8...28, label: "\(Int(fontSize)) pt")
                 sliderRow(L("settings.font.letterSpacing"), value: $letterSpacing, range: -3...10,
                           label: String(format: "%.1f pt", letterSpacing))
@@ -37,9 +37,9 @@ struct SettingsFontView: View {
             }
 
             Section {
-                Toggle(L("settings.font.cursorZoom"), isOn: $fontZoomEnabled)
+                Toggle(L("settings.font.cursorZoom"), isOn: $fontZoomEnabled).settingAnchor("settings.font.cursorZoom")
                 HStack {
-                    Text(L("settings.font.cursorZoomAmount"))
+                    Text(L("settings.font.cursorZoomAmount")).settingAnchor("settings.font.cursorZoomAmount")
                     Slider(value: $fontZoomAmount, in: 1.0...2.0)
                     Text("\(Int(fontZoomAmount * 100))%")
                         .foregroundStyle(.secondary)
@@ -48,7 +48,7 @@ struct SettingsFontView: View {
                 }
                 .disabled(!fontZoomEnabled)
             } header: {
-                Text(L("settings.font.cursorZoomSection"))
+                Text(L("settings.font.cursorZoomSection")).settingAnchor("settings.font.cursorZoomSection")
             } footer: {
                 Text(L("settings.font.cursorZoomHint"))
             }

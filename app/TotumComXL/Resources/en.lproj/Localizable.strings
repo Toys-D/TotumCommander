@@ -794,6 +794,9 @@
 "cloud.install.wrongSigner" = "The downloaded file is signed by “%1$@”, but “%2$@” was expected — it was deleted. Download the app from the vendor’s site manually.";
 "cloud.install.nothingInside" = "The downloaded image holds neither a package nor an app — it was deleted.";
 "cloud.install.noAddress" = "This vendor has no direct installer address — open its download page.";
+"settings.search.placeholder" = "Search";
+"settings.search.title" = "Search results";
+"settings.search.noResults" = "Nothing found.";
 "network.localNetwork" = "Local Network";
 "network.ftpDisk" = "FTP Disk";
 "network.scanning" = "Scanning network";

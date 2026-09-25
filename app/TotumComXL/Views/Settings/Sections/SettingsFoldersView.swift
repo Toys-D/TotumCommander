@@ -15,7 +15,7 @@ struct SettingsFoldersView: View {
         Form {
             Section(L("design.section.folderIcons")) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(L("design.folderIconStyle"))
+                    Text(L("design.folderIconStyle")).settingAnchor("design.folderIconStyle")
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 4), spacing: 12) {
                         ForEach(FolderIconStyle.allCases) { style in
                             VStack(spacing: 4) {
@@ -53,7 +53,7 @@ struct SettingsFoldersView: View {
                         }
                     }
                 }
-                Toggle(L("settings.folders.customIcons"), isOn: $showCustomFolderIcons)
+                Toggle(L("settings.folders.customIcons"), isOn: $showCustomFolderIcons).settingAnchor("settings.folders.customIcons")
                     .onChange(of: showCustomFolderIcons) { _, _ in
                         // Re-read the folders: entries cached while the setting was off would
                         // otherwise be replayed when it is switched back on.
@@ -64,9 +64,9 @@ struct SettingsFoldersView: View {
                     .foregroundStyle(.secondary)
             }
             Section(L("settings.folders.iconZoomSection")) {
-                Toggle(L("settings.folders.iconZoom"), isOn: $iconZoomEnabled)
+                Toggle(L("settings.folders.iconZoom"), isOn: $iconZoomEnabled).settingAnchor("settings.folders.iconZoom")
                 HStack {
-                    Text(L("settings.folders.iconZoomAmount"))
+                    Text(L("settings.folders.iconZoomAmount")).settingAnchor("settings.folders.iconZoomAmount")
                     Slider(value: $iconZoomAmount, in: 1.0...2.0)
                     Text("\(Int(iconZoomAmount * 100))%")
                         .foregroundStyle(.secondary)
@@ -75,7 +75,7 @@ struct SettingsFoldersView: View {
                 }
                 .disabled(!iconZoomEnabled)
                 HStack {
-                    Text(L("settings.folders.iconZoomSpread"))
+                    Text(L("settings.folders.iconZoomSpread")).settingAnchor("settings.folders.iconZoomSpread")
                     // No step: — a stepped slider draws tick marks, which no other slider in
                     // the app has. The binding rounds instead, so the values stay whole rows.
                     Slider(value: Binding(get: { Double(iconZoomSpread) },

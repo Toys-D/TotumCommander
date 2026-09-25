@@ -56,7 +56,7 @@ struct SettingsCursorView: View {
 
                 if cursorUsesCustomColor {
                     HStack {
-                        Text(L("design.color.cursorBackground"))
+                        Text(L("design.color.cursorBackground")).settingAnchor("design.color.cursorBackground")
                         Spacer()
                         FCXLColorPicker(hex: themedColorBinding(
                             PanelAppearanceSettings.cursorBackgroundColorHexKey,
@@ -67,7 +67,7 @@ struct SettingsCursorView: View {
                     }
                     .id("cursorBg-\(isDark ? "dark" : "light")")
                     HStack {
-                        Text(L("design.color.cursorName"))
+                        Text(L("design.color.cursorName")).settingAnchor("design.color.cursorName")
                         Spacer()
                         FCXLColorPicker(hex: themedColorBinding(
                             PanelAppearanceSettings.cursorNameColorHexKey,
@@ -95,7 +95,7 @@ struct SettingsCursorView: View {
 
                 if outlineEnabled {
                     HStack {
-                        Text(L("design.cursor.outlineColor"))
+                        Text(L("design.cursor.outlineColor")).settingAnchor("design.cursor.outlineColor")
                         Spacer()
                         FCXLColorPicker(hex: themedColorBinding(
                             PanelAppearanceSettings.cursorOutlineColorHexKey,
@@ -107,7 +107,7 @@ struct SettingsCursorView: View {
                     }
                     .id("cursorOutlineColor-\(isDark ? "dark" : "light")")
                     HStack {
-                        Text(L("design.cursor.outlineWidth"))
+                        Text(L("design.cursor.outlineWidth")).settingAnchor("design.cursor.outlineWidth")
                         Slider(value: $outlineWidth, in: 0.5...6)
                         Text(String(format: "%.1f", outlineWidth))
                             .foregroundStyle(.secondary)
@@ -120,7 +120,7 @@ struct SettingsCursorView: View {
                         .foregroundColor(.secondary)
                 }
             } header: {
-                Text(L("design.cursor.outlineSection"))
+                Text(L("design.cursor.outlineSection")).settingAnchor("design.cursor.outlineSection")
             }
         }
         .formStyle(.grouped)

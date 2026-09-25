@@ -140,11 +140,11 @@ struct SettingsAboutView: View {
             Section {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(L("about.support.title")).font(.system(size: 13, weight: .semibold))
-                    Text(L("about.support.body"))
+                    Text(L("about.support.body")).settingAnchor("about.support.body")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Button { NSWorkspace.shared.open(AppIdentity.supportURL) } label: {
-                        Text(L("about.support.button")).frame(minWidth: 200)
+                        Text(L("about.support.button")).frame(minWidth: 200).settingAnchor("about.support.button")
                     }
                     .buttonStyle(FCXLDialogPrimaryButtonStyle(
                         accent: accent,
@@ -153,9 +153,9 @@ struct SettingsAboutView: View {
                     .pointerStyle(.link)
                     // Lines of their own, wrapping: beside the button the thanks had one line
                     // and ended in an ellipsis.
-                    Text(L("about.support.thanks")).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(L("about.support.thanks")).font(.system(size: 12)).foregroundStyle(.secondary).settingAnchor("about.support.thanks")
                         .fixedSize(horizontal: false, vertical: true)
-                    Text(L("about.support.note")).font(.system(size: 11)).foregroundStyle(.tertiary)
+                    Text(L("about.support.note")).font(.system(size: 11)).foregroundStyle(.tertiary).settingAnchor("about.support.note")
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.vertical, 4)

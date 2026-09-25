@@ -24,7 +24,7 @@ struct SettingsFileColorsView: View {
         // наружу отдельной надписью. FCXLFormCard для таких мест и заведён.
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                Text(L("colors.rules.section"))
+                Text(L("colors.rules.section")).settingAnchor("colors.rules.section")
                     .font(.system(size: 13, weight: .semibold))
 
                 Text(L("colors.rules.hint") + " " + L("colors.rules.hint.themes"))
@@ -33,7 +33,7 @@ struct SettingsFileColorsView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 if store.rules.isEmpty {
-                    Text(L("colors.rules.empty"))
+                    Text(L("colors.rules.empty")).settingAnchor("colors.rules.empty")
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -84,7 +84,7 @@ struct SettingsFileColorsView: View {
             Text(isDark ? L("colors.rules.column.colorDark")
                         : L("colors.rules.column.colorLight"))
                 .frame(width: 62, alignment: .leading)
-            Text(L("colors.rules.column.mask"))
+            Text(L("colors.rules.column.mask")).settingAnchor("colors.rules.column.mask")
             Spacer(minLength: 0)
         }
         .font(.system(size: 10))
@@ -165,7 +165,7 @@ struct SettingsFileColorsView: View {
     private func freshnessRow(_ rule: FileColorRule, minutes: Double) -> some View {
         let unit = FreshnessUnit.best(for: minutes)
         return HStack(spacing: 8) {
-            Text(L("colors.rules.freshness"))
+            Text(L("colors.rules.freshness")).settingAnchor("colors.rules.freshness")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
@@ -196,7 +196,7 @@ struct SettingsFileColorsView: View {
 
             FCXLSwitch(isOn: binding(rule, \.fades), size: .mini)
                 .padding(.leading, 8)
-            Text(L("colors.rules.fades"))
+            Text(L("colors.rules.fades")).settingAnchor("colors.rules.fades")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)

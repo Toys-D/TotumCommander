@@ -9,10 +9,10 @@ struct SettingsNetworkNTFSView: View {
     var body: some View {
         Form {
             Section(L("settings.section.network")) {
-                Toggle(L("settings.remoteDirectToQueue"), isOn: $remoteDirectToQueue)
+                Toggle(L("settings.remoteDirectToQueue"), isOn: $remoteDirectToQueue).settingAnchor("settings.remoteDirectToQueue")
                 Stepper(value: $maxConcurrentTransfers, in: 1...8) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(L("settings.maxConcurrentTransfers", maxConcurrentTransfers))
+                        Text(L("settings.maxConcurrentTransfers", maxConcurrentTransfers)).settingAnchor("settings.maxConcurrentTransfers")
                         Text(L("settings.maxConcurrentTransfers.hint"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -45,7 +45,7 @@ private struct NTFSPasswordSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(L("settings.ntfs.explain"))
+            Text(L("settings.ntfs.explain")).settingAnchor("settings.ntfs.explain")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -54,7 +54,7 @@ private struct NTFSPasswordSettingsView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.shield.fill")
                         .foregroundStyle(.green)
-                    Text(L("settings.ntfs.saved"))
+                    Text(L("settings.ntfs.saved")).settingAnchor("settings.ntfs.saved")
                     Spacer()
                     Button(L("settings.ntfs.clear"), role: .destructive) {
                         NTFSPasswordStore.clear()
@@ -77,7 +77,7 @@ private struct NTFSPasswordSettingsView: View {
                 }
             }
 
-            Text(L("settings.ntfs.warning"))
+            Text(L("settings.ntfs.warning")).settingAnchor("settings.ntfs.warning")
                 .font(.caption2)
                 .foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)

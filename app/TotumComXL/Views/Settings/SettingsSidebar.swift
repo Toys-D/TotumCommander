@@ -10,6 +10,8 @@ import SwiftUI
 /// accent pill itself, which is the only cursor the user ever sees.
 struct SettingsSidebar: View {
     @Binding var selection: SettingsSection
+    /// Поиск по настройкам: пока набрано, страница раздела уступает место результатам.
+    @Binding var query: String
     @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
     @FocusState private var listFocused: Bool
 
@@ -18,13 +20,31 @@ struct SettingsSidebar: View {
         let accent = PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple)
         let onAccent = PanelAppearanceSettings.contrastingTextColor(on: accent)
 
+        let matched = query.isEmpty ? nil : Set(SettingsSearch.hits(for: query).map(\.section))
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        TextField(L("settings.search.placeholder"), text: $query)
+                            .textFieldStyle(.plain)
+                        if !query.isEmpty {
+                            Button { query = "" } label: {
+                                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 5).padding(.horizontal, 8)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                    .padding(.bottom, 6)
                     ForEach(SettingsSection.allCases) { section in
-                        let isSelected = section == selection
+                        let isSelected = section == selection && query.isEmpty
+                        // При поиске разделы без совпадений блёкнут, чтобы видеть, где искать.
+                        let dimmed = matched.map { !$0.contains(section) } ?? false
                         Button {
                             selection = section
+                            query = ""              // выбор раздела закрывает поиск
                             listFocused = true      // clicking hands the arrows back to us
                         } label: {
                             HStack(spacing: 8) {
@@ -44,6 +64,7 @@ struct SettingsSidebar: View {
                         }
                         .buttonStyle(.plain)
                         .focusEffectDisabled()      // the accent pill is the cursor
+                        .opacity(dimmed ? 0.35 : 1)
                         .id(section.id)
                     }
                 }
@@ -56,6 +77,9 @@ struct SettingsSidebar: View {
                 move(direction, proxy: proxy)
             }
             .onAppear { listFocused = true }
+            // ⌘F — в поле поиска, как в Системных настройках.
+            .background(Button("") { listFocused = false }
+                .keyboardShortcut("f", modifiers: .command).opacity(0))
         }
         .frame(width: 200)
     }
