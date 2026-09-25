@@ -780,10 +780,22 @@ struct FileListBriefView: NSViewRepresentable {
         }
 
         /// As wide as the widest mark in the folder, so the marks form a column.
+        ///
+        /// Считается один раз на набор меток, а не на каждую ячейку: обход всех меток папки с
+        /// разрешением шрифта шёл в configureCell, то есть на каждое движение курсора по
+        /// нескольку раз (измерено по стекам).
         private var gitGutter: CGFloat {
-            GitBadgeChip.gutterWidth(parent.viewModel.gitByPath.values,
-                                     font: PanelAppearanceSettings.resolvedListFont(atDistance: .max))
+            let marks = parent.viewModel.gitByPath
+            let signature = "\(marks.count)|\(PanelAppearanceSettings.resolvedListFontSize)"
+            if gitGutterSignature == signature, let cached = gitGutterCache { return cached }
+            let width = GitBadgeChip.gutterWidth(marks.values,
+                                                 font: PanelAppearanceSettings.resolvedListFont(atDistance: .max))
+            gitGutterSignature = signature
+            gitGutterCache = width
+            return width
         }
+        private var gitGutterSignature = ""
+        private var gitGutterCache: CGFloat?
 
         private func configureCell(_ cell: BriefItem, with model: FileItem, index: Int) {
             let isCursor = index == parent.viewModel.cursorIndex && parent.isActive

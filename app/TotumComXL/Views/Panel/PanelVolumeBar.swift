@@ -18,7 +18,11 @@ private enum BarGlyph {
 }
 
 struct PanelVolumeBar: View {
-    @ObservedObject var viewModel: PanelViewModel
+    /// Полоса читает только место панели: путь, режим, хранилище. Наблюдается `state`, а не
+    /// вся модель: та шлёт objectWillChange и на каждое движение курсора, и полоса
+    /// перерисовывалась на каждое нажатие стрелки (измерено по стекам).
+    @ObservedObject var state: PanelState
+    var viewModel: PanelViewModel
     /// Observes the connect-time parallel-transfer probe so the remote badge turns green live.
     @ObservedObject private var connectionMgr = ConnectionManagerService.shared
     /// Подключения обеих панелей: чужое показывается тоже, как любой примонтированный том.
@@ -39,6 +43,18 @@ struct PanelVolumeBar: View {
     var onOpenForeignRemote: ((RemoteConnection) -> Void)?
     var onDisconnectForeignRemote: ((RemoteSession) -> Void)?
     @State private var mountedVolumesRevision: Int = 0
+    /// Кнопки и активная метка на одну отрисовку. Раньше `volumeButtons` пересчитывался для
+    /// КАЖДОЙ кнопки (через isCurrentVolume → activeVolumeLabel), с обходом смонтированных
+    /// томов и обращениями к диску, и всё это на каждое движение курсора — полоса наблюдает
+    /// модель панели целиком. Класс, а не @State: правится во время отрисовки без перерисовки.
+    @State private var render = RenderCache()
+
+    final class RenderCache {
+        var key = ""
+        var buttons: [VolumeButtonModel] = []
+        var activeKey = ""
+        var activeLabel = ""
+    }
     @State private var showNetworkMenu = false
     @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
     @AppStorage(PanelAppearanceSettings.beautyModeEnabledKey) private var beautyModeEnabled: Bool = false
@@ -508,7 +524,15 @@ struct PanelVolumeBar: View {
     }
 
     private var volumeButtons: [VolumeButtonModel] {
-        _ = mountedVolumesRevision
+        let key = "\(mountedVolumesRevision)|\(icloudAvailable)|\(viewModel.currentPath)|\(viewModel.state.insideNetworkBrowser)"
+        if render.key == key { return render.buttons }
+        let buttons = computeVolumeButtons()
+        render.key = key
+        render.buttons = buttons
+        return buttons
+    }
+
+    private func computeVolumeButtons() -> [VolumeButtonModel] {
         var buttons: [VolumeButtonModel] = []
         let homePath = normalizePath(NSHomeDirectory())
 
@@ -641,10 +665,21 @@ struct PanelVolumeBar: View {
     }
 
     private var activeVolumeLabel: String {
+        let buttons = volumeButtons
+        let key = render.key + "|" + viewModel.currentPath
+        if render.activeKey == key { return render.activeLabel }
+        let label = activeLabel(currentPath: viewModel.currentPath, buttons: buttons)
+        render.activeKey = key
+        render.activeLabel = label
+        return label
+    }
+
+    /// Выбор активного диска: самый длинный путь кнопки, внутри которого стоит панель.
+    private func activeLabel(currentPath rawPath: String, buttons: [VolumeButtonModel]) -> String {
         var bestLabel = "System:"
         var bestPathLength = -1
-        let currentPath = normalizePath(viewModel.currentPath)
-        for button in volumeButtons {
+        let currentPath = normalizePath(rawPath)
+        for button in buttons {
             let normalizedPath = normalizePath(button.path)
             guard isSameOrDescendant(currentPath, basePath: normalizedPath) else { continue }
             if normalizedPath.count > bestPathLength {

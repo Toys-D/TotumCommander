@@ -40,7 +40,7 @@ final class VolumeBarActiveDiskTests: XCTestCase {
                                 pathDefaultsKey: "panel.path.chip.look.\(id)",
                                 viewModeDefaultsKey: "panel.mode.chip.look.\(id)",
                                 showHiddenFiles: false)
-        let bar = PanelVolumeBar(viewModel: vm)
+        let bar = PanelVolumeBar(state: vm.state, viewModel: vm)
         let network = VolumeButtonModel(label: "SERVER_SO:E", path: "/Volumes/SERVER_SO",
                                         icon: "externaldrive.connected.to.line.below",
                                         isEjectable: true, isNetwork: true)

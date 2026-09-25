@@ -91,7 +91,7 @@ final class RemoteSessionRegistryTests: XCTestCase {
             return count
         }
         func render(_ name: String) throws -> NSBitmapImageRep {
-            let view = PanelVolumeBar(viewModel: watcher)
+            let view = PanelVolumeBar(state: watcher.state, viewModel: watcher)
                 .frame(width: 700)
                 .background(Color(white: 0.93))
                 .environment(\.colorScheme, .light)

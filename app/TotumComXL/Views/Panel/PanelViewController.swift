@@ -369,6 +369,7 @@ final class PanelViewController: NSViewController,
 
         // Volume bar (top)
         let volumeBar = PanelVolumeBar(
+            state: viewModel.state,
             viewModel: viewModel,
             onNetwork: { [weak self] in
                 self?.actionDelegate?.panelDidRequestNetwork(self!)

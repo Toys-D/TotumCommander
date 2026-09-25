@@ -18,7 +18,7 @@ struct ColumnResizeOverlay: NSViewRepresentable {
 
     /// A draggable divider: its x-position (from the bar's left edge), the
     /// column it resizes (the one to its left), and that column's current width.
-    struct Divider {
+    struct Divider: Equatable {
         let x: CGFloat
         let column: PanelColumn
         let currentWidth: CGFloat
@@ -42,7 +42,9 @@ struct ColumnResizeOverlay: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: ResizeView, context: Context) {
-        nsView.dividers = dividers
+        // Те же разделители — не трогать: присваивание сбрасывает курсорные области окна,
+        // а обновление приходит на каждую перерисовку полосы сортировки.
+        if nsView.dividers != dividers { nsView.dividers = dividers }
         nsView.onResize = onResize
         nsView.onCommit = onCommit
         nsView.onAutoFit = onAutoFit
