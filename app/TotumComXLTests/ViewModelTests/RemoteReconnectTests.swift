@@ -61,17 +61,20 @@ final class RemoteReconnectTests: XCTestCase {
         let session = RemoteSession(connection: RemoteConnection(proto: .rclone, host: "х"),
                                     fileSystem: fs)
         let vm = panel()
-        // Вход в хранилище сам запускает чтение папки — дожидаемся его, чтобы считать
-        // только то подключение, которое сделает проверяемый вызов.
+        // Вход в хранилище без связи ничего не читает — подключает тот, кто входит
+        // (контроллер), как и в программе.
         vm.enterRemote(session: session)
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        try? await session.connect()
         fs.connectCount = 0
+        // Связь оборвалась: помощник ушёл, а сессия об этом ещё не знает.
+        fs.disconnect()
 
         await vm.loadRemoteDirectory(at: "/")
 
-        XCTAssertEqual(fs.connectCount, 0, "связь уже есть — заново не подключаемся")
+        XCTAssertEqual(fs.connectCount, 1, "подключились заново — один раз")
         XCTAssertEqual(vm.items.map(\.name), ["письмо.txt"], "файлы на месте")
         XCTAssertNil(vm.errorMessage, "жаловаться не на что")
+        XCTAssertTrue(session.isReady, "сессия снова живая")
     }
 
     /// Если связь не вернулась — человек обязан прочитать, почему панель пуста.
