@@ -1,0 +1,39 @@
+diff --git a/mz_zip_rw.c b/mz_zip_rw.c
+index 55f2bfa..19f70d0 100644
+--- a/mz_zip_rw.c
++++ b/mz_zip_rw.c
+@@ -647,8 +647,14 @@ int32_t mz_zip_reader_entry_save(void *handle, void *stream, mz_stream_write_cb
+         /* Update progress if enough time have passed */
+         current_time = mz_os_ms_time();
+         if ((current_time - update_time) > reader->progress_cb_interval_ms) {
+-            if (reader->progress_cb)
+-                reader->progress_cb(reader, reader->progress_userdata, reader->file_info, current_pos);
++            /* FCXL local change: see the writer above — the return value must be honoured or
++               extraction cannot be cancelled part-way through a large entry. */
++            if (reader->progress_cb) {
++                err = reader->progress_cb(reader, reader->progress_userdata, reader->file_info,
++                                          current_pos);
++                if (err != MZ_OK)
++                    break;
++            }
+ 
+             update_pos = current_pos;
+             update_time = current_time;
+@@ -1554,8 +1560,15 @@ int32_t mz_zip_writer_add(void *handle, void *stream, mz_stream_read_cb read_cb)
+         /* Update progress if enough time have passed */
+         current_time = mz_os_ms_time();
+         if ((current_time - update_time) > writer->progress_cb_interval_ms) {
+-            if (writer->progress_cb)
+-                writer->progress_cb(writer, writer->progress_userdata, &writer->file_info, current_pos);
++            /* FCXL local change: honour the callback's return value. Upstream discards it,
++               which makes an add impossible to abort once a single large file has started —
++               cancelling an 800MB add meant waiting ~20s for it to finish writing first. */
++            if (writer->progress_cb) {
++                err = writer->progress_cb(writer, writer->progress_userdata, &writer->file_info,
++                                          current_pos);
++                if (err != MZ_OK)
++                    break;
++            }
+ 
+             update_pos = current_pos;
+             update_time = current_time;
