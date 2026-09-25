@@ -2882,6 +2882,22 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
 
     /// Open a remote connection in the active panel: orange tab, spinner, listing, health probe.
     ///
+    /// Один раз на хранилище: Google Drive на общем ключе rclone медленный из-за квоты Google,
+    /// и человеку стоит знать, что своим ключом это лечится. Ключ «уже предупреждали».
+    static let sharedDriveKeyWarnedKey = "fcxl.rclone.sharedKeyWarned"
+
+    static func warnAboutSharedDriveKeyOnce(_ session: RemoteSession) {
+        guard let rclone = session.fileSystem as? RcloneRemoteFileSystem,
+              rclone.usesSharedDriveKey else { return }
+        let name = session.connection.rcloneRemote
+        var warned = UserDefaults.standard.stringArray(forKey: sharedDriveKeyWarnedKey) ?? []
+        guard !warned.contains(name) else { return }
+        warned.append(name)
+        UserDefaults.standard.set(warned, forKey: sharedDriveKeyWarnedKey)
+        DialogService.shared.showInfo(title: L("rclone.sharedKey.title"),
+                                      message: L("rclone.sharedKey.message", name))
+    }
+
     /// Every way into a remote comes through here, so a fix to the tab or error handling can
     /// never reach one entry point and miss another.
     private func openRemoteConnection(_ connection: RemoteConnection, errorTitle: String) {
@@ -2906,6 +2922,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
                 // Wait for remote listing to complete, then clear loading spinner
                 await vm.remoteLoadTask?.value
                 tabsVM.endLoading(tabID, tag: "remote-connect")
+                Self.warnAboutSharedDriveKeyOnce(session)
                 // Background health check — warn user about server issues
                 Task.detached(priority: .utility) {
                     await Self.checkRemoteHealth(session: session)

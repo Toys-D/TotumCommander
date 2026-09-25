@@ -991,6 +991,10 @@ final class PanelViewModel: ObservableObject {
             }
         }
     }
+    /// Надпись на время подключения к хранилищу: пустая панель молчала полминуты, пока
+    /// rclone ждал Google, и было непонятно, живо ли что-нибудь. Снимается с первым списком.
+    @Published var connectingMessage: String?
+
     /// True only when the panel is actively displaying remote content.
     /// Separate from remoteSession != nil — session can be parked while browsing local tabs.
     var isActivelyRemote: Bool {
@@ -1077,8 +1081,24 @@ final class PanelViewModel: ObservableObject {
     /// panel sitting on FTP steps back onto the local disk first — the same order the volume
     /// bar's eject uses.
     func navigateToBookmark(_ path: String) {
+        navigateToLocal(path)
+    }
+
+    /// Одна дорога к местной папке откуда угодно: диск в полосе томов, избранное. Панель
+    /// в хранилище сначала выходит из него — иначе `loadDirectory` принимает местный путь
+    /// за удалённый и щелчок по диску лишь перечитывает корень хранилища.
+    func navigateToLocal(_ path: String) {
         if insideRemote { exitRemote() }
         loadDirectory(at: path, resetCursor: true)
+    }
+
+    /// Прежние сведения о файлах по пути — чтобы имена-без-размеров первого прохода
+    /// сортировались как надо. Два файла с одним путём здесь не ошибка: Google Drive
+    /// разрешает одинаковые имена в папке, и такая пара роняла программу на
+    /// `uniqueKeysWithValues`. Берётся первый.
+    static func metadataByPath(_ items: [FileItem]) -> [String: FileItem] {
+        Dictionary(items.filter { $0.name != ".." }.map { ($0.path, $0) },
+                   uniquingKeysWith: { first, _ in first })
     }
 
     // MARK: - Breadcrumbs
@@ -1974,6 +1994,8 @@ final class PanelViewModel: ObservableObject {
         if URL(fileURLWithPath: currentPath).standardizedFileURL.path
             == URL(fileURLWithPath: CloudStatusService.cloudDriveRoot)
                 .standardizedFileURL.path { return }
+        // И для облаков в CloudStorage (Google Drive for desktop и прочие): выше — служебная папка.
+        if CloudStorageVolumes.isRoot(currentPath) { return }
 
         do {
             let previousPath = currentPath
@@ -2710,11 +2732,7 @@ final class PanelViewModel: ObservableObject {
         // row — the selection rebuild below already learned this exact lesson.
         let previousAll = allItems
         if !previousAll.isEmpty && destination == currentPath {
-            let previousByPath = Dictionary(
-                uniqueKeysWithValues: previousAll
-                    .filter { $0.name != ".." }
-                    .map { ($0.path, $0) }
-            )
+            let previousByPath = Self.metadataByPath(previousAll)
             if !previousByPath.isEmpty {
                 itemsToSort = itemsToSort.map { item in
                     guard item.name != "..",
@@ -4565,6 +4583,8 @@ final class PanelViewModel: ObservableObject {
         // the kitchen, so the drive's own root is where the road ends.
         if std == URL(fileURLWithPath: CloudStatusService.cloudDriveRoot)
             .standardizedFileURL.path { return true }
+        // Так же и облака из ~/Library/CloudStorage: их корень — место, а не папка в Library.
+        if CloudStorageVolumes.isRoot(std) { return true }
         // A direct child of /Volumes IS a mounted volume's root (e.g.
         // "/Volumes/Toshiba 1T USB"). This string check is robust — it does not
         // depend on .volumeURLKey, which fails transiently while an NTFS volume

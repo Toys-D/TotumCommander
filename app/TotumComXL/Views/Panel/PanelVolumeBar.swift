@@ -32,6 +32,9 @@ struct PanelVolumeBar: View {
     /// Сетевой том живёт в своей вкладке — и с полосы дисков тоже: щелчок по чипу открывает
     /// или находит вкладку этого тома, а папка текущей вкладки остаётся на месте.
     var onOpenNetworkVolume: ((String) -> Void)?
+    /// Местный диск: контроллер знает про вкладки и из вкладки хранилища уводит на соседнюю
+    /// местную, не отключая хранилище. Без него — прямой переход панели.
+    var onOpenLocalVolume: ((String) -> Void)?
     /// Чип сессии другой панели: открыть то же подключение здесь / закрыть его там.
     var onOpenForeignRemote: ((RemoteConnection) -> Void)?
     var onDisconnectForeignRemote: ((RemoteSession) -> Void)?
@@ -261,8 +264,10 @@ struct PanelVolumeBar: View {
             Button {
                 if vol.isNetwork, let onOpenNetworkVolume {
                     onOpenNetworkVolume(vol.path)
+                } else if let onOpenLocalVolume {
+                    onOpenLocalVolume(vol.path)
                 } else {
-                    viewModel.loadDirectory(at: vol.path)
+                    viewModel.navigateToLocal(vol.path)
                 }
             } label: {
                 HStack(spacing: 2) {
@@ -357,9 +362,14 @@ struct PanelVolumeBar: View {
                 }
             } label: {
                 let active = !foreign && viewModel.insideRemote
-                let iconTint: Color = active
-                    ? (beautyModeEnabled && isDark ? .white : .orange)
-                    : .orange.opacity(0.6)
+                // Активное хранилище сидит на том же чипе, что и активный диск: на светлой
+                // теме и без «красоты» — сплошной, а свечение только позади него. Иначе
+                // хранилище одно светилось размытым пятном, когда диски стояли на чипах.
+                let onChip = active && PanelVolumeBar.showsChip(beauty: beautyModeEnabled, isDark: isDark)
+                let activeInk: Color = onChip
+                    ? Color(nsColor: PanelVolumeBar.remoteChipColors().label)
+                    : .white
+                let iconTint: Color = active ? activeInk : .orange.opacity(0.6)
                 let parallel = connectionMgr.parallelSupport(for: session.connection.id) == true
                 // System green washes out on a thin light rim — use a deep green in light mode,
                 // a bright one in dark mode, and thicken the glyph so the rim actually reads.
@@ -381,9 +391,7 @@ struct PanelVolumeBar: View {
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .lineLimit(1)
                 }
-                .foregroundColor(active
-                                 ? (beautyModeEnabled && isDark ? .white : .orange)
-                                 : .orange.opacity(0.6))
+                .foregroundColor(active ? activeInk : .orange.opacity(0.6))
                 .frame(minWidth: 34, minHeight: 20)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 3)
@@ -401,10 +409,13 @@ struct PanelVolumeBar: View {
                     viewModel.exitRemote()
                 }
             } label: {
+                // На чипе извлечение белое, как надпись: оранжевое на оранжевом пропадало.
+                let onChip = !foreign && viewModel.insideRemote
+                    && PanelVolumeBar.showsChip(beauty: beautyModeEnabled, isDark: isDark)
                 Image(systemName: "eject.fill")
                     .font(.system(size: BarGlyph.size, weight: .medium))
                     .frame(width: BarGlyph.box, height: BarGlyph.box)
-                    .foregroundColor(.orange)
+                    .foregroundColor(onChip ? Color(nsColor: PanelVolumeBar.remoteChipColors().label) : .orange)
                     .frame(width: 16, height: 20)
                     .contentShape(Rectangle())
             }
@@ -412,7 +423,23 @@ struct PanelVolumeBar: View {
             .help("Disconnect")
             .contentShape(Rectangle())
         }
-        .background { cursorGlow(active: viewModel.insideRemote, color: .orange) }
+        .background {
+            let active = !foreign && viewModel.insideRemote
+            ZStack {
+                cursorGlow(active: active, color: .orange)
+                if active, PanelVolumeBar.showsChip(beauty: beautyModeEnabled, isDark: isDark) {
+                    RoundedRectangle(cornerRadius: min(8, PanelAppearanceSettings.resolvedCursorCorner),
+                                     style: .continuous)
+                        .fill(Color(nsColor: PanelVolumeBar.remoteChipColors().fill))
+                }
+            }
+        }
+    }
+
+    /// Чип активного хранилища и надпись на нём: хранилища оранжевые, надпись белая — как
+    /// у дисков на их чипе, по слову пользователя.
+    static func remoteChipColors() -> (fill: NSColor, label: NSColor) {
+        (NSColor.systemOrange, .white)
     }
 
     // MARK: - View Mode Buttons
@@ -491,6 +518,13 @@ struct PanelVolumeBar: View {
             buttons.append(VolumeButtonModel(
                 label: L("volume.icloud"), path: CloudStatusService.cloudDriveRoot,
                 icon: "icloud", isEjectable: false
+            ))
+        }
+        // Облака, подключённые их родными программами (Google Drive for desktop, OneDrive,
+        // Dropbox): обычные папки в ~/Library/CloudStorage, без rclone и без квот.
+        for cloud in CloudStorageVolumes.volumes() {
+            buttons.append(VolumeButtonModel(
+                label: cloud.label, path: cloud.path, icon: "cloud", isEjectable: false
             ))
         }
 

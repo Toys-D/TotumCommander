@@ -49,7 +49,15 @@ extension PanelViewModel {
         cursorIndex = 0
         errorMessage = nil
 
-        startRemoteLoad(at: session.currentRemotePath)
+        // Список просят только у подключённого хранилища. Пока подключение в пути (rclone к
+        // Google Drive под ограничением квоты идёт полминуты), чтение отвечало «Нет
+        // подключения к серверу», панель показывала это как ошибку и затевала второе
+        // подключение параллельно первому. Кто подключает, тот и прочитает первым.
+        if session.fileSystem.isConnected {
+            startRemoteLoad(at: session.currentRemotePath)
+        } else {
+            connectingMessage = L("network.status.connecting", session.tabTitle)
+        }
     }
 
     /// Suspend remote mode (keep session alive for tab switching).
@@ -57,6 +65,7 @@ extension PanelViewModel {
     func suspendRemote() {
         remoteLoadTask?.cancel()
         remoteLoadTask = nil
+        connectingMessage = nil
         if let session = remoteSession {
             session.currentRemotePath = currentPath
         }
@@ -73,7 +82,7 @@ extension PanelViewModel {
         selectedPaths.removeAll()
         cursorIndex = 0
         currentPath = session.currentRemotePath
-        startRemoteLoad(at: session.currentRemotePath)
+        startRemoteLoad(at: session.currentRemotePath, preferCached: true)
     }
 
     /// Exit remote mode completely — disconnect and destroy session.
@@ -107,6 +116,7 @@ extension PanelViewModel {
     private func finishExitRemote(_ session: RemoteSession) {
         remoteLoadTask?.cancel()
         remoteLoadTask = nil
+        connectingMessage = nil
         RemoteEditWatcher.shared.forget(connectionID: session.connection.id)
         session.disconnect()
         // Скачанные ради просмотра копии уходят вместе с последней панелью, которая
@@ -138,8 +148,18 @@ extension PanelViewModel {
     /// а не то, что человек просил последним. На местном хранилище это невидимо, а Google
     /// Drive отвечает по полсекунды и дольше — человека выбрасывало на уровень вверх, и
     /// курсор прыгал из папки в папку.
-    func startRemoteLoad(at path: String, preferredCursorName: String? = nil) {
+    /// `preferCached` — показать запомненный список этой папки сразу, до ответа хранилища:
+    /// для переходов (вкладка, «наверх», вход), но не для обновлений после операций, чтобы
+    /// удалённое не мелькало. Свежий список всё равно запрашивается и заменяет запомненный.
+    func startRemoteLoad(at path: String, preferredCursorName: String? = nil,
+                         preferCached: Bool = false) {
         remoteLoadTask?.cancel()
+        let remotePath = path.isEmpty ? "/" : path
+        if preferCached, let session = remoteSession, let cached = session.listings[remotePath] {
+            RemoteTrace.log("list from cache \(remotePath): \(cached.count) items")
+            applyRemoteListing(cached, remotePath: remotePath, session: session,
+                               preferredCursorName: preferredCursorName)
+        }
         remoteLoadTask = Task {
             await loadRemoteDirectory(at: path, preferredCursorName: preferredCursorName)
         }
@@ -151,60 +171,27 @@ extension PanelViewModel {
 
         errorMessage = nil
         let remotePath = path.isEmpty ? "/" : path
-        let isNavigation = remotePath != currentPath
+        let started = Date()
+        RemoteTrace.log("list requested \(remotePath) (from \(currentPath))")
 
         do {
             let remoteItems = try await session.fileSystem.listDirectory(at: remotePath)
+            RemoteTrace.log("list arrived \(remotePath): \(remoteItems.count) items", since: started)
+            session.listings[remotePath] = remoteItems
 
             // Tab might have switched while we were waiting for the network response
             guard isActivelyRemote, !Task.isCancelled else { return }
-
-            // Filter hidden files according to user setting
-            let filtered = isShowingHiddenFiles
-                ? remoteItems
-                : remoteItems.filter { !$0.isHidden }
-
-            // Build sorted items with ".." entry
-            adoptSort(forEntering: remotePath)
-            var sorted = sortItemsForDisplay(filtered)
-
-            // Add ".." entry at the top if not at root
-            if remotePath != "/" && remotePath != session.fileSystem.rootPath {
-                let parentPath = session.fileSystem.parentPath(for: remotePath)
-                let parentItem = FileItem(
-                    path: parentPath,
-                    name: "..",
-                    fileExtension: "",
-                    size: 0,
-                    isDirectory: true,
-                    isHidden: false,
-                    isSymlink: false,
-                    permissions: "",
-                    dateModified: Date.distantPast,
-                    dateCreated: nil,
-                    owner: ""
-                )
-                sorted.insert(parentItem, at: 0)
-            }
-
-            let oldPath = currentPath
-            currentPath = remotePath
-            session.currentRemotePath = remotePath
-            if isNavigation { clearQuickFilter() }
-            allItems = sorted
-
-            if isNavigation {
-                // Place cursor on the folder we came from (goUp), or reset to top
-                if let name = preferredCursorName,
-                   let idx = sorted.firstIndex(where: { $0.name == name }) {
-                    setCursor(index: idx)
-                } else {
-                    cursorIndex = 0
-                }
-                scrollResetToken &+= 1
-                pushHistory(from: oldPath, to: remotePath)
-            }
+            connectingMessage = nil
+            applyRemoteListing(remoteItems, remotePath: remotePath, session: session,
+                               preferredCursorName: preferredCursorName)
         } catch {
+            // Чтение перебито следующим (новая папка, другая вкладка): это не ошибка, а
+            // отмена, которую попросили мы сами. Показывать «Ошибка подключения: отменено»
+            // и объявлять сессию мёртвой из-за неё нельзя — файлы придут со следующим чтением.
+            if Task.isCancelled || error is CancellationError { return }
+            // Подключение ещё в пути — чтение подождёт его, а не будет объявлять ошибку и
+            // подключаться второй раз рядом с первым.
+            if case .connecting = session.phase { return }
             // Связь могла оборваться, пока панель стояла открытой: помощник ушёл вместе с
             // перезапуском программы, сервер закрыл простаивающее соединение. Один раз
             // подключаемся заново и повторяем — человеку незачем знать, что где-то там
@@ -221,7 +208,9 @@ extension PanelViewModel {
                     // Не вышло — дальше по общему пути, с честным сообщением.
                 }
             }
+            connectingMessage = nil
             errorMessage = error.localizedDescription
+            RemoteTrace.log("list FAILED \(remotePath): \(error.localizedDescription)", since: started)
             Self.logger.error("Remote listing failed: \(error.localizedDescription)")
             // A transport-level failure means the server stopped responding: mark the session
             // dead so later operations are refused up front instead of each one hanging.
@@ -231,6 +220,61 @@ extension PanelViewModel {
             } else if case RemoteFileSystemError.notConnected = error {
                 session.markDead(L("network.error.connectionLost"))
             }
+        }
+    }
+
+    /// Показать список папки: скрытые по настройке, сортировка, «..», курсор и история —
+    /// одинаково для свежего списка и для запомненного.
+    private func applyRemoteListing(_ remoteItems: [FileItem], remotePath: String,
+                                    session: RemoteSession, preferredCursorName: String?) {
+        let isNavigation = remotePath != currentPath
+        // Filter hidden files according to user setting
+        let filtered = isShowingHiddenFiles
+            ? remoteItems
+            : remoteItems.filter { !$0.isHidden }
+
+        // Build sorted items with ".." entry
+        adoptSort(forEntering: remotePath)
+        var sorted = sortItemsForDisplay(filtered)
+
+        // Add ".." entry at the top if not at root
+        if remotePath != "/" && remotePath != session.fileSystem.rootPath {
+            let parentPath = session.fileSystem.parentPath(for: remotePath)
+            let parentItem = FileItem(
+                path: parentPath,
+                name: "..",
+                fileExtension: "",
+                size: 0,
+                isDirectory: true,
+                isHidden: false,
+                isSymlink: false,
+                permissions: "",
+                dateModified: Date.distantPast,
+                dateCreated: nil,
+                owner: ""
+            )
+            sorted.insert(parentItem, at: 0)
+        }
+
+        let oldPath = currentPath
+        currentPath = remotePath
+        session.currentRemotePath = remotePath
+        if isNavigation { clearQuickFilter() }
+        allItems = sorted
+
+        if isNavigation {
+            // Place cursor on the folder we came from (goUp), or reset to top
+            if let name = preferredCursorName,
+               let idx = sorted.firstIndex(where: { $0.name == name }) {
+                setCursor(index: idx)
+            } else {
+                cursorIndex = 0
+            }
+            scrollResetToken &+= 1
+            pushHistory(from: oldPath, to: remotePath)
+        }
+        if !isNavigation, cursorIndex >= allItems.count {
+            cursorIndex = max(0, allItems.count - 1)
         }
     }
 
@@ -245,7 +289,7 @@ extension PanelViewModel {
         }
 
         if item.isDirectory {
-            startRemoteLoad(at: item.path)
+            startRemoteLoad(at: item.path, preferCached: true)
             return true
         }
 
@@ -263,7 +307,7 @@ extension PanelViewModel {
         }
         // Remember the folder name we're leaving so cursor lands on it
         let leavingFolderName = (currentPath as NSString).lastPathComponent
-        startRemoteLoad(at: parent, preferredCursorName: leavingFolderName)
+        startRemoteLoad(at: parent, preferredCursorName: leavingFolderName, preferCached: true)
     }
 
     /// Breadcrumb components for a remote path.

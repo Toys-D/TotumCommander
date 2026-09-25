@@ -16,11 +16,22 @@ final class RemoteNavigationRaceTests: XCTestCase {
         let protocolDisplayName = "МЕДЛЕННО"
         /// Задержка ответа по пути, в наносекундах.
         var delays: [String: UInt64] = [:]
+        /// Как настоящий rclone до исправления: снятый запрос отвечает «Ошибка подключения:
+        /// отменено», а не тихой отменой.
+        var failsWhenCancelled = false
+        /// Сколько раз просили список — чтобы поймать чтение до подключения.
+        var listCalls = 0
 
-        func connect() async throws {}
+        func connect() async throws { isConnected = true }
         func disconnect() {}
         func listDirectory(at path: String) async throws -> [FileItem] {
-            if let wait = delays[path] { try? await Task.sleep(nanoseconds: wait) }
+            listCalls += 1
+            guard isConnected else { throw RemoteFileSystemError.notConnected }
+            if let wait = delays[path] {
+                do { try await Task.sleep(nanoseconds: wait) } catch {
+                    if failsWhenCancelled { throw RemoteFileSystemError.connectionFailed("отменено") }
+                }
+            }
             let имя = (path as NSString).lastPathComponent
             return [FileItem(path: path + "/содержимое-\(имя).txt",
                              name: "содержимое-\(имя).txt", fileExtension: "txt", size: 1,
@@ -71,6 +82,122 @@ final class RemoteNavigationRaceTests: XCTestCase {
                        "панель там, куда просили последним, а не где ответ пришёл последним")
         XCTAssertTrue(vm.items.contains { $0.name == "содержимое-быстрая.txt" },
                       "и показывает содержимое именно этой папки: \(vm.items.map(\.name))")
+    }
+
+    /// Перебитое чтение — не ошибка. Google Drive: «Ошибка подключения: отменено» показывалось,
+    /// хотя следом приходили файлы, а сессия объявлялась мёртвой.
+    func test_перебитоеЧтениеНеОшибкаИНеУбиваетСессию() async throws {
+        let fs = SlowFileSystem()
+        fs.failsWhenCancelled = true
+        fs.delays["/медленная"] = 700_000_000
+        fs.delays["/быстрая"] = 0
+
+        let vm = panel()
+        let session = RemoteSession(connection: RemoteConnection(proto: .rclone, host: "х"),
+                                    fileSystem: fs)
+        vm.enterRemote(session: session)
+        _ = await vm.remoteLoadTask?.value
+        let wasReady = session.isReady
+
+        vm.startRemoteLoad(at: "/медленная")
+        try await Task.sleep(nanoseconds: 50_000_000)
+        vm.startRemoteLoad(at: "/быстрая")
+        _ = await vm.remoteLoadTask?.value
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertNil(vm.errorMessage, "отмена своего же чтения — не ошибка")
+        XCTAssertEqual(session.isReady, wasReady, "сессия не помечена мёртвой")
+        XCTAssertEqual(vm.currentPath, "/быстрая")
+    }
+
+    /// Пока хранилище подключается, панель не просит список и не показывает «Нет подключения
+    /// к серверу»: с Google Drive под ограничением квоты подключение идёт полминуты, и всё это
+    /// время висела ошибка, а рядом с первым подключением затевалось второе.
+    func test_доПодключенияСписокНеПросятИОшибкиНет() async throws {
+        let fs = SlowFileSystem()
+        fs.isConnected = false
+        let vm = panel()
+        let session = RemoteSession(connection: RemoteConnection(proto: .rclone, host: "х"),
+                                    fileSystem: fs)
+        vm.enterRemote(session: session)
+        _ = await vm.remoteLoadTask?.value
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(fs.listCalls, 0, "до подключения список не просили")
+        XCTAssertNil(vm.errorMessage, "и ошибки нет")
+        XCTAssertNotNil(vm.connectingMessage, "зато сказано, что идёт подключение")
+        XCTAssertTrue(vm.insideRemote)
+
+        try await session.connect()
+        vm.startRemoteLoad(at: session.currentRemotePath)
+        _ = await vm.remoteLoadTask?.value
+        XCTAssertEqual(fs.listCalls, 1)
+        XCTAssertNil(vm.connectingMessage, "первый список снимает надпись")
+        XCTAssertTrue(vm.items.contains { $0.name.hasPrefix("содержимое-") }, "после подключения список пришёл")
+    }
+
+    /// Уже виденная папка показывается из памяти сразу, до ответа хранилища, а свежий список
+    /// приходит следом: с Google Drive под квотой «наверх» ждало по нескольку секунд.
+    func test_запомненныйСписокПоказываетсяСразу() async throws {
+        let fs = SlowFileSystem()
+        fs.delays["/"] = 300_000_000
+        let vm = panel()
+        let session = RemoteSession(connection: RemoteConnection(proto: .rclone, host: "х"),
+                                    fileSystem: fs)
+        vm.enterRemote(session: session)
+        _ = await vm.remoteLoadTask?.value                 // корень прочитан и запомнен
+        vm.startRemoteLoad(at: "/папка")
+        _ = await vm.remoteLoadTask?.value
+        XCTAssertEqual(fs.listCalls, 2)
+        XCTAssertEqual(vm.currentPath, "/папка")
+
+        vm.goUpRemote()                                    // без ожидания ответа
+        XCTAssertEqual(vm.currentPath, "/", "корень показан из памяти сразу")
+        XCTAssertTrue(vm.items.contains { $0.name.hasPrefix("содержимое-") && !$0.name.contains("папка") },
+                      "и это содержимое корня: \(vm.items.map(\.name))")
+        XCTAssertEqual(fs.listCalls, 2, "свежий список ещё в пути")
+
+        _ = await vm.remoteLoadTask?.value
+        XCTAssertEqual(fs.listCalls, 3, "свежий список всё же запрошен")
+        XCTAssertEqual(vm.currentPath, "/")
+    }
+
+    /// Обновление после операции память не использует: удалённое не должно мелькать.
+    func test_обновлениеБерётТолькоСвежийСписок() async throws {
+        let fs = SlowFileSystem()
+        let vm = panel()
+        let session = RemoteSession(connection: RemoteConnection(proto: .rclone, host: "х"),
+                                    fileSystem: fs)
+        vm.enterRemote(session: session)
+        _ = await vm.remoteLoadTask?.value
+        vm.startRemoteLoad(at: "/")                        // как после удаления
+        XCTAssertEqual(fs.listCalls, 1, "из памяти ничего не показано — ждём хранилище")
+        _ = await vm.remoteLoadTask?.value
+        XCTAssertEqual(fs.listCalls, 2)
+    }
+
+    /// Дорога к местной папке из хранилища (избранное; диск без вкладок) выходит из него и
+    /// ведёт туда, а не перечитывает корень хранилища: `loadDirectory` внутри хранилища
+    /// принимал местный путь за удалённый.
+    func test_переходКМестнойПапкеВыводитИзХранилища() async throws {
+        let fs = SlowFileSystem()
+        let vm = panel()
+        let session = RemoteSession(connection: RemoteConnection(proto: .rclone, host: "х"),
+                                    fileSystem: fs)
+        vm.enterRemote(session: session)
+        _ = await vm.remoteLoadTask?.value
+        XCTAssertTrue(vm.insideRemote)
+
+        let disk = NSTemporaryDirectory()
+        vm.navigateToLocal(disk)
+        let срок = Date().addingTimeInterval(3)
+        while Date() < срок, (vm.currentPath as NSString).standardizingPath
+                != (disk as NSString).standardizingPath {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(vm.insideRemote, "из хранилища вышли")
+        XCTAssertEqual((vm.currentPath as NSString).standardizingPath,
+                       (disk as NSString).standardizingPath, "и стоим на диске")
     }
 
     /// Обновление, начатое до входа в папку, не выбрасывает человека назад.

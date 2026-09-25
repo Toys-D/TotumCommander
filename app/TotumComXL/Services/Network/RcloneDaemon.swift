@@ -198,7 +198,9 @@ actor RcloneDaemon {
         task.arguments = [
             "rcd",
             "--rc-addr", "127.0.0.1:\(port)",
-            "--log-level", "ERROR"
+            // Со следом (fcxl.remote.trace) rclone пишет и свои паузы «pacer», по ним видно,
+            // режет ли Google квоту; без следа — только ошибки, иначе файл жалоб растёт.
+            "--log-level", RemoteTrace.isOn ? "DEBUG" : "ERROR"
         ]
         // Пароль передаётся окружением, а не аргументом: аргументы чужого процесса видны
         // в `ps` любому, кто сидит за этой же машиной, и пароль от всех хранилищ человека
@@ -302,10 +304,16 @@ actor RcloneDaemon {
     /// Один вызов служебного сервера. Все они POST и все отвечают объектом JSON.
     @discardableResult
     func call(_ path: String, _ arguments: [String: Any]) async throws -> [String: Any] {
+        let started = Date()
+        let what = "\(path) \(arguments["fs"] ?? "")\(arguments["remote"] ?? "")"
+        defer { RemoteTrace.log("rclone \(what)", since: started) }
         do {
             return try await send(path, arguments)
         } catch let error as URLError where error.code == .timedOut {
             throw RemoteFileSystemError.timeout
+        } catch let error as URLError where error.code == .cancelled {
+            // Запрос сняли мы сами (следующее чтение перебило это): не сбой связи.
+            throw CancellationError()
         } catch let error as URLError {
             throw RemoteFileSystemError.connectionFailed(error.localizedDescription)
         }

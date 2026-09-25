@@ -34,6 +34,16 @@ final class RcloneRemoteFileSystem: RemoteFileSystemProtocol {
         self.daemon = daemon
     }
 
+    /// Google Drive на общем ключе самого rclone: Google режет его по квоте, и каждый
+    /// список ждёт по нескольку секунд, а то и полминуты. Узнаётся при подключении.
+    private(set) var usesSharedDriveKey = false
+
+    static func usesSharedKey(config: [String: Any]) -> Bool {
+        guard (config["type"] as? String) == "drive" else { return false }
+        let own = (config["client_id"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+        return own.isEmpty
+    }
+
     // MARK: - Имена и пути
 
     /// Как хранилище зовётся у rclone. Двоеточие на конце обязательно: без него rclone
@@ -72,6 +82,9 @@ final class RcloneRemoteFileSystem: RemoteFileSystemProtocol {
             // ошибка здесь — это «нет такого имени» или «пропуск протух», и человеку надо
             // сказать об этом сейчас, а не при первом же списке файлов.
             _ = try await daemon.call("operations/fsinfo", ["fs": fs])
+            if let config = try? await daemon.call("config/get", ["name": connection.rcloneRemote]) {
+                usesSharedDriveKey = Self.usesSharedKey(config: config)
+            }
         } catch {
             await daemon.release(place.ticket)
             ticket = nil

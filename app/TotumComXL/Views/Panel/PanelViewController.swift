@@ -246,6 +246,8 @@ final class PanelViewController: NSViewController,
     /// Раньше причина уходила в журнал, а человек видел пустую панель и гадал, куда делись
     /// его файлы. Пустая папка и оборванная связь выглядели одинаково.
     private var troubleLabel: NSTextField!
+    /// Крутится над надписью, пока идёт подключение к хранилищу.
+    private var troubleSpinner: NSProgressIndicator!
     private(set) var tableView: PanelNSTableView!
     private var alternateHosting: NSHostingView<AnyView>?
     private var alternateTopConstraint: NSLayoutConstraint?
@@ -389,6 +391,7 @@ final class PanelViewController: NSViewController,
                 self.viewModel.loadDirectory(at: newTab.path)
             },
             onOpenNetworkVolume: { [weak self] in self?.openNetworkMount(at: $0) },
+            onOpenLocalVolume: { [weak self] in self?.openLocalVolume(at: $0) },
             onOpenForeignRemote: { [weak self] connection in
                 guard let self else { return }
                 self.actionDelegate?.panelDidRequestOpenRemote(self, connection: connection)
@@ -480,6 +483,12 @@ final class PanelViewController: NSViewController,
         troubleLabel.lineBreakMode = .byWordWrapping
         troubleLabel.maximumNumberOfLines = 4
         troubleLabel.isHidden = true
+        troubleSpinner = NSProgressIndicator()
+        troubleSpinner.translatesAutoresizingMaskIntoConstraints = false
+        troubleSpinner.style = .spinning
+        troubleSpinner.controlSize = .small
+        troubleSpinner.isDisplayedWhenStopped = false
+        troubleSpinner.isHidden = true
 
         tableView.delegate = self
         tableView.dataSource = self
@@ -530,6 +539,9 @@ final class PanelViewController: NSViewController,
         scrollView.documentView = tableView
         container.addSubview(scrollView)
         container.addSubview(troubleLabel)
+        container.addSubview(troubleSpinner)
+        let troubleArea = NSLayoutGuide()
+        container.addLayoutGuide(troubleArea)
 
         // alternateHosting created lazily in applyViewMode() for non-detailed modes
 
@@ -563,12 +575,21 @@ final class PanelViewController: NSViewController,
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
             // Надпись о беде — посреди пустого списка, где человек и ищет свои файлы.
-            troubleLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
-            troubleLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
+            // Середина считается от области списка (между полосой сортировки и строкой
+            // состояния), а не от scrollView: тот в кратком и плиточном режимах не привязан
+            // снизу и сжимается в полоску под шапкой, и надпись со спиннером ложилась на вкладки.
+            troubleArea.topAnchor.constraint(equalTo: sortBarHosting.bottomAnchor),
+            troubleArea.bottomAnchor.constraint(equalTo: statusBarHosting.topAnchor),
+            troubleArea.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            troubleArea.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            troubleLabel.centerXAnchor.constraint(equalTo: troubleArea.centerXAnchor),
+            troubleLabel.centerYAnchor.constraint(equalTo: troubleArea.centerYAnchor),
             troubleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor,
                                                   constant: 24),
             troubleLabel.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor,
                                                    constant: -24),
+            troubleSpinner.centerXAnchor.constraint(equalTo: troubleLabel.centerXAnchor),
+            troubleSpinner.bottomAnchor.constraint(equalTo: troubleLabel.topAnchor, constant: -10),
 
             // Status bar (leading, trailing, bottom are permanent; top switches between scrollView/alternateHosting)
             statusBarHosting.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -1024,6 +1045,10 @@ final class PanelViewController: NSViewController,
         // Ошибка панели меняется и без смены списка: чтение упало, а список как был
         // пустым, так и остался — надпись обязана появиться и в этом случае.
         viewModel.state.$errorMessage
+            .receive(on: RunLoop.main)
+            .sink { [weak self] (_: String?) in self?.updateTroubleLabel() }
+            .store(in: &cancellables)
+        viewModel.$connectingMessage
             .receive(on: RunLoop.main)
             .sink { [weak self] (_: String?) in self?.updateTroubleLabel() }
             .store(in: &cancellables)
@@ -2280,6 +2305,23 @@ final class PanelViewController: NSViewController,
         if wasShowingTerminal {
             DispatchQueue.main.async { [weak self] in self?.claimFirstResponder() }
         }
+    }
+
+    /// Щелчок по местному диску. Из вкладки хранилища он не отключает хранилище (для этого есть
+    /// извлечение): хранилище остаётся в своей вкладке, как при переходе на другую вкладку, а
+    /// диск открывается в ближайшей местной вкладке — или в новой, если местных нет.
+    func openLocalVolume(at path: String) {
+        guard viewModel.insideRemote else {
+            viewModel.navigateToLocal(path)
+            return
+        }
+        if let index = tabsVM.nearestLocalTabIndex(from: tabsVM.activeIndex) {
+            handleSelectTab(index)
+        } else {
+            tabsVM.newTab(path: path)
+            handleSelectTab(tabsVM.activeIndex)
+        }
+        viewModel.loadDirectory(at: path, resetCursor: true)
     }
 
     /// Called from MainWindowController when a terminal tab is created externally.
@@ -3630,10 +3672,16 @@ final class PanelViewController: NSViewController,
     /// не должна закрывать собой файлы, которые человек видит.
     private func updateTroubleLabel() {
         guard troubleLabel != nil else { return }
-        let text = viewModel.errorMessage
+        // Беда важнее ожидания; ожидание — со спиннером, чтобы было видно, что живо.
+        let trouble = viewModel.errorMessage
+        let waiting = (trouble?.isEmpty ?? true) ? viewModel.connectingMessage : nil
+        let text = (trouble?.isEmpty ?? true) ? waiting : trouble
         let show = viewModel.items.isEmpty && !(text?.isEmpty ?? true)
         troubleLabel.stringValue = text ?? ""
         troubleLabel.isHidden = !show
+        let spinning = show && waiting != nil
+        troubleSpinner.isHidden = !spinning
+        if spinning { troubleSpinner.startAnimation(nil) } else { troubleSpinner.stopAnimation(nil) }
     }
 
     /// Drag SOURCE — provides file URL (local) or custom pasteboard (remote).

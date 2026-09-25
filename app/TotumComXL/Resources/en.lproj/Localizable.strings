@@ -836,7 +836,7 @@
 "network.error.transferFailed" = "Transfer failed: %@";
 "network.error.transferCancelled" = "Transfer cancelled";
 "network.error.resumeRefused" = "The server cannot continue an interrupted transfer; the file has to be sent again from the start: %@";
-"transfer.trouble.stalled" = "Connection lost — no data is coming through. Waiting for the server…";
+"transfer.trouble.stalled" = "No data for a few seconds: the server is silent or rate-limiting. Waiting…";
 "transfer.trouble.waiting" = "No connection. Next attempt in %d s (%d of %d)";
 "transfer.trouble.reconnecting" = "Restoring the connection… (attempt %d of %d)";
 "transfer.trouble.restarting" = "The server cannot continue — sending the file again (attempt %d of %d)";
@@ -848,6 +848,9 @@
 "network.health.readOnly" = "⚠ Server is read-only. File uploads are not possible.";
 "network.health.serialOnly" = "ℹ The server allows only one connection — transfers will run one at a time, not in parallel.";
 "network.parallel.supported" = "Server supports parallel transfers";
+"network.status.connecting" = "Connecting to %@, please wait…";
+"rclone.sharedKey.title" = "Google Drive will be slow";
+"rclone.sharedKey.message" = "The “%@” remote uses rclone’s shared client_id. Everyone shares it and Google rate-limits it: folder listings and downloads wait for seconds, sometimes half a minute. Create your own client_id following rclone’s guide (rclone.org/drive, “Making your own client_id”) and put it into this remote with rclone config. This message is shown once.";
 "network.error.stillConnecting" = "Still connecting to the server. Wait for it to finish and try again.";
 "network.error.notConnected" = "Not connected to the server. Reconnect and try again.";
 "network.error.connectionLost" = "The server stopped responding — the connection was lost. Reconnect and try again.";

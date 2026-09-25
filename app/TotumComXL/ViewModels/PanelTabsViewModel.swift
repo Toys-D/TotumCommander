@@ -160,6 +160,18 @@ final class PanelTabsViewModel: ObservableObject {
         tabs[index].path = newPath
     }
 
+    /// Ближайшая обычная вкладка к данной — сначала слева, потом справа. Нужна, когда из
+    /// вкладки хранилища щёлкают по местному диску: хранилище остаётся жить в своей вкладке,
+    /// а диск открывается в соседней местной. `nil` — местных вкладок нет.
+    func nearestLocalTabIndex(from index: Int) -> Int? {
+        let isLocal = { (i: Int) in self.tabs.indices.contains(i) && self.tabs[i].kind == .directory }
+        for step in 1..<max(tabs.count, 2) {
+            if isLocal(index - step) { return index - step }
+            if isLocal(index + step) { return index + step }
+        }
+        return nil
+    }
+
     func newTab(path: String) {
         let tab = PanelTab(path: path)
         tabs.insert(tab, at: activeIndex + 1)

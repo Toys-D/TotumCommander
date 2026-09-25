@@ -6,6 +6,17 @@ import XCTest
 /// внятным отказом.
 final class RcloneRulesTests: XCTestCase {
 
+    // MARK: - Общий ключ Google
+
+    /// Google Drive без своего client_id сидит на общем ключе rclone — его и режет Google.
+    func test_общийКлючУзнаётсяПоПустомуClientId() {
+        XCTAssertTrue(RcloneRemoteFileSystem.usesSharedKey(config: ["type": "drive", "token": "x"]))
+        XCTAssertTrue(RcloneRemoteFileSystem.usesSharedKey(config: ["type": "drive", "client_id": " "]))
+        XCTAssertFalse(RcloneRemoteFileSystem.usesSharedKey(config: ["type": "drive", "client_id": "123.apps"]))
+        XCTAssertFalse(RcloneRemoteFileSystem.usesSharedKey(config: ["type": "onedrive"]), "не Диск — не про это")
+        XCTAssertFalse(RcloneRemoteFileSystem.usesSharedKey(config: [:]))
+    }
+
     // MARK: - Пути
 
     func test_путьТеряетСлэшиПоКраям() {

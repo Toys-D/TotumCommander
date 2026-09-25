@@ -131,6 +131,14 @@ final class VolumeBarActiveDiskTests: XCTestCase {
         XCTAssertGreaterThan(PanelAppearanceSettings.contrast(between: label, and: fill), 3.0)
     }
 
+    /// Активное хранилище стоит на том же чипе, что и диски: оранжевом, с белой надписью,
+    /// как у дисков. Раньше оно одно светилось размытым пятном на светлой теме.
+    func testTheRemoteChipIsOrangeWithWhiteLabel() {
+        let (fill, label) = PanelVolumeBar.remoteChipColors()
+        XCTAssertEqual(fill, .systemOrange)
+        XCTAssertEqual(label, .white)
+    }
+
     /// The dark theme keeps what it had: the feathered glow, with the name white on it. The
     /// chip is for the cases where no glow is drawn — the light theme, and beauty mode off.
     func testTheDarkGlowKeepsItsOldLook() {

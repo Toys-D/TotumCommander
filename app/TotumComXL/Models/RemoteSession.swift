@@ -22,6 +22,10 @@ final class RemoteSession: ObservableObject, Identifiable {
 
     @Published private(set) var phase: Phase = .idle
     @Published var currentRemotePath: String
+    /// Прочитанные папки, как их отдало хранилище. Переключение вкладок, «наверх» и вход в
+    /// уже виденную папку показывают их сразу, а свежий список тихо подъезжает следом:
+    /// Google под ограничением квоты отвечает и по полминуты. Живёт до отключения.
+    var listings: [String: [FileItem]] = [:]
     @Published var connectionError: String?
 
     /// Kept for compatibility (tests and RemoteFileSystemProtocol callers read it).
