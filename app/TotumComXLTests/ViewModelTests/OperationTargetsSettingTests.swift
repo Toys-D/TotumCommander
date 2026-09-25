@@ -52,6 +52,16 @@ final class OperationTargetsSettingTests: XCTestCase {
         XCTAssertEqual(vm.operationTargets.map(\.name), ["b.txt"], "файл под курсором не в счёт")
     }
 
+    /// Полка считала выделение сама, минуя operationTargets, и после ⇧+стрелок файл под
+    /// курсором на полку не ложился, хотя настройка велела.
+    func test_включено_ПолкаБерётФайлПодКурсором() async throws {
+        UserDefaults.standard.set(true, forKey: PanelViewModel.includeCursorInOperationsKey)
+        let vm = try await panel()
+        vm.selectedPaths = [путь("b.txt")]
+        try курсор(vm, на: "c.txt")
+        XCTAssertEqual(MainWindowController.shelfTargets(in: vm), [путь("b.txt"), путь("c.txt")])
+    }
+
     func test_включено_ФайлПодКурсоромДобавляется() async throws {
         UserDefaults.standard.set(true, forKey: PanelViewModel.includeCursorInOperationsKey)
         let vm = try await panel()

@@ -711,10 +711,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
     /// silence after a command that looks like it copied something is its own kind of lie.
     func addSelectionToDropStack() {
         let vm = splitVC.activePanelViewModel
-        let chosen = vm.selectedPaths.isEmpty
-            ? [vm.cursorItem?.path].compactMap { $0 }
-            : Array(vm.selectedPaths)
-        let usable = chosen.filter { ($0 as NSString).lastPathComponent != ".." }
+        // Одно правило на всех — operationTargets: там же учитывается настройка «файл под
+        // курсором участвует в операции». Свой расчёт по selectedPaths её не знал, и после
+        // ⇧+стрелок файл под курсором на полку не попадал.
+        let usable = Self.shelfTargets(in: vm)
         guard !usable.isEmpty else { return }
         // The badge on the toolbar button is the feedback: it moves the moment something
         // lands (through .fcxlDropStackChanged) and keeps saying how full the shelf is,
@@ -722,13 +722,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         DropStackStore.add(usable)
     }
 
+    /// Что кладётся на полку и снимается с неё — ровно то, что берёт любая операция.
+    static func shelfTargets(in vm: PanelViewModel) -> [String] {
+        vm.operationTargets.map(\.path)
+    }
+
     /// Take the selection off the shelf. Only meaningful while the shelf is what the panel shows.
     func removeSelectionFromDropStack() {
         let vm = splitVC.activePanelViewModel
         guard vm.state.insideStack else { return }
-        let chosen = vm.selectedPaths.isEmpty
-            ? [vm.cursorItem?.path].compactMap { $0 }
-            : Array(vm.selectedPaths)
+        let chosen = Self.shelfTargets(in: vm)
         guard !chosen.isEmpty else { return }
         DropStackStore.remove(chosen)
         vm.loadStackDirectory()
