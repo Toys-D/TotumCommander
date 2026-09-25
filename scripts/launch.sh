@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 APP="Totum Commander.app"
 # debug for the everyday run; release.sh sets FCXL_CONFIG=release and FCXL_NO_LAUNCH=1.
 CONFIG="${FCXL_CONFIG:-debug}"
-APP_VERSION="1.6.1"
+APP_VERSION="1.6.2"
 # One-time migration from the previous bundle name, so the skeleton (icon, entitlements) carries over.
 [ -d "$APP" ] || { [ -d "TotumComXL.app" ] && mv "TotumComXL.app" "$APP"; } || true
 # A fresh clone has no bundle yet: lay down the skeleton the steps below fill in.
