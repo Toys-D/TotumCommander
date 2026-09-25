@@ -906,6 +906,21 @@
 /* === Network / Remote connections === */
 "network.manager" = "Менеджер подключений";
 "network.connectToServer" = "Подключиться к серверу…";
+"cloud.menu.signIn" = "войти";
+"cloud.menu.install" = "установить";
+"cloud.menu.systemSettings" = "включить в настройках";
+"volume.cloud.hide" = "Убрать из полосы — вернётся из меню сети";
+"cloud.install.confirm.title" = "Установить %@?";
+"cloud.install.confirm.message" = "Программа скачает установщик %1$@ с официального адреса (%2$@) в «Загрузки», проверит подпись разработчика и покажет файл в Finder. Запустить установку и войти в учётную запись нужно будет самостоятельно.";
+"cloud.install.downloading" = "Загрузка: %@";
+"cloud.install.checking" = "Проверка подписи разработчика…";
+"cloud.install.done.title" = "%@: установщик готов";
+"cloud.install.done.message" = "Файл «%@» скачан и проверен, он выделен в Finder. Запустите его, а после входа в учётную запись диск появится в полосе томов сам.";
+"cloud.install.failed.title" = "%@: установщик не получен";
+"cloud.install.unsigned" = "На скачанном файле нет подписи разработчика — он удалён. Скачайте программу с сайта поставщика вручную.";
+"cloud.install.wrongSigner" = "Подпись на скачанном файле принадлежит «%1$@», а ожидалась «%2$@» — файл удалён. Скачайте программу с сайта поставщика вручную.";
+"cloud.install.nothingInside" = "В скачанном образе нет ни пакета, ни программы — файл удалён.";
+"cloud.install.noAddress" = "У этого поставщика нет прямого адреса установщика — откройте страницу загрузки.";
 "network.localNetwork" = "Локальная сеть";
 "network.ftpDisk" = "FTP-диск";
 "network.scanning" = "Сканирование сети";

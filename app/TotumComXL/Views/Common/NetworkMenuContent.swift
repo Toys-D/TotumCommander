@@ -15,8 +15,21 @@ struct NetworkMenuContent: View {
     var onConnectNetworkDrive: (() -> Void)?
     /// Open the saved-connections manager (FTP/SFTP/WebDAV).
     var onFTPDisk: (() -> Void)?
+    /// Облака, которых сейчас нет в полосе: подключить, войти, взять программу или вернуть.
+    var clouds: [(provider: CloudProvider, placement: CloudPlacement)] = []
+    var onCloud: ((CloudProvider, CloudPlacement) -> Void)?
     /// Called before each action so the presenting popover can dismiss itself.
     let onDismiss: () -> Void
+
+    /// Подпись пункта облака: что случится по щелчку.
+    static func cloudTitle(_ provider: CloudProvider, _ placement: CloudPlacement) -> String {
+        switch placement {
+        case .bar, .menuHidden:     return provider.title
+        case .menuSignIn:           return "\(provider.title) — \(L("cloud.menu.signIn"))"
+        case .menuInstall:          return "\(provider.title) — \(L("cloud.menu.install"))"
+        case .menuSystemSettings:   return "\(provider.title) — \(L("cloud.menu.systemSettings"))"
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -37,8 +50,19 @@ struct NetworkMenuContent: View {
                 onDismiss()
                 onFTPDisk?()
             }
+            if !clouds.isEmpty {
+                Divider().padding(.vertical, 2)
+                ForEach(clouds, id: \.provider) { entry in
+                    AccentMenuItem(title: Self.cloudTitle(entry.provider, entry.placement),
+                                   icon: entry.provider.icon, logo: entry.provider.logo, accent: accent) {
+                        onDismiss()
+                        onCloud?(entry.provider, entry.placement)
+                    }
+                }
+            }
         }
         .padding(6)
-        .frame(width: 230)
+        // С облаками шире: «Яндекс Диск — установить» в 230 пт ложилось в две строки.
+        .frame(width: clouds.isEmpty ? 230 : 300)
     }
 }

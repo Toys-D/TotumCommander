@@ -779,6 +779,21 @@
 /* === Network / Remote connections === */
 "network.manager" = "Connection Manager";
 "network.connectToServer" = "Connect to Server…";
+"cloud.menu.signIn" = "sign in";
+"cloud.menu.install" = "install";
+"cloud.menu.systemSettings" = "turn on in System Settings";
+"volume.cloud.hide" = "Remove from the bar — comes back from the network menu";
+"cloud.install.confirm.title" = "Install %@?";
+"cloud.install.confirm.message" = "The installer for %1$@ will be downloaded from the official address (%2$@) into Downloads, its developer signature checked, and the file shown in Finder. You run the installer and sign in yourself.";
+"cloud.install.downloading" = "Downloading: %@";
+"cloud.install.checking" = "Checking the developer signature…";
+"cloud.install.done.title" = "%@: installer ready";
+"cloud.install.done.message" = "“%@” is downloaded and verified; it is selected in Finder. Run it, and after you sign in the drive appears in the volume bar by itself.";
+"cloud.install.failed.title" = "%@: installer not obtained";
+"cloud.install.unsigned" = "The downloaded file carries no developer signature — it was deleted. Download the app from the vendor’s site manually.";
+"cloud.install.wrongSigner" = "The downloaded file is signed by “%1$@”, but “%2$@” was expected — it was deleted. Download the app from the vendor’s site manually.";
+"cloud.install.nothingInside" = "The downloaded image holds neither a package nor an app — it was deleted.";
+"cloud.install.noAddress" = "This vendor has no direct installer address — open its download page.";
 "network.localNetwork" = "Local Network";
 "network.ftpDisk" = "FTP Disk";
 "network.scanning" = "Scanning network";

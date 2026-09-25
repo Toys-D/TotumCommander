@@ -8,6 +8,8 @@ enum CloudStorageVolumes {
     struct Volume: Equatable {
         let label: String
         let path: String
+        /// Известное облако, если папка его; незнакомый поставщик — nil.
+        var provider: CloudProvider? = nil
     }
 
     static let root = NSHomeDirectory() + "/Library/CloudStorage"
@@ -21,24 +23,18 @@ enum CloudStorageVolumes {
             var isDir: ObjCBool = false
             guard !name.hasPrefix("."), fm.fileExists(atPath: root + "/" + name, isDirectory: &isDir),
                   isDir.boolValue, let label = label(forFolder: name) else { return nil }
-            return Volume(label: label, path: root + "/" + name)
+            return Volume(label: label, path: root + "/" + name, provider: CloudProvider.match(folder: name))
         }
     }
 
     /// Имя кнопки по имени папки: «GoogleDrive-почта» → «Google Drive», «OneDrive-Personal»
     /// → «OneDrive». Папки iCloud — nil: они не сюда.
     static func label(forFolder name: String) -> String? {
-        // У Apple в имени папки неразрывный пробел («iCloud\u{00A0}Drive-…»), потому не по
-        // строке «iCloud Drive», а по началу без учёта регистра и пробелов.
-        if name.lowercased().hasPrefix("icloud") { return nil }
-        let known: [(prefix: String, label: String)] = [
-            ("GoogleDrive", "Google Drive"), ("OneDrive", "OneDrive"),
-            ("Dropbox", "Dropbox"), ("Box", "Box"), ("pCloud", "pCloud"),
-        ]
-        for entry in known where name == entry.prefix || name.hasPrefix(entry.prefix + "-") {
-            return entry.label
+        switch CloudProvider.match(folder: name) {
+        case .icloud?: return nil
+        case let known?: return known.title
+        case nil: return name.split(separator: "-").first.map(String.init) ?? name
         }
-        return name.split(separator: "-").first.map(String.init) ?? name
     }
 
     /// Корень облачного диска: выше него лежит служебная папка CloudStorage, куда «..»

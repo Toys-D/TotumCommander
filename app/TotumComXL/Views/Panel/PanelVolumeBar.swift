@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-private extension Notification.Name {
+extension Notification.Name {
     static let volumeBarNeedsRefresh = Notification.Name("com.fcxl.volumeBarNeedsRefresh")
 }
 
@@ -197,6 +197,12 @@ struct PanelVolumeBar: View {
                     onLocalNetwork: onLocalNetwork,
                     onConnectNetworkDrive: onConnectNetworkDrive,
                     onFTPDisk: onNetwork,
+                    clouds: CloudPlaces.placements(icloudAvailable: icloudAvailable)
+                        .filter { !$0.placement.isInBar },
+                    onCloud: { provider, placement in
+                        CloudPlaces.activate(provider, placement: placement)
+                        mountedVolumesRevision &+= 1
+                    },
                     onDismiss: { showNetworkMenu = false }
                 )
             }
@@ -228,6 +234,8 @@ struct PanelVolumeBar: View {
         .onReceive(NotificationCenter.default.publisher(for: .volumeBarNeedsRefresh)) { _ in
             mountedVolumesRevision &+= 1
         }
+        // Папка поставщика облака появляется после входа в его программу — полоса узнаёт сама.
+        .onAppear { CloudStorageWatcher.shared.start() }
         // Switching iCloud Drive on or off in System Settings mounts nothing, so none of the
         // volume notifications above ever fire for it — without this the entry would linger
         // (or stay missing) until the program was restarted.
@@ -300,7 +308,7 @@ struct PanelVolumeBar: View {
             .help(vol.path)
             .contentShape(Rectangle())
             .contextMenu {
-                if vol.isEjectable {
+                if vol.isEjectable, vol.cloud == nil {
                     Button {
                         showVolumeInfo(for: vol)
                     } label: {
@@ -317,7 +325,12 @@ struct PanelVolumeBar: View {
 
             if vol.isEjectable {
                 Button {
-                    ejectVolume(path: vol.path, label: vol.label)
+                    if let cloud = vol.cloud {
+                        CloudPlaces.hide(cloud)
+                        mountedVolumesRevision &+= 1
+                    } else {
+                        ejectVolume(path: vol.path, label: vol.label)
+                    }
                 } label: {
                     Image(systemName: "eject.fill")
                         .font(.system(size: BarGlyph.size, weight: .medium))
@@ -329,7 +342,7 @@ struct PanelVolumeBar: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(L("volume.eject.tooltip"))
+                .help(vol.cloud == nil ? L("volume.eject.tooltip") : L("volume.cloud.hide"))
                 .contentShape(Rectangle())
             }
         }
@@ -514,18 +527,33 @@ struct PanelVolumeBar: View {
         // iCloud Drive right after the two built-ins: it is a place files live, and reaching
         // it meant typing a path through a hidden Library folder. Shown only while iCloud
         // Drive is actually switched on — an entry that opens nothing is worse than none.
-        if icloudAvailable {
+        // Облака: iCloud и подключённые их родными программами (Google Drive for desktop,
+        // OneDrive, Dropbox) — обычные папки в ~/Library/CloudStorage, без rclone и квот.
+        // Убранные человеком ждут в меню сети.
+        let hiddenClouds = CloudPlaces.hidden
+        if icloudAvailable, !hiddenClouds.contains(.icloud) {
             buttons.append(VolumeButtonModel(
                 label: L("volume.icloud"), path: CloudStatusService.cloudDriveRoot,
-                icon: "icloud", isEjectable: false
+                icon: "icloud", isEjectable: true, cloud: .icloud
             ))
         }
-        // Облака, подключённые их родными программами (Google Drive for desktop, OneDrive,
-        // Dropbox): обычные папки в ~/Library/CloudStorage, без rclone и без квот.
-        for cloud in CloudStorageVolumes.volumes() {
+        let cloudFolders = CloudStorageVolumes.volumes()
+        for cloud in cloudFolders {
+            if let known = cloud.provider, hiddenClouds.contains(known) { continue }
             buttons.append(VolumeButtonModel(
-                label: cloud.label, path: cloud.path, icon: "cloud", isEjectable: false
+                label: cloud.label, path: cloud.path, icon: cloud.provider?.icon ?? "cloud",
+                isEjectable: cloud.provider != nil, cloud: cloud.provider
             ))
+        }
+        // Поставщики, которые кладут диск не в CloudStorage (Яндекс — папкой в домашней).
+        // Том в /Volumes (pCloud Drive) полоса уже показывает как обычный диск — не дублируем.
+        for provider in CloudProvider.allCases where !provider.extraPaths.isEmpty
+            && !hiddenClouds.contains(provider)
+            && !cloudFolders.contains(where: { $0.provider == provider }) {
+            if let path = provider.connectedPath(cloudStorage: []), !path.hasPrefix("/Volumes/") {
+                buttons.append(VolumeButtonModel(label: provider.title, path: path,
+                                                 icon: provider.icon, isEjectable: true, cloud: provider))
+            }
         }
 
         let resourceKeys: Set<URLResourceKey> = [
@@ -977,6 +1005,8 @@ struct VolumeButtonModel {
     let path: String
     let icon: String
     let isEjectable: Bool
+    /// Облако: «извлечение» его не отключает, а убирает в меню сети.
+    var cloud: CloudProvider? = nil
     var isReadOnlyNTFS: Bool = false
     var isNetwork: Bool = false
     var networkHost: String = ""

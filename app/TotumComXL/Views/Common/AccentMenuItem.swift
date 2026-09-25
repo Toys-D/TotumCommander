@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// One row of a custom accent-highlighted popover "menu". We use custom popovers
@@ -7,6 +8,8 @@ import SwiftUI
 struct AccentMenuItem: View {
     let title: String
     var icon: String? = nil
+    /// Фирменный логотип вместо системного значка — рисуется своими цветами.
+    var logo: NSImage? = nil
     let accent: Color
     let action: () -> Void
     @State private var hovering = false
@@ -14,7 +17,13 @@ struct AccentMenuItem: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                if let icon {
+                if let logo {
+                    Image(nsImage: logo)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 18, height: 16)
+                } else if let icon {
                     Image(systemName: icon).frame(width: 18)
                 }
                 Text(title)
