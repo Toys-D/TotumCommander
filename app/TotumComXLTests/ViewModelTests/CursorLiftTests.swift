@@ -100,4 +100,37 @@ final class CursorLiftTests: XCTestCase {
         CursorLift.animateTextGrowth(of: label, ratio: 1, centred: false)
         withExtendedLifetime(window) {}
     }
+
+    /// Поле имени растёт отрисовкой, а не масштабом слоя: обрезанное «имя…» в масштабе слоя
+    /// вылезало за колонку в соседний столбец и уже оттуда сжималось на место.
+    func test_полеИмениРастётОтрисовкойАНеСлоем() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        let field = MarqueeTextField(labelWithString: "очень длинное имя файла, которое не помещается")
+        field.frame = NSRect(x: 0, y: 0, width: 100, height: 20)
+        window.contentView?.addSubview(field)
+        CursorLift.animateTextGrowth(of: field, ratio: 1.3, centred: false)
+        XCTAssertNil(field.layer?.animation(forKey: "fcxl.lift"), "слой не масштабируется")
+        XCTAssertEqual(field.currentGrowthScale, 1.3, accuracy: 0.05, "первый кадр — прежний размер")
+        withExtendedLifetime(window) {}
+    }
+
+    // MARK: - Ход роста
+
+    /// Начинается с прежнего масштаба, приходит к единице, к концу замедляется.
+    func test_ходРостаОтПрежнегоКЕдинице() {
+        let growth = TextGrowth(startRatio: 1.3, duration: 0.15)
+        XCTAssertEqual(growth.scale(at: 0), 1.3, accuracy: 0.001)
+        XCTAssertEqual(growth.scale(at: 0.15), 1, accuracy: 0.001)
+        XCTAssertEqual(growth.scale(at: 1), 1, accuracy: 0.001, "после конца — единица")
+        let early = 1.3 - growth.scale(at: 0.05)
+        let late = growth.scale(at: 0.1) - growth.scale(at: 0.15)
+        XCTAssertGreaterThan(early, abs(late), "первая треть проходит больший путь, чем последняя")
+        XCTAssertFalse(growth.isFinished(at: 0.1))
+        XCTAssertTrue(growth.isFinished(at: 0.15))
+        // Уменьшение (курсор пришёл): с 0.8 к единице, монотонно.
+        let shrink = TextGrowth(startRatio: 0.8, duration: 0.15)
+        XCTAssertLessThan(shrink.scale(at: 0.03), shrink.scale(at: 0.06))
+        XCTAssertEqual(TextGrowth(startRatio: 1.3, duration: 0).scale(at: 0), 1, "без длительности — сразу")
+    }
 }

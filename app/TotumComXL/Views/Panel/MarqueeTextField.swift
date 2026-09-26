@@ -23,6 +23,7 @@ final class MarqueeTextField: NSView {
             if stringValue != oldValue {
                 attributed = nil
                 stopMarquee()
+                stopGrowth()
                 needsDisplay = true
                 invalidateIntrinsicContentSize()
             }
@@ -41,6 +42,7 @@ final class MarqueeTextField: NSView {
             stringValue = newValue.string
             attributed = newValue
             stopMarquee()
+            stopGrowth()
             needsDisplay = true
             invalidateIntrinsicContentSize()
         }
@@ -69,6 +71,14 @@ final class MarqueeTextField: NSView {
     private let edgePauseFrames = 30
     private var pauseFramesLeft = 0
 
+    // MARK: - Growth state
+
+    /// Плавный рост под курсором: текст уже в новом шрифте, а рисуется пока в промежуточном
+    /// кегле — от прежнего размера к настоящему, с обрезкой по ширине на каждом кадре.
+    private var growth: TextGrowth?
+    private var growthStartedAt: TimeInterval = 0
+    private var growthTimer: Timer?
+
     // MARK: - Init
 
     override init(frame frameRect: NSRect) {
@@ -88,6 +98,7 @@ final class MarqueeTextField: NSView {
         // view torn down mid-marquee (a view-mode switch) would leave a 60 Hz timer firing into
         // nothing for the rest of the app's life, one more per occurrence.
         marqueeTimer?.invalidate()
+        growthTimer?.invalidate()
     }
 
     // MARK: - NSTextField labelWithString shim
@@ -106,7 +117,7 @@ final class MarqueeTextField: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let attr = currentAttributedString()
+        let attr = isMarqueeRunning ? currentAttributedString() : displayedAttributedString()
         let textSize = attr.size()
         let yCenter = (bounds.height - textSize.height) / 2
 
@@ -123,7 +134,7 @@ final class MarqueeTextField: NSView {
             // would do because we're a plain NSView now.
             let drawRect = NSRect(x: 0, y: yCenter,
                                   width: bounds.width, height: ceil(textSize.height))
-            let truncated = truncateTail(attr, fitting: bounds.width)
+            let truncated = Self.truncatedToFit(attr, width: bounds.width)
             truncated.draw(in: drawRect)
         } else {
             // Fits — draw normally aligned to the leading edge.
@@ -162,6 +173,7 @@ final class MarqueeTextField: NSView {
     }
 
     private func beginScrolling() {
+        stopGrowth()
         isMarqueeRunning = true
         scrollOffset = 0
         direction = -1
@@ -197,6 +209,81 @@ final class MarqueeTextField: NSView {
         needsDisplay = true
     }
 
+    // MARK: - Growth control
+
+    /// Текст уже в новом шрифте; показать, как он к нему дорастает: первый кадр — в `ratio`
+    /// раз от настоящего кегля, последний — настоящий. Каждый кадр рисуется своим кеглем и
+    /// заново обрезается по ширине, поэтому длинное имя всю дорогу кончается многоточием у
+    /// края колонки, а не вылезает в соседнюю. Единица — переход не нужен.
+    func animateGrowth(fromRatio ratio: CGFloat, duration: TimeInterval) {
+        stopGrowth()
+        guard ratio > 0, abs(ratio - 1) > 0.001, duration > 0 else { return }
+        growth = TextGrowth(startRatio: ratio, duration: duration)
+        growthStartedAt = CACurrentMediaTime()
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            self?.tickGrowth()
+        }
+        // В общем режиме цикла: стрелка с автоповтором и прокрутка держат цикл в режиме
+        // слежения, и таймер по умолчанию там молчит — рост замирал бы на первом кадре.
+        RunLoop.main.add(timer, forMode: .common)
+        growthTimer = timer
+        needsDisplay = true
+    }
+
+    func stopGrowth() {
+        growthTimer?.invalidate()
+        growthTimer = nil
+        if growth != nil {
+            growth = nil
+            needsDisplay = true
+        }
+    }
+
+    /// Масштаб, в котором текст рисуется сейчас; единица — рост окончен или не шёл.
+    var currentGrowthScale: CGFloat {
+        growth?.scale(at: CACurrentMediaTime() - growthStartedAt) ?? 1
+    }
+
+    private func tickGrowth() {
+        guard let growth else { return }
+        if growth.isFinished(at: CACurrentMediaTime() - growthStartedAt) {
+            stopGrowth()
+        }
+        needsDisplay = true
+    }
+
+    /// Что рисовать в этот кадр: настоящий текст или он же в промежуточном кегле роста.
+    private func displayedAttributedString() -> NSAttributedString {
+        Self.scaled(currentAttributedString(), by: currentGrowthScale)
+    }
+
+    /// Тот же текст со всеми шрифтами (и вложениями, и разрядкой) в `scale` раз крупнее.
+    static func scaled(_ text: NSAttributedString, by scale: CGFloat) -> NSAttributedString {
+        guard scale > 0, abs(scale - 1) > 0.001 else { return text }
+        let result = NSMutableAttributedString(attributedString: text)
+        let all = NSRange(location: 0, length: result.length)
+        result.enumerateAttribute(.font, in: all) { value, range, _ in
+            guard let font = value as? NSFont else { return }
+            result.addAttribute(.font, value: NSFontManager.shared.convert(font, toSize: font.pointSize * scale),
+                                range: range)
+        }
+        result.enumerateAttribute(.kern, in: all) { value, range, _ in
+            guard let kern = value as? NSNumber else { return }
+            result.addAttribute(.kern, value: NSNumber(value: kern.doubleValue * Double(scale)), range: range)
+        }
+        result.enumerateAttribute(.attachment, in: all) { value, range, _ in
+            // Копия, а не правка на месте: вложение общее с хранимой строкой.
+            guard let attachment = value as? NSTextAttachment else { return }
+            let copy = NSTextAttachment()
+            copy.image = attachment.image
+            let b = attachment.bounds
+            copy.bounds = CGRect(x: b.origin.x * scale, y: b.origin.y * scale,
+                                 width: b.width * scale, height: b.height * scale)
+            result.addAttribute(.attachment, value: copy, range: range)
+        }
+        return result
+    }
+
     // MARK: - Helpers
 
     private func currentAttributedString() -> NSAttributedString {
@@ -222,9 +309,14 @@ final class MarqueeTextField: NSView {
     }
 
     /// Manual tail-truncation for the static (non-scrolling) state.
-    private func truncateTail(_ source: NSAttributedString, fitting width: CGFloat) -> NSAttributedString {
-        guard source.size().width > width else { return source }
-        let ellipsis = NSAttributedString(string: "…", attributes: defaultAttributes)
+    ///
+    /// The ellipsis takes the text's own font, colour and spacing — the first run's, which is the
+    /// name itself — so it matches the text at whatever size the growth is drawing it in.
+    static func truncatedToFit(_ source: NSAttributedString, width: CGFloat) -> NSAttributedString {
+        guard source.size().width > width, source.length > 0 else { return source }
+        var ellipsisAttributes = source.attributes(at: 0, effectiveRange: nil)
+        ellipsisAttributes[.attachment] = nil
+        let ellipsis = NSAttributedString(string: "…", attributes: ellipsisAttributes)
         let ellipsisWidth = ellipsis.size().width
         let target = width - ellipsisWidth
         let mut = NSMutableAttributedString(attributedString: source)

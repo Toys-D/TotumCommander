@@ -62,6 +62,14 @@ enum CursorLift {
     /// центр у подписи миниатюры.
     static func animateTextGrowth(of label: NSView, ratio: CGFloat, centred: Bool) {
         guard ratio > 0, abs(ratio - 1) > 0.001 else { return }
+        // Поле имени рисует текст само и умеет расти настоящими промежуточными кеглями,
+        // обрезая имя по колонке на каждом кадре. Масштаб слоя ему не годится: обрезанное
+        // «имя…» в старом, крупном масштабе вылезало за колонку, в соседний столбец, и уже
+        // оттуда сжималось на место.
+        if let field = label as? MarqueeTextField {
+            field.animateGrowth(fromRatio: ratio, duration: duration)
+            return
+        }
         label.wantsLayer = true
         guard let layer = label.layer, layer.bounds.width > 0, layer.bounds.height > 0 else { return }
         let w = layer.bounds.width, h = layer.bounds.height
@@ -79,4 +87,21 @@ enum CursorLift {
         layer.add(animation, forKey: "fcxl.lift")
         layer.transform = CATransform3DIdentity
     }
+}
+
+/// Ход плавного роста текста: масштаб от `startRatio` к единице, с замедлением к концу —
+/// как у слоя, только считается вручную, для отрисовки кадр за кадром.
+struct TextGrowth: Equatable {
+    let startRatio: CGFloat
+    let duration: TimeInterval
+
+    /// Масштаб к моменту `elapsed` от начала; за пределами хода — единица.
+    func scale(at elapsed: TimeInterval) -> CGFloat {
+        guard duration > 0, elapsed < duration else { return 1 }
+        let t = max(0, elapsed / duration)
+        let eased = 1 - (1 - t) * (1 - t)
+        return startRatio + (1 - startRatio) * CGFloat(eased)
+    }
+
+    func isFinished(at elapsed: TimeInterval) -> Bool { elapsed >= duration }
 }
