@@ -38,7 +38,8 @@ final class RemoteFileCacheTests: XCTestCase {
     }
 
     override func tearDown() {
-        RemoteFileCache.shared.forget(connectionID: session.connection.id)
+        // Пропуск в setUp (нет rclone) оставляет сеанс пустым — тогда убирать нечего.
+        if let session { RemoteFileCache.shared.forget(connectionID: session.connection.id) }
         let stopping = daemon
         Task { await stopping?.stop() }
         UserDefaults.standard.removeObject(forKey: RcloneDaemon.customPathKey)
