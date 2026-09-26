@@ -195,8 +195,9 @@
 "design.rowHeight" = "Высота строки";
 "design.iconScale" = "Масштаб иконок";
 "design.upIconScale" = "Масштаб иконки «..»";
-"design.thumbnailSize" = "Размер миниатюр (режим «Миниатюры»)";
+"design.thumbnailSize" = "Размер плитки";
 "design.section.rows" = "Строки списка";
+"design.thumbnailSize.hint" = "Сторона одной картинки в режиме «Миниатюры». Крупнее — картинки видно лучше, но на экране их помещается меньше. Сами файлы не меняются.";
 "design.section.thumbnails" = "Режим «Миниатюры»";
 "design.section.upIcon" = "Значок «..» — выход на уровень выше";
 "design.upIcon.kind" = "Вид";

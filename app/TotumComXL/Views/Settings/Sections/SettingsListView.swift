@@ -85,6 +85,9 @@ struct SettingsListView: View {
                     in: PanelAppearanceSettings.minimumThumbnailSize...PanelAppearanceSettings.maximumThumbnailSize,
                     step: 10,
                     display: "\(Int(thumbnailSize)) \(L("unit.pixels"))")
+                Text(L("design.thumbnailSize.hint"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             } header: {
                 Text(L("design.section.thumbnails"))
             }

@@ -145,6 +145,16 @@ enum GitBadgeChip {
 
     /// The gutter: as wide as the widest LETTER in the listing, and no wider — the branch names
     /// live at the other end of the row.
+    /// Ключ для кэша ширины колонки: какие знаки вообще встречаются. Ширина зависит только
+    /// от набора знаков и шрифта, а не от числа файлов — и знаки могут прийти к тем же путям
+    /// позже ветки, когда число записей уже не меняется.
+    static func gutterKey(_ badges: some Collection<GitBadge>) -> Int {
+        badges.reduce(0) { key, badge in
+            guard let mark = badge.mark else { return key }
+            return key | (1 << mark.rawValue)
+        }
+    }
+
     static func gutterWidth(_ badges: some Collection<GitBadge>, font base: NSFont) -> CGFloat {
         let widest = badges.reduce(CGFloat.zero) { widest, badge in
             guard let mark = badge.mark else { return widest }

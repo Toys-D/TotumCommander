@@ -231,3 +231,17 @@ final class GitBadgeChipTests: XCTestCase {
                              "точка «есть несохранённое» занимает своё место")
     }
 }
+
+extension GitBadgeChipTests {
+    /// Ключ кэша ширины колонки меняется, когда появляется знак, даже если число записей то же:
+    /// сначала приходит ветка, знаки состояний — позже, к тем же путям.
+    func test_ключКолонкиЗависитОтЗнаковАНеОтЧисла() {
+        let branchOnly: [GitBadge] = [GitBadge(mark: nil, branch: "main"), GitBadge(mark: nil)]
+        let withMarks: [GitBadge] = [GitBadge(mark: .untracked, branch: "main"), GitBadge(mark: nil)]
+        XCTAssertEqual(branchOnly.count, withMarks.count)
+        XCTAssertNotEqual(GitBadgeChip.gutterKey(branchOnly), GitBadgeChip.gutterKey(withMarks))
+        XCTAssertEqual(GitBadgeChip.gutterKey(branchOnly), 0, "без знаков колонка пуста")
+        XCTAssertEqual(GitBadgeChip.gutterKey(withMarks), GitBadgeChip.gutterKey([GitBadge(mark: .untracked)]),
+                       "тот же набор знаков — тот же ключ")
+    }
+}

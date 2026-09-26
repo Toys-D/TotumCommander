@@ -1,8 +1,32 @@
 import AppKit
 
 final class FileListRowView: NSTableRowView {
+    /// Строка не режет содержимое по своим краям: увеличенная иконка и подросший текст под
+    /// курсором выходят на соседние строки, как выходит свечение курсора. У NSTableRowView
+    /// клип включён по умолчанию, и при крупных иконках (iconScale 2+) их срезало.
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        clipsToBounds = false
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        clipsToBounds = false
+    }
+
     var isCursor = false {
-        didSet { needsDisplay = true }
+        didSet {
+            needsDisplay = true
+            layer?.zPosition = Self.zPosition(isCursor: isCursor)
+        }
+    }
+
+    /// Строка с курсором лежит над соседями, иначе вылезшую иконку накрывала бы следующая строка.
+    static func zPosition(isCursor: Bool) -> CGFloat { isCursor ? 1 : 0 }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        layer?.zPosition = Self.zPosition(isCursor: isCursor)
     }
     var isItemSelected = false {
         didSet { needsDisplay = true }

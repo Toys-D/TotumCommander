@@ -190,9 +190,10 @@
 "design.rowHeight" = "Row height";
 "design.iconScale" = "Icon scale";
 "design.upIconScale" = "\"..\" icon scale";
-"design.thumbnailSize" = "Thumbnail size (Thumbnails mode)";
+"design.thumbnailSize" = "Tile size";
 "design.section.rows" = "List rows";
-"design.section.thumbnails" = "Thumbnails view";
+"design.thumbnailSize.hint" = "The side of one picture in Thumbnails mode. Larger shows pictures better but fits fewer on screen. The files themselves are unchanged.";
+"design.section.thumbnails" = "Thumbnails mode";
 "design.section.upIcon" = "The \"..\" icon — going one level up";
 "design.upIcon.kind" = "Shape";
 "design.upIcon.scale" = "Scale";

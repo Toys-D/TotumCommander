@@ -786,7 +786,9 @@ struct FileListBriefView: NSViewRepresentable {
         /// нескольку раз (измерено по стекам).
         private var gitGutter: CGFloat {
             let marks = parent.viewModel.gitByPath
-            let signature = "\(marks.count)|\(PanelAppearanceSettings.resolvedListFontSize)"
+            // Ключ — набор знаков, не число записей: знаки приходят к тем же путям позже
+            // ветки, и по числу кэш не замечал их появления — знаки ложились на имена.
+            let signature = "\(GitBadgeChip.gutterKey(marks.values))|\(PanelAppearanceSettings.resolvedListFontSize)"
             if gitGutterSignature == signature, let cached = gitGutterCache { return cached }
             let width = GitBadgeChip.gutterWidth(marks.values,
                                                  font: PanelAppearanceSettings.resolvedListFont(atDistance: .max))
