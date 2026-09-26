@@ -1977,6 +1977,12 @@ final class PanelViewController: NSViewController,
     /// Width of the Git gutter for the folder on screen: as wide as its widest mark, zero when
     /// there is nothing to show. Recomputed when the readings change, not per row.
     private var gitGutterWidth: CGFloat = 0
+    /// Прокрутка к курсору при обновлении данных — только когда сменилась папка. Перечитка
+    /// той же папки (событие FSEvents, второй проход с размерами) приходит и посреди
+    /// прокрутки трекпадом, и список прыгал обратно к курсору. Движение самого курсора
+    /// прокручивает по своей подписке.
+    private var detailedFollow = CursorFollow()
+    private var lastFollowedPath: String?
 
     /// Появление списка при запуске — один раз на панель, пока идёт первое наполнение.
     /// Ряды строятся заново каждым проходом наполнения, поэтому берутся заново при показе.
@@ -2030,17 +2036,23 @@ final class PanelViewController: NSViewController,
             .sink { [weak self] in
                 // Before reloadData, not after: the rows about to be built must land in the
                 // columns this content belongs to.
-                self?.applyColumnVisibilityIfSetChanged()
-                self?.reloadTableAfterEntrance()
-                self?.updateTroubleLabel()
-                self?.scrollToCursorIfNeeded()
-                self?.viewModel.refreshTags()
-                self?.viewModel.refreshGit()
+                guard let self else { return }
+                self.applyColumnVisibilityIfSetChanged()
+                self.reloadTableAfterEntrance()
+                self.updateTroubleLabel()
+                let pathChanged = self.lastFollowedPath != self.viewModel.currentPath
+                self.lastFollowedPath = self.viewModel.currentPath
+                if self.detailedFollow.step(wanted: pathChanged,
+                                            canScroll: self.viewModel.items.indices.contains(self.viewModel.cursorIndex)) {
+                    self.scrollToCursorIfNeeded()
+                }
+                self.viewModel.refreshTags()
+                self.viewModel.refreshGit()
                 // Re-apply the beauty-mode cursor glow after a (re)load. On launch isActivePanel
                 // is set true while items are still empty, so the glow row was cleared; the reload
                 // that follows the async directory load must restore it, otherwise there is no
                 // visible cursor until the user clicks (which triggers cursorDidChange).
-                self?.updateDetailedCursorGlow()
+                self.updateDetailedCursorGlow()
             }
             .store(in: &cancellables)
 

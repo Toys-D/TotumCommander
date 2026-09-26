@@ -535,6 +535,7 @@ let package = Package(
                 "ViewModelTests/CursorMaskTests.swift",
                 "ViewModelTests/CursorGlowSpillTests.swift",
                 "ViewModelTests/CursorIconSpillTests.swift",
+                "ViewModelTests/DetailedScrollKeepTests.swift",
                 "ViewModelTests/GridLinesTests.swift",
                 "ViewModelTests/NetworkBrowserDedupTests.swift",
                 "ViewModelTests/TrashServiceTests.swift",
