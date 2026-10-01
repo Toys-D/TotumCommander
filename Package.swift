@@ -621,6 +621,7 @@ let package = Package(
                 "ViewModelTests/BranchViewTests.swift",
                 "ViewModelTests/ColumnOrderTests.swift",
                 "ViewModelTests/ExternalTerminalTests.swift",
+                "ViewModelTests/TerminalDropFocusTests.swift",
                 "ViewModelTests/DiskImageOpenModeTests.swift",
                 "ViewModelTests/SpotlightQueryTests.swift",
                 "ViewModelTests/NameCellEditingTests.swift",

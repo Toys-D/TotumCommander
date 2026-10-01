@@ -364,17 +364,34 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         isDropTarget = false
-        guard let tv = localTermView,
-              let urls = sender.draggingPasteboard.readObjects(
+        guard let urls = sender.draggingPasteboard.readObjects(
                   forClasses: [NSURL.self],
                   options: [.urlReadingFileURLsOnly: true]
-              ) as? [URL], !urls.isEmpty else {
+              ) as? [URL] else {
             return false
         }
+        // Источника нет — тащили из другой программы (Finder).
+        return insertDroppedPaths(urls, fromAnotherApp: sender.draggingSource == nil)
+    }
 
+    /// Пути брошенных файлов — в строку терминала, и клавиатура — ему же.
+    ///
+    /// Бросок в терминал — это начало команды: дальше печатают здесь. Раньше путь вставлялся,
+    /// а фокус оставался в списке, откуда тащили, и первое же нажатие уходило не туда.
+    /// Из другой программы бросок ещё и выводит окно вперёд — иначе печатать было бы в Finder.
+    @discardableResult
+    func insertDroppedPaths(_ urls: [URL], fromAnotherApp: Bool) -> Bool {
+        guard let tv = localTermView, !urls.isEmpty else { return false }
         let escapedPaths = urls.map { Self.shellEscapePath($0.path) }
-        let text = escapedPaths.joined(separator: " ")
-        tv.send(Array(text.utf8))
+        tv.send(Array(escapedPaths.joined(separator: " ").utf8))
+        guard let window else { return true }
+        if fromAnotherApp {
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+        } else if !window.isKeyWindow {
+            window.makeKey()
+        }
+        window.makeFirstResponder(tv)
         return true
     }
 
