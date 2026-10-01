@@ -4893,6 +4893,25 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
     func focusActivePanelList() {
         splitVC.activePanelVC.claimFirstResponder()
     }
+
+    /// Возвращение в программу — с другого стола, из другой программы, из Dock.
+    ///
+    /// Фокус остаётся там, где его оставили: в терминале, в просмотрщике, в строке пути, в
+    /// быстром фильтре. Раньше список забирал клавиатуру при каждой активации, и человек,
+    /// печатавший в терминале, возвращался со стола в панель с файлами. Список берёт фокус,
+    /// только когда его не держит никто — ради чего это и вводилось: после запуска в фоне
+    /// фокус стоял на самом окне, и стрелки молчали до щелчка по панели.
+    func restoreFocusOnReturn() {
+        guard let window, Self.focusIsParked(window.firstResponder, in: window) else { return }
+        focusActivePanelList()
+    }
+
+    /// Фокус «нигде»: его нет, он у самого окна, или вид, который его держит, спрятан или уже
+    /// не в этом окне — клавиши до него не дойдут.
+    static func focusIsParked(_ responder: NSResponder?, in window: NSWindow) -> Bool {
+        guard let view = responder as? NSView else { return true }
+        return view.window !== window || view.isHiddenOrHasHiddenAncestor
+    }
 }
 
 // MARK: - QLPreviewPanelDataSource / Delegate

@@ -127,9 +127,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Resume FSEvents watchers and reload directories
         if let controller = mainWindowController {
             controller.resumeFSWatchers()
-            // Coming back — from another app, another desktop, or the Dock — the file list should
-            // be ready for the arrow keys straight away, not after a second click into the panel.
-            controller.focusActivePanelList()
+            // Coming back — from another app, another desktop, or the Dock — the keyboard goes back
+            // where the user left it (terminal, viewer, path field); the file list takes it only
+            // when nothing holds it, so the arrow keys never need a click to wake up.
+            controller.restoreFocusOnReturn()
         }
     }
 

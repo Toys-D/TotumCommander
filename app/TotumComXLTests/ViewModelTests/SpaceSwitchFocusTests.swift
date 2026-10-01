@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 
 @testable import TotumComXLApp
 
@@ -36,5 +37,50 @@ final class SpaceSwitchFocusTests: XCTestCase {
     func testAClosedWindowIsNotResurrected() {
         XCTAssertFalse(MainWindowController.shouldReclaimFocus(
             isVisible: false, isMiniaturized: false, isOnActiveSpace: true, isAppActive: true))
+    }
+}
+
+/// Возвращение в программу — с другого стола, из другой программы, из Dock — не отбирает
+/// клавиатуру у того, кто её держал. Был в терминале — вернулся в терминал. Список берёт фокус,
+/// только когда его не держит никто: иначе после запуска в фоне стрелки молчали до щелчка.
+@MainActor
+final class ReturnFocusTests: XCTestCase {
+
+    private func window() -> NSWindow {
+        NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
+                 styleMask: .borderless, backing: .buffered, defer: false)
+    }
+
+    func test_whenTerminalHeldFocus_shouldStayThere() {
+        let window = window()
+        let terminal = NSTextView(frame: NSRect(x: 0, y: 0, width: 100, height: 50))
+        window.contentView?.addSubview(terminal)
+        XCTAssertFalse(MainWindowController.focusIsParked(terminal, in: window))
+    }
+
+    func test_whenNobodyHeldFocus_shouldGiveItToTheList() {
+        let window = window()
+        XCTAssertTrue(MainWindowController.focusIsParked(nil, in: window))
+        XCTAssertTrue(MainWindowController.focusIsParked(window, in: window), "фокус у самого окна")
+    }
+
+    /// Терминал закрыли, а фокус остался на спрятанном виде — клавиши в него не дойдут.
+    func test_whenFocusedViewIsHidden_shouldGiveItToTheList() {
+        let window = window()
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 100, height: 50))
+        let terminal = NSTextView(frame: container.bounds)
+        container.addSubview(terminal)
+        window.contentView?.addSubview(container)
+        container.isHidden = true
+        XCTAssertTrue(MainWindowController.focusIsParked(terminal, in: window))
+    }
+
+    func test_whenFocusedViewLeftTheWindow_shouldGiveItToTheList() {
+        let window = window()
+        let other = self.window()
+        let stray = NSTextView(frame: NSRect(x: 0, y: 0, width: 100, height: 50))
+        other.contentView?.addSubview(stray)
+        XCTAssertTrue(MainWindowController.focusIsParked(stray, in: window))
+        XCTAssertTrue(MainWindowController.focusIsParked(NSTextView(), in: window), "вид без окна")
     }
 }
