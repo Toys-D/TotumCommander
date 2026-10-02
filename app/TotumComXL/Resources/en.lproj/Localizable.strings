@@ -256,6 +256,7 @@
 "design.dividerShowQuickLinks" = "Show folder shortcuts";
 "design.dividerShowLabels" = "Show labels under icons";
 "design.dividerShowLabels.hint" = "Widen the divider to enable labels";
+"design.dividerLabelFontSize" = "Label font size";
 "design.section.separators" = "Separators";
 "design.dividerBorderOpacity" = "Line opacity";
 "design.dividerBorderWidth" = "Line width";

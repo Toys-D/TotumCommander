@@ -7,6 +7,7 @@ struct SettingsDividerView: View {
     @AppStorage("dividerOffsetY") private var dividerOffsetY: Double = 0
     @AppStorage("dividerShowQuickLinks") private var dividerShowQuickLinks: Bool = true
     @AppStorage("dividerShowLabels") private var dividerShowLabels: Bool = true
+    @AppStorage(TunnelLabelFont.defaultsKey) private var labelFontSize: Double = TunnelLabelFont.defaultSize
 
     var body: some View {
         Form {
@@ -18,6 +19,11 @@ struct SettingsDividerView: View {
                 Toggle(L("design.dividerShowQuickLinks"), isOn: $dividerShowQuickLinks).settingAnchor("design.dividerShowQuickLinks")
                 Toggle(L("design.dividerShowLabels"), isOn: $dividerShowLabels).settingAnchor("design.dividerShowLabels")
                     .disabled(centerDividerWidth < 40)
+                // Подписей нет — и шрифту их нечего менять: гаснет вместе с ними.
+                slider(L("design.dividerLabelFontSize"), value: $labelFontSize,
+                       in: TunnelLabelFont.range, step: 1, unit: "pt")
+                    .settingAnchor("design.dividerLabelFontSize")
+                    .disabled(!dividerShowLabels || centerDividerWidth < 40)
                 if centerDividerWidth < 40 {
                     Text(L("design.dividerShowLabels.hint"))
                         .font(.caption)
@@ -28,12 +34,13 @@ struct SettingsDividerView: View {
         .formStyle(.grouped)
     }
 
-    private func slider(_ title: String, value: Binding<Double>, in range: ClosedRange<Double>, step: Double) -> some View {
+    private func slider(_ title: String, value: Binding<Double>, in range: ClosedRange<Double>,
+                        step: Double, unit: String = "px") -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(title)
                 Spacer()
-                Text("\(Int(value.wrappedValue)) px")
+                Text("\(Int(value.wrappedValue)) \(unit)")
                     .foregroundColor(.secondary)
                     .frame(width: 50, alignment: .trailing)
             }

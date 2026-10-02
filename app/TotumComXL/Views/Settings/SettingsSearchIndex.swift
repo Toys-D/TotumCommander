@@ -170,6 +170,7 @@ enum SettingsSearchIndex {
             ("design.dividerOffsetY", "design.section.divider"),
             ("design.dividerShowQuickLinks", "design.section.divider"),
             ("design.dividerShowLabels", "design.section.divider"),
+            ("design.dividerLabelFontSize", "design.section.divider"),
         ],
         .contextMenu: [
             ("settings.contextMenu.livePreview", nil),

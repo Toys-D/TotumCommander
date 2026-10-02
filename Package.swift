@@ -678,6 +678,7 @@ let package = Package(
                 "ViewModelTests/ModelTextureFinderTests.swift",
                 "ViewModelTests/ThumbnailCellLayoutTests.swift",
                 "ViewModelTests/TunnelOverflowTests.swift",
+                "ViewModelTests/TunnelLabelFontTests.swift",
                 "ViewModelTests/ThemedMirrorTests.swift",
                 "ViewModelTests/ContextMenuLayoutTests.swift",
                 "ViewModelTests/TunnelReorderTests.swift",

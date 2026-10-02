@@ -367,7 +367,7 @@ The strip between the panels. Everything in it is yours.
 
 **Empty tunnel space, right-click**: centre (50/50), proportions 30/70, 40/60, 60/40, 70/30, swap the panels, open the left folder in the right panel and vice versa. The border between the panels can be dragged with the mouse.
 
-At the top of the tunnel: the **swap** button, the current percentages, the **operation queue** button. When the window is low and not every button fits, the extra folders and operations hide behind a **"More"** button with a drop-down list, and the tunnel itself never leaves its bounds. The look (width, labels, spacing, offset, whether to show the links, lines) — in the "Tunnel" settings.
+At the top of the tunnel: the **swap** button, the current percentages, the **operation queue** button. When the window is low and not every button fits, the extra folders and operations hide behind a **"More"** button with a drop-down list, and the tunnel itself never leaves its bounds. The look (width, labels and their font size, spacing, offset, whether to show the links, lines) — in the "Tunnel" settings.
 
 ---
 
@@ -428,7 +428,7 @@ Family, bold, size, letter spacing, enlarging the font under the cursor, preview
 Rounding, tab bar colour, tab colour, font, height, width and minimum width, bar height, offset, spacing, opacity and title colour of the active tab.
 
 ### Tunnel
-Width, gap between links and operations, spacing between icons, vertical offset, show the folder links, labels under the icons, line opacity and thickness.
+Width, gap between links and operations, spacing between icons, vertical offset, show the folder links, labels under the icons, label font size, line opacity and thickness.
 
 ### Context Menu
 **Your own menu** — the context menu for files and folders is built by hand. On the left, every program command (a hundred and fifty of them — the same ones the menu bar and the ⌘P palette hold) with a search field: **＋** puts a command into the menu, the **down arrow** puts it under the "More" button. On the right, two lists: **Menu** — what is seen at once, and **Under "More"** — what appears after pressing it. In every row the arrows change the order, the sideways arrow moves an item between the parts, **✕** takes it out of the menu for good. Everything can be taken out, down to the last item. **Separator** is one more entry in the left-hand list and can be placed as many times as wanted. **Defaults** brings back the menu the program came with.

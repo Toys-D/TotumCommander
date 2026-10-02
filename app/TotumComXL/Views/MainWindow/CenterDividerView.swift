@@ -12,6 +12,32 @@ struct QuickLink {
 // Прошитого списка больше нет: папки туннеля живут в TunnelStore, и человек
 // правит их сам — правой кнопкой и перетаскиванием.
 
+// MARK: - Шрифт подписей
+
+/// Размер подписей туннеля — одна настройка на все кнопки и строку процентов наверху.
+enum TunnelLabelFont {
+    static let defaultsKey = "dividerLabelFontSize"
+    static let defaultSize: Double = 8
+    static let range: ClosedRange<Double> = 7...14
+    /// В широком туннеле значок и подпись стоят в строку, места больше — подпись на 3 pt
+    /// крупнее, как было всегда (8 под значком, 11 в строку).
+    static let rowExtra: CGFloat = 3
+
+    /// Подписи не показываются (выключены или туннель для них узок) — настройка не
+    /// действует: ползунок в настройках погашен, строка процентов обычного размера.
+    static func size(_ stored: Double, row: Bool = false, labelsShown: Bool = true) -> CGFloat {
+        let base = labelsShown && stored.isFinite
+            ? min(max(stored, range.lowerBound), range.upperBound) : defaultSize
+        return CGFloat(base) + (row ? rowExtra : 0)
+    }
+
+    /// Строка процентов в узком туннеле сжимается, чтобы влезть, но не мельче, чем
+    /// сжималась при обычном размере (8 pt × 0.7), — крупный шрифт не режет её на «50.0 / 5…».
+    static func readoutMinimumScale(_ size: CGFloat) -> CGFloat {
+        min(1, CGFloat(defaultSize) * 0.7 / max(size, 1))
+    }
+}
+
 // MARK: - DividerButtonView
 
 struct DividerButtonView: View {
@@ -39,6 +65,7 @@ struct DividerButtonView: View {
     @State private var isDragging = false
     @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
     private var accent: Color { PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple) }
+    @AppStorage(TunnelLabelFont.defaultsKey) private var labelFontSize: Double = TunnelLabelFont.defaultSize
 
     /// Нажатие — свой жест, а не Button: у Button на macOS щелчок и перетаскивание не
     /// уживаются (после протяжки он всё равно срабатывает, как будто щёлкнули).
@@ -77,7 +104,7 @@ struct DividerButtonView: View {
                     HStack(spacing: 6) {
                         iconView
                         Text(subtitle)
-                            .font(.system(size: 11))
+                            .font(.system(size: TunnelLabelFont.size(labelFontSize, row: true)))
                             .lineLimit(1)
                         Spacer(minLength: 0)
                     }
@@ -87,7 +114,7 @@ struct DividerButtonView: View {
                         iconView
                         if let subtitle {
                             Text(subtitle)
-                                .font(.system(size: 8))
+                                .font(.system(size: TunnelLabelFont.size(labelFontSize)))
                                 .lineLimit(1)
                         }
                     }
@@ -195,6 +222,7 @@ struct CenterDividerView: View {
     @AppStorage("dividerBorderOpacity") private var dividerBorderOpacity: Double = 0.15
     @AppStorage("dividerBorderWidth") private var dividerBorderWidth: Double = 1
     @AppStorage("quickLinksGap") private var quickLinksGap: Double = 12
+    @AppStorage(TunnelLabelFont.defaultsKey) private var labelFontSize: Double = TunnelLabelFont.defaultSize
 
     private enum LabelMode {
         case full, short, none
@@ -321,11 +349,15 @@ struct CenterDividerView: View {
                 }
                 .accessibilityLabel(L("accessibility.swap_panels"))
 
+                let readoutSize = TunnelLabelFont.size(labelFontSize, labelsShown: labelMode != .none)
                 Text(String(format: "%.1f / %.1f", splitRatio * 100, (1 - splitRatio) * 100))
-                    .font(.system(size: 8))
+                    .font(.system(size: readoutSize))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(TunnelLabelFont.readoutMinimumScale(readoutSize))
+                    // Высота — своя: стопка туннеля отдавала строке меньше нужного, и она при
+                    // любом размере сжималась до предела. Сжиматься ей можно только по ширине.
+                    .fixedSize(horizontal: false, vertical: true)
 
                 // The queue's own door, always in the tunnel. Two circling arrows with a clock
                 // inside; when something is queued, the CLOCK gives its place to the count —
