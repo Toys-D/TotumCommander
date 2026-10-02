@@ -60,3 +60,17 @@ final class PanelDropTargetTests: XCTestCase {
                        "/tmp/здесь")
     }
 }
+
+/// Рамка «сюда можно бросить» — только на той самой папке: та же позиция и тот же путь.
+/// Позиция одна не годится: после перезагрузки списка на ней может стоять уже другой файл.
+final class DropRingRuleTests: XCTestCase {
+    func test_ringOnlyOnTheSameFolder() {
+        XCTAssertTrue(DropRing.shows(index: 3, path: "/a/folder", targetIndex: 3, targetPath: "/a/folder"))
+        XCTAssertFalse(DropRing.shows(index: 3, path: "/a/file.png", targetIndex: 3, targetPath: "/a/folder"),
+                       "на месте папки теперь файл — рамки нет")
+        XCTAssertFalse(DropRing.shows(index: 4, path: "/a/folder", targetIndex: 3, targetPath: "/a/folder"))
+        XCTAssertFalse(DropRing.shows(index: 3, path: "/a/folder", targetIndex: nil, targetPath: nil),
+                       "переноса нет — рамки нет")
+    }
+}
+

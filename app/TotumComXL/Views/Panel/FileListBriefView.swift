@@ -451,16 +451,26 @@ struct FileListBriefView: NSViewRepresentable {
         /// thumbnails view for the full why): the drop operation is always `.on` to avoid the
         /// `.before` insertion line, so we ring only a genuine folder under the pointer ourselves.
         private var dropFolderIP: IndexPath?
+        /// Путь той папки: позиция после перезагрузки может достаться другому файлу.
+        private var dropFolderPath: String?
 
         func updateDropHighlight(to ip: IndexPath?, in cv: NSCollectionView) {
             guard ip != dropFolderIP else { return }
-            if let old = dropFolderIP, let v = cv.item(at: old)?.view as? BriefItemView {
-                v.isDropTarget = false
-            }
             dropFolderIP = ip
-            if let new = ip, let v = cv.item(at: new)?.view as? BriefItemView {
-                v.isDropTarget = true
+            dropFolderPath = ip.flatMap { target in
+                parent.viewModel.items.indices.contains(target.item)
+                    ? parent.viewModel.items[target.item].path : nil
             }
+            // По всем ячейкам, а не по номеру позиции: вид с рамкой мог уехать на другой файл.
+            DropRing.apply(in: cv) { [unowned self] in self.isDropTarget(at: $0) }
+        }
+
+        /// Стоит ли на этой позиции рамка переноса — та самая папка под перетаскиваемым файлом.
+        private func isDropTarget(at indexPath: IndexPath) -> Bool {
+            let items = parent.viewModel.items
+            guard items.indices.contains(indexPath.item) else { return false }
+            return DropRing.shows(index: indexPath.item, path: items[indexPath.item].path,
+                                  targetIndex: dropFolderIP?.item, targetPath: dropFolderPath)
         }
 
         init(_ parent: FileListBriefView) {
@@ -540,6 +550,11 @@ struct FileListBriefView: NSViewRepresentable {
 
             let model = parent.viewModel.items[indexPath.item]
             configureCell(briefItem, with: model, index: indexPath.item)
+            // Переиспользованная ячейка не уносит чужую рамку: решает сама, по своей позиции.
+            if let ring = briefItem.view as? DropRingCell {
+                let shows = isDropTarget(at: indexPath)
+                if ring.isDropTarget != shows { ring.isDropTarget = shows }
+            }
             return briefItem
         }
 
@@ -1279,7 +1294,7 @@ final class BriefItem: NSCollectionViewItem {
     }
 }
 
-final class BriefItemView: NSView {
+final class BriefItemView: NSView, DropRingCell {
 
     /// The cell is one surface as far as the mouse is concerned.
     ///

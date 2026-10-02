@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import XCTest
+import SwiftUI
 
 @testable import TotumComXLApp
 
@@ -67,6 +68,44 @@ final class FileListBriefViewTests: XCTestCase {
 
         XCTAssertEqual(spy.scrollCallCount, 1)
         XCTAssertEqual(spy.lastScrolledIndexPaths, [indexPath])
+    }
+
+    /// Рамка переноса не застревает на файлах. Список перезагружается посреди переноса
+    /// (перекраска по свежести раз в 15 с, изменения в папке) — раньше вид ячейки с рамкой
+    /// уезжал на другой файл, снималась рамка по номеру позиции с ДРУГОГО вида, и она
+    /// оставалась навсегда, перескакивая при каждом удалении.
+    func test_dropRingNeverSticksToFilesAcrossReloads() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("fcxl-ring-\(UUID().uuidString)")
+        try fm.createDirectory(at: root.appendingPathComponent("folder"), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        for i in 1...40 { try Data().write(to: root.appendingPathComponent(String(format: "img_%02d.png", i))) }
+        let vm = PanelViewModel(service: CoreBridgeService(), initialPath: root.path,
+                                pathDefaultsKey: "ring.\(UUID().uuidString)",
+                                viewModeDefaultsKey: "ringm.\(UUID().uuidString)", showHiddenFiles: true)
+        let host = NSHostingView(rootView: makeBriefView(viewModel: vm))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 260),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        let probe = try DropRingProbe(host: host, viewModel: vm, expectedCount: 42)
+        let folder = try XCTUnwrap(vm.items.firstIndex { $0.name == "folder" })
+        let coordinator = try XCTUnwrap(probe.collectionView.delegate as? FileListBriefView.Coordinator)
+
+        coordinator.updateDropHighlight(to: IndexPath(item: folder, section: 0), in: probe.collectionView)
+        XCTAssertEqual(probe.ringed(), ["folder"])
+
+        probe.collectionView.reloadData(); probe.settle()
+        XCTAssertEqual(probe.ringed(), ["folder"], "перезагрузка посреди переноса — рамка там же, на папке")
+        XCTAssertEqual(probe.ringViewCount(), 1)
+
+        coordinator.updateDropHighlight(to: nil, in: probe.collectionView)
+        XCTAssertEqual(probe.ringViewCount(), 0, "перенос кончился — рамки нет нигде")
+
+        for name in ["img_01.png", "img_02.png", "img_03.png"] {
+            try probe.delete(root.appendingPathComponent(name))
+            XCTAssertEqual(probe.ringViewCount(), 0, "удалили \(name) — рамка не всплыла")
+        }
+        withExtendedLifetime(window) {}
     }
 
     private func makeBriefView(viewModel: PanelViewModel) -> FileListBriefView {
@@ -165,3 +204,66 @@ private final class ScrollSpyCollectionView: NSCollectionView {
         layoutAttributes[indexPath]
     }
 }
+
+/// Список в окне без рамки: где сейчас рамка переноса и сколько видов её несут.
+@MainActor
+final class DropRingProbe {
+    let collectionView: NSCollectionView
+    private let host: NSView
+    private let viewModel: PanelViewModel
+
+    init(host: NSView, viewModel: PanelViewModel, expectedCount: Int) throws {
+        self.host = host
+        self.viewModel = viewModel
+        let deadline = Date().addingTimeInterval(5)
+        while viewModel.items.count < expectedCount, Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        host.layoutSubtreeIfNeeded()
+        func find(_ v: NSView) -> NSCollectionView? {
+            if let c = v as? NSCollectionView { return c }
+            for s in v.subviews { if let c = find(s) { return c } }
+            return nil
+        }
+        collectionView = try XCTUnwrap(find(host))
+    }
+
+    func settle() {
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        collectionView.layoutSubtreeIfNeeded()
+    }
+
+    /// Имена видимых файлов с рамкой.
+    func ringed() -> [String] {
+        collectionView.visibleItems().compactMap { item -> String? in
+            guard (item.view as? DropRingCell)?.isDropTarget == true,
+                  let ip = collectionView.indexPath(for: item),
+                  viewModel.items.indices.contains(ip.item) else { return nil }
+            return viewModel.items[ip.item].name
+        }
+    }
+
+    /// Все виды ячеек с рамкой — и видимые, и те, что ждут переиспользования внутри списка.
+    func ringViewCount() -> Int {
+        func walk(_ v: NSView) -> Int {
+            (((v as? DropRingCell)?.isDropTarget ?? false) ? 1 : 0) + v.subviews.reduce(0) { $0 + walk($1) }
+        }
+        return walk(collectionView)
+    }
+
+    /// Удалить файл и дождаться, пока список его уберёт.
+    func delete(_ url: URL) throws {
+        let before = viewModel.items.count
+        try FileManager.default.removeItem(at: url)
+        viewModel.loadDirectory(at: url.deletingLastPathComponent().path)
+        let deadline = Date().addingTimeInterval(3)
+        while viewModel.items.count >= before, Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        settle()
+    }
+}
+

@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import XCTest
+import SwiftUI
 
 @testable import TotumComXLApp
 
@@ -66,6 +67,37 @@ final class FileListThumbnailsViewTests: XCTestCase {
         coordinator.updateColumnsPerRow(forVisibleWidth: 340)
 
         XCTAssertEqual(capturedColumns, 3)
+    }
+
+    /// Та же рамка переноса в миниатюрах: после перезагрузки — только на папке, после
+    /// переноса и удалений — нигде.
+    func test_dropRingNeverSticksToFilesAcrossReloads() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("fcxl-ring-thumbs-\(UUID().uuidString)")
+        try fm.createDirectory(at: root.appendingPathComponent("folder"), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        for i in 1...20 { try Data().write(to: root.appendingPathComponent(String(format: "img_%02d.txt", i))) }
+        let vm = PanelViewModel(service: CoreBridgeService(), initialPath: root.path,
+                                pathDefaultsKey: "ringt.\(UUID().uuidString)",
+                                viewModeDefaultsKey: "ringtm.\(UUID().uuidString)", showHiddenFiles: true)
+        let host = NSHostingView(rootView: makeThumbnailsView(viewModel: vm))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 420),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        let probe = try DropRingProbe(host: host, viewModel: vm, expectedCount: 22)
+        let folder = try XCTUnwrap(vm.items.firstIndex { $0.name == "folder" })
+        let coordinator = try XCTUnwrap(probe.collectionView.delegate as? FileListThumbnailsView.Coordinator)
+
+        coordinator.updateDropHighlight(to: IndexPath(item: folder, section: 0), in: probe.collectionView)
+        XCTAssertEqual(probe.ringed(), ["folder"])
+        probe.collectionView.reloadData(); probe.settle()
+        XCTAssertEqual(probe.ringed(), ["folder"], "перезагрузка посреди переноса — рамка на папке")
+        XCTAssertEqual(probe.ringViewCount(), 1)
+        coordinator.updateDropHighlight(to: nil, in: probe.collectionView)
+        XCTAssertEqual(probe.ringViewCount(), 0)
+        try probe.delete(root.appendingPathComponent("img_01.txt"))
+        XCTAssertEqual(probe.ringViewCount(), 0)
+        withExtendedLifetime(window) {}
     }
 
     private func makeThumbnailsView(viewModel: PanelViewModel) -> FileListThumbnailsView {

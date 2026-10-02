@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// Куда лечь тому, что бросили в панель.
 ///
@@ -36,3 +36,42 @@ enum PanelDropTarget {
         folder?.path ?? currentPath
     }
 }
+
+/// Ячейка списка, умеющая рисовать рамку «сюда можно бросить».
+@MainActor
+protocol DropRingCell: AnyObject {
+    var isDropTarget: Bool { get set }
+}
+
+/// Рамка «сюда можно бросить» на папке под перетаскиваемым файлом — в кратком виде и в
+/// миниатюрах.
+///
+/// Рамка — свойство вида ячейки, а виды ячеек переиспользуются под разные файлы. Раньше её
+/// снимали по номеру позиции, с того вида, что стоит там СЕЙЧАС. Перезагрузка списка посреди
+/// переноса (перекраска по свежести раз в 15 с, изменения в папке) уносила вид с рамкой на
+/// другой файл, и там рамка оставалась навсегда, перескакивая при каждом удалении. Теперь
+/// ячейка решает сама при каждой настройке, а смена цели проходит по всем ячейкам списка.
+enum DropRing {
+    /// Рамка — только на той самой папке: та же позиция и тот же путь. Одной позиции мало:
+    /// после перезагрузки на ней может стоять уже другой файл.
+    static func shows(index: Int, path: String, targetIndex: Int?, targetPath: String?) -> Bool {
+        index == targetIndex && path == targetPath
+    }
+
+    /// Привести рамки всех ячеек списка к цели: видимым — по правилу, остальным (ждущим
+    /// переиспользования внутри списка) — снять.
+    @MainActor
+    static func apply(in collectionView: NSCollectionView, shows: (IndexPath) -> Bool) {
+        var decided = Set<ObjectIdentifier>()
+        for item in collectionView.visibleItems() {
+            guard let cell = item.view as? DropRingCell else { continue }
+            decided.insert(ObjectIdentifier(item.view))
+            let should = collectionView.indexPath(for: item).map(shows) ?? false
+            if cell.isDropTarget != should { cell.isDropTarget = should }
+        }
+        for view in collectionView.subviews where !decided.contains(ObjectIdentifier(view)) {
+            if let cell = view as? DropRingCell, cell.isDropTarget { cell.isDropTarget = false }
+        }
+    }
+}
+
