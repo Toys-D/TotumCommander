@@ -389,6 +389,13 @@ private struct ContextPopupRow: View {
                 if item.state == .on {
                     Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
                 }
+                // Клавиша пункта — только у тех, кто её несёт: меню заодно учит клавишам.
+                if let hint = (item as? ShortcutMenuItem)?.shortcutHint, !hint.isEmpty {
+                    Text(hint)
+                        .font(.system(size: ContextMenuSettings.fontSize - 1, weight: .medium))
+                        .tracking(1.5)
+                        .opacity(hovering ? 0.85 : 0.5)
+                }
                 if item.submenu != nil {
                     Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
                 }
@@ -424,4 +431,28 @@ private struct ContextPopupRow: View {
         out.unlockFocus()
         return out
     }
+}
+
+/// Пункт своего меню с действием-замыканием и подсказкой клавиши справа («⇧⌘D»).
+///
+/// Подсказка — обычный текст, не keyEquivalent: меню не стоит в строке меню, и настоящая
+/// клавиша обрабатывается там, где ей место (терминал ловит её сам).
+final class ShortcutMenuItem: NSMenuItem {
+    private(set) var shortcutHint = ""
+    private var handler: (() -> Void)?
+
+    convenience init(title: String, symbolName: String, shortcutHint: String,
+                     enabled: Bool = true, handler: @escaping () -> Void) {
+        self.init(title: title, action: #selector(run), keyEquivalent: "")
+        target = self
+        self.handler = handler
+        self.shortcutHint = shortcutHint
+        isEnabled = enabled
+        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
+            image.isTemplate = true
+            self.image = image
+        }
+    }
+
+    @objc func run() { handler?() }
 }

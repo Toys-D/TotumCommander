@@ -18,6 +18,8 @@ struct TabChipView: View {
     let onPinViewMode: (() -> Void)?
     let onUnpinViewMode: (() -> Void)?
     var isLoading: Bool = false
+    /// «Новый терминал» в меню вкладки — вкладка терминала в этой панели.
+    var onNewTerminal: (() -> Void)? = nil
 
     @AppStorage("tabFontSize") private var tabFontSize: Double = 13
     @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
@@ -203,6 +205,11 @@ struct TabChipView: View {
         if let onNewTab {
             menu.addActionItem(title: L("tabs.newTab"), symbolName: "plus") {
                 onNewTab()
+            }
+        }
+        if let onNewTerminal {
+            menu.addActionItem(title: L("tabs.newTerminal"), symbolName: "terminal") {
+                onNewTerminal()
             }
         }
         if onRename != nil {
@@ -397,6 +404,16 @@ private final class TabMenuActionTarget: NSObject {
     @objc func invoke(_ sender: NSMenuItem) { action() }
 }
 
+/// Меню правого щелчка по «+» на полосе вкладок: новая вкладка или новый терминал.
+enum TabBarMenus {
+    static func newTabMenu(onNewTab: @escaping () -> Void, onNewTerminal: @escaping () -> Void) -> NSMenu {
+        let menu = NSMenu()
+        menu.addActionItem(title: L("tabs.newTab"), symbolName: "plus", action: onNewTab)
+        menu.addActionItem(title: L("tabs.newTerminal"), symbolName: "terminal", action: onNewTerminal)
+        return menu
+    }
+}
+
 private extension NSMenu {
     func addActionItem(title: String, symbolName: String, action: @escaping () -> Void) {
         let target = TabMenuActionTarget(action: action)
@@ -415,7 +432,7 @@ private extension NSMenu {
 /// use. A native NSMenu opens its submenus on hover and closes the whole menu when the parent
 /// row is clicked; ours opens them on click, and the two menus in the app must not disagree
 /// about that. The menu is built at click time rather than on every SwiftUI render.
-private struct TabContextMenuHelper: NSViewRepresentable {
+struct TabContextMenuHelper: NSViewRepresentable {
     let makeMenu: () -> NSMenu
 
     func makeNSView(context: Context) -> NSView {

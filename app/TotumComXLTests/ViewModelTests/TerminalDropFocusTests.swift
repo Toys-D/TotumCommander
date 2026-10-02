@@ -14,6 +14,9 @@ final class TerminalDropFocusTests: XCTestCase {
     override func setUpWithError() throws {
         folder = NSTemporaryDirectory() + "бросок-\(UUID().uuidString)"
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        // Оболочка тестов — со своими настройками и историей во временной папке: настоящий
+        // ~/.zsh_history не трогаем (zsh переписывает его при выходе).
+        setenv("ZDOTDIR", folder, 1)
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
                           styleMask: .borderless, backing: .buffered, defer: false)
         container = SwiftTermContainerView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
@@ -25,6 +28,7 @@ final class TerminalDropFocusTests: XCTestCase {
 
     override func tearDown() {
         container?.terminateProcess()
+        unsetenv("ZDOTDIR")
         try? FileManager.default.removeItem(atPath: folder)
         super.tearDown()
     }

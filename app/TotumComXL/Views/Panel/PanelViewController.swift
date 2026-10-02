@@ -252,8 +252,10 @@ final class PanelViewController: NSViewController,
     private var alternateHosting: NSHostingView<AnyView>?
     private var alternateTopConstraint: NSLayoutConstraint?
     private var alternateBottomConstraint: NSLayoutConstraint?
-    private var terminalContainers: [UUID: SwiftTermContainerView] = [:]
+    private var terminalContainers: [UUID: TerminalSplitView] = [:]
     private var activeTerminalID: UUID?
+    /// Файловая вкладка, с которой пришли в терминал: спрятать терминал — вернуться на неё.
+    private var tabBeforeTerminal: UUID?
     private var monitorHosting: NSHostingView<AnyView>?
     private(set) var isMonitorMode = false
     private lazy var monitorService = SystemMonitorService()
@@ -426,7 +428,11 @@ final class PanelViewController: NSViewController,
             onShowFavorites: { [weak self] in
                 self?.showFavoriteFoldersMenu(at: NSEvent.mouseLocation)
             },
-            currentViewModeRaw: viewModel.viewMode.rawValue
+            currentViewModeRaw: viewModel.viewMode.rawValue,
+            onNewTerminal: { [weak self] in
+                guard let self else { return }
+                self.openNewTerminalTab(directory: self.viewModel.currentPath)
+            }
         )
         tabBarHosting = NSHostingView(rootView: tabBar)
         tabBarHosting.translatesAutoresizingMaskIntoConstraints = false
@@ -2242,6 +2248,7 @@ final class PanelViewController: NSViewController,
 
         tabsVM.selectTab(at: index)
         let tab = tabsVM.activeTab
+        if tab.isTerminal, !oldTab.isTerminal { tabBeforeTerminal = oldTab.id }
         viewModel.scrollOnCursorChange = true
         // Другая вкладка — другой показ: сортировка решается заново, даже для той же папки.
         viewModel.forgetAdoptedSort()
@@ -2304,7 +2311,10 @@ final class PanelViewController: NSViewController,
             if viewModel.insideRemote {
                 viewModel.suspendRemote()
             }
-            viewModel.loadDirectory(at: tab.path)
+            // Из терминала — туда, где панель и стояла. Закреплённая вкладка помнит только свой
+            // корень, и спрятанный терминал возвращал её из глубины папок в начало.
+            let backFromTerminal = oldTab.isTerminal && tab.id == tabBeforeTerminal
+            viewModel.loadDirectory(at: backFromTerminal ? viewModel.currentPath : tab.path)
         }
 
         // Apply saved viewMode after layout settles
@@ -2347,27 +2357,63 @@ final class PanelViewController: NSViewController,
         handleCloseTab(index)
     }
 
+    /// Закрыть вкладку терминала по её номеру — последняя часть вышла или закрыта.
+    func closeTerminalTab(id: UUID) {
+        guard let index = tabsVM.tabs.firstIndex(where: { $0.id == id }) else { return }
+        handleCloseTab(index)
+    }
+
+    /// Новая вкладка терминала в этой панели — рядом с текущей, в папке `directory`.
+    func openNewTerminalTab(directory: String) {
+        if !tabsVM.activeTab.isTerminal { tabBeforeTerminal = tabsVM.activeTab.id }
+        tabsVM.newTerminalTab(directory: directory)
+        handleSelectTab(tabsVM.activeIndex)
+    }
+
+    /// Вкладки терминала этой панели — по порядку.
+    var terminalTabIDs: [UUID] { tabsVM.tabs.filter(\.isTerminal).map(\.id) }
+
+    /// Терминал, который панель показывает сейчас.
+    var visibleTerminalTabID: UUID? { tabsVM.activeTab.isTerminal ? tabsVM.activeTab.id : nil }
+
+    /// Клавиатура в показанном терминале этой панели.
+    var terminalHoldsKeyboard: Bool {
+        guard let id = visibleTerminalTabID, let split = terminalContainers[id],
+              let responder = view.window?.firstResponder as? NSView else { return false }
+        return responder.isDescendant(of: split)
+    }
+
+    /// Показать вкладку терминала, не закрывая других.
+    func showTerminalTab(id: UUID) {
+        guard let index = tabsVM.tabs.firstIndex(where: { $0.id == id }) else { return }
+        handleSelectTab(index)
+    }
+
+    /// Спрятать показанный терминал: панель возвращается на файловую вкладку, с которой пришли
+    /// (её закрыли — на ближайшую), оболочки работают дальше.
+    func hideVisibleTerminalTab() {
+        guard tabsVM.activeTab.isTerminal else { return }
+        if let back = tabBeforeTerminal,
+           let index = tabsVM.tabs.firstIndex(where: { $0.id == back && !$0.isTerminal }) {
+            handleSelectTab(index)
+        } else if let index = tabsVM.nearestFileTabIndex(from: tabsVM.activeIndex) {
+            handleSelectTab(index)
+        } else {
+            tabsVM.newTab(path: viewModel.currentPath)
+            handleSelectTab(tabsVM.activeIndex)
+        }
+    }
+
     // MARK: - Embedded Terminal
 
     /// Hand the keyboard to the terminal inside `container` — the mirror of what switching to
     /// a folder tab does for the file list. Choosing the terminal TAB is choosing to type into
     /// it; making the person click into the window first was an extra step with no meaning.
     /// Async because the view may have just been added and not yet be in the window.
-    private func focusTerminal(in container: NSView) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let window = self.view.window,
-                  let terminal = Self.findTerminalView(in: container) else { return }
-            window.makeFirstResponder(terminal)
+    private func focusTerminal(in container: TerminalSplitView) {
+        DispatchQueue.main.async { [weak container] in
+            container?.focusActivePane()
         }
-    }
-
-    /// The SwiftTerm view buried inside the container's hosting hierarchy.
-    private static func findTerminalView(in root: NSView) -> NSView? {
-        if root.className.contains("TerminalView") { return root }
-        for subview in root.subviews {
-            if let found = findTerminalView(in: subview) { return found }
-        }
-        return nil
     }
 
     private func showEmbeddedTerminal(tabID: UUID, directory: String) {
@@ -2392,8 +2438,11 @@ final class PanelViewController: NSViewController,
         }
 
         // Create new terminal — same position as scrollView (between sortBar and statusBar)
-        let term = SwiftTermContainerView(frame: .zero)
+        let term = TerminalSplitView(directory: directory)
         term.translatesAutoresizingMaskIntoConstraints = false
+        // Последняя часть закрыта (⌘W или exit) — закрывается и вкладка.
+        term.onEmpty = { [weak self] in self?.closeTerminalTab(id: tabID) }
+        term.onNewTerminal = { [weak self] directory in self?.openNewTerminalTab(directory: directory) }
         view.addSubview(term)
 
         NSLayoutConstraint.activate([
@@ -2403,7 +2452,7 @@ final class PanelViewController: NSViewController,
             term.bottomAnchor.constraint(equalTo: statusBarHosting.topAnchor)
         ])
 
-        term.startTerminal(directory: directory)
+        term.start()
         TerminalProcessRegistry.shared.register(term, for: tabID)
         terminalContainers[tabID] = term
         activeTerminalID = tabID
@@ -2532,6 +2581,12 @@ final class PanelViewController: NSViewController,
         }
 
         tabsVM.closeTab(at: index)
+        // Закрыли показанный терминал — назад на вкладку, с которой в него пришли, а не на
+        // соседнюю: терминал открывают «отсюда», и закрывают, чтобы сюда же вернуться.
+        if closingTab.isTerminal, isClosingActiveTab, let back = tabBeforeTerminal,
+           let backIndex = tabsVM.tabs.firstIndex(where: { $0.id == back }) {
+            tabsVM.selectTab(at: backIndex)
+        }
         let newTab = tabsVM.activeTab
         viewModel.scrollOnCursorChange = true
 
@@ -2547,7 +2602,9 @@ final class PanelViewController: NSViewController,
             if viewModel.insideRemote {
                 viewModel.exitRemote()
             } else {
-                viewModel.loadDirectory(at: newTab.path)
+                // Закрыли терминал — панель остаётся в своей папке, как при «спрятать».
+                let backFromTerminal = closingTab.isTerminal && newTab.id == tabBeforeTerminal
+                viewModel.loadDirectory(at: backFromTerminal ? viewModel.currentPath : newTab.path)
             }
         }
 
@@ -2570,7 +2627,11 @@ final class PanelViewController: NSViewController,
             onShowFavorites: { [weak self] in
                 self?.showFavoriteFoldersMenu(at: NSEvent.mouseLocation)
             },
-            currentViewModeRaw: viewModel.viewMode.rawValue
+            currentViewModeRaw: viewModel.viewMode.rawValue,
+            onNewTerminal: { [weak self] in
+                guard let self else { return }
+                self.openNewTerminalTab(directory: self.viewModel.currentPath)
+            }
         )
         tabBarHosting.rootView = tabBar
     }

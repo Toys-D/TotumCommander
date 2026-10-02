@@ -172,6 +172,16 @@ final class PanelTabsViewModel: ObservableObject {
         return nil
     }
 
+    /// Ближайшая вкладка, которая не терминал — куда вернуться, пряча терминал.
+    func nearestFileTabIndex(from index: Int) -> Int? {
+        let isFile = { (i: Int) in self.tabs.indices.contains(i) && !self.tabs[i].isTerminal }
+        for step in 1..<max(tabs.count, 2) {
+            if isFile(index - step) { return index - step }
+            if isFile(index + step) { return index + step }
+        }
+        return nil
+    }
+
     func newTab(path: String) {
         let tab = PanelTab(path: path)
         tabs.insert(tab, at: activeIndex + 1)

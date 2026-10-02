@@ -39,146 +39,30 @@ enum TerminalInputSourceHelper {
 
 // MARK: - Terminal Process Registry
 
-/// Keeps track of all live SwiftTermContainerView instances so we can
-/// terminate their shell processes when the owning tab is closed.
+/// Keeps track of every live terminal — a tab's (or the bottom strip's) split view with all its
+/// parts — so their shell processes stop when the owning tab is closed.
 @MainActor
 final class TerminalProcessRegistry {
     static let shared = TerminalProcessRegistry()
     /// Fixed UUID for the bottom terminal panel (singleton).
     static let bottomTerminalID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
-    private var views: [UUID: SwiftTermContainerView] = [:]
+    private var views: [UUID: TerminalSplitView] = [:]
 
-    func register(_ view: SwiftTermContainerView, for tabID: UUID) {
+    func register(_ view: TerminalSplitView, for tabID: UUID) {
         views[tabID] = view
     }
 
-    /// Return existing container for this tab (to reuse across SwiftUI re-renders).
-    func existing(for tabID: UUID) -> SwiftTermContainerView? {
-        views[tabID]
-    }
-
-
-
+    /// Stop every part of this tab's terminal.
     func terminate(tabID: UUID) {
         if let view = views[tabID] {
-            view.terminateProcess()
+            view.terminateAll()
             views[tabID] = nil
         }
     }
 
     func terminateAll() {
-        for (_, view) in views { view.terminateProcess() }
+        for (_, view) in views { view.terminateAll() }
         views.removeAll()
-    }
-}
-
-/// SwiftUI wrapper for an embedded terminal panel powered by SwiftTerm.
-struct TerminalPanelView: View {
-    let initialDirectory: String
-    @Binding var panelHeight: CGFloat
-    @State private var isDragging = false
-
-    var body: some View {
-        VStack(spacing: 0) {
-            TerminalResizeHandle(panelHeight: $panelHeight, isDragging: $isDragging)
-            ZStack {
-                SwiftTermRepresentable(initialDirectory: initialDirectory, frozen: isDragging)
-                if isDragging {
-                    Rectangle()
-                        .fill(Color(nsColor: NSColor(white: 0.08, alpha: 1.0)))
-                        .allowsHitTesting(false)
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Resize Handle
-
-private struct TerminalResizeHandle: View {
-    @Binding var panelHeight: CGFloat
-    @Binding var isDragging: Bool
-    @State private var dragStartY: CGFloat?
-    @State private var dragStartHeight: CGFloat?
-
-    var body: some View {
-        Rectangle()
-            .fill(Color(nsColor: .separatorColor))
-            .frame(height: 5)
-            .contentShape(Rectangle())
-            .cursor(.resizeUpDown)
-            .gesture(
-                DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                    .onChanged { value in
-                        if dragStartY == nil {
-                            dragStartY = value.startLocation.y
-                            dragStartHeight = panelHeight
-                            isDragging = true
-                        }
-                        let delta = dragStartY! - value.location.y
-                        panelHeight = max(80, min(600, dragStartHeight! + delta))
-                    }
-                    .onEnded { _ in
-                        dragStartY = nil
-                        dragStartHeight = nil
-                        isDragging = false
-                    }
-            )
-    }
-}
-
-private extension View {
-    func cursor(_ cursor: NSCursor) -> some View {
-        onHover { inside in
-            if inside {
-                cursor.push()
-            } else {
-                NSCursor.pop()
-            }
-        }
-    }
-}
-
-// MARK: - Embeddable Terminal View (for panel tabs)
-
-/// Standalone terminal view for embedding in panel tabs.
-struct EmbeddedTerminalView: NSViewRepresentable {
-    let initialDirectory: String
-    let tabID: UUID
-
-    func makeNSView(context: Context) -> SwiftTermContainerView {
-        // Reuse existing terminal to preserve history across tab switches
-        if let existing = TerminalProcessRegistry.shared.existing(for: tabID) {
-            return existing
-        }
-        let view = SwiftTermContainerView()
-        view.startTerminal(directory: initialDirectory)
-        TerminalProcessRegistry.shared.register(view, for: tabID)
-        return view
-    }
-
-    func updateNSView(_ nsView: SwiftTermContainerView, context: Context) {}
-}
-
-// MARK: - NSViewRepresentable
-
-private struct SwiftTermRepresentable: NSViewRepresentable {
-    let initialDirectory: String
-    let frozen: Bool
-
-    func makeNSView(context: Context) -> SwiftTermContainerView {
-        // Reuse existing bottom terminal to preserve history
-        if let existing = TerminalProcessRegistry.shared.existing(for: TerminalProcessRegistry.bottomTerminalID) {
-            return existing
-        }
-        let view = SwiftTermContainerView()
-        view.startTerminal(directory: initialDirectory)
-        TerminalProcessRegistry.shared.register(view, for: TerminalProcessRegistry.bottomTerminalID)
-        return view
-    }
-
-    func updateNSView(_ nsView: SwiftTermContainerView, context: Context) {
-        nsView.setFrozen(frozen)
     }
 }
 
@@ -201,6 +85,13 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
     private var isDropTarget = false {
         didSet { updateDropHighlight() }
     }
+    /// Оболочка вышла сама (`exit`): часть закрывается. Не зовётся, когда процесс останавливаем мы.
+    var onProcessExit: (() -> Void)?
+    /// Часть выбрали — щелчком или броском файла: она становится активной в своём разделении.
+    var onActivated: (() -> Void)?
+    /// Меню правого щелчка (и ⌃-щелчка) по терминалу; nil — щелчок уходит дальше.
+    var makeContextMenu: (() -> NSMenu?)?
+    private var contextMenuMonitor: Any?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -214,6 +105,7 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
     /// Terminate the shell process when this view is deallocated (tab closed).
     deinit {
         if let clickFocusMonitor { NSEvent.removeMonitor(clickFocusMonitor) }
+        if let contextMenuMonitor { NSEvent.removeMonitor(contextMenuMonitor) }
         let tv = localTermView
         MainActor.assumeIsolated {
             tv?.terminate()
@@ -222,6 +114,8 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
 
     /// Explicitly terminate the shell process (e.g. when closing a tab).
     func terminateProcess() {
+        // Сами останавливаем — это не выход оболочки, часть уже убирают.
+        onProcessExit = nil
         guard let tv = localTermView else { return }
         // Send SIGHUP to the entire process group (kills shell + its children)
         let pid = tv.process.shellPid
@@ -232,6 +126,41 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
         tv.terminate()
         removeClickToFocus()
         localTermView = nil
+    }
+
+    /// Отдать клавиатуру этой части.
+    @discardableResult
+    func takeKeyboard() -> Bool {
+        guard let tv = localTermView, let window else { return false }
+        return window.makeFirstResponder(tv)
+    }
+
+    /// Держит ли эта часть клавиатуру — сама или что-то внутри неё.
+    var holdsKeyboard: Bool {
+        guard let responder = window?.firstResponder as? NSView else { return false }
+        return responder.isDescendant(of: self)
+    }
+
+    /// Папка, в которой оболочка стоит сейчас: после `cd` новая часть открывается там же.
+    /// Оболочка не обязана сообщать о смене папки, поэтому спрашиваем систему о процессе.
+    var workingDirectory: String {
+        if let pid = localTermView?.process.shellPid,
+           let directory = Self.directory(ofProcess: pid) {
+            return directory
+        }
+        return currentDirectory
+    }
+
+    /// Текущая папка процесса — у системы, по номеру процесса.
+    nonisolated static func directory(ofProcess pid: pid_t) -> String? {
+        guard pid > 0 else { return nil }
+        var info = proc_vnodepathinfo()
+        let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return nil }
+        let path = withUnsafeBytes(of: &info.pvi_cdir.vip_path) { raw in
+            String(cString: raw.bindMemory(to: CChar.self).baseAddress!)
+        }
+        return path.isEmpty ? nil : path
     }
 
     /// Send a raw byte (e.g. control code) to the terminal process.
@@ -285,8 +214,9 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
         // plus PATH and HOME for a working shell
         var env = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true)
         let currentEnv = ProcessInfo.processInfo.environment
-        // Ensure essential vars are present
-        for key in ["PATH", "HOME", "SHELL", "TMPDIR"] {
+        // Ensure essential vars are present. ZDOTDIR — where zsh keeps its .zshrc and history,
+        // when someone moved them (and where the tests put them, away from the real ones).
+        for key in ["PATH", "HOME", "SHELL", "TMPDIR", "ZDOTDIR"] {
             if let val = currentEnv[key] {
                 env.append("\(key)=\(val)")
             }
@@ -307,6 +237,7 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
         }
 
         installClickToFocus(on: tv)
+        installContextMenu(on: tv)
     }
 
     /// Clicking anywhere in the terminal hands it the keyboard. The event is passed on untouched,
@@ -314,14 +245,17 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
     private func installClickToFocus(on tv: LocalProcessTerminalView) {
         guard clickFocusMonitor == nil else { return }
         clickFocusMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) {
-            [weak tv] event in
+            [weak self, weak tv] event in
+            // Спрятанный терминал (нижняя полоса в режиме «Прятать») лежит поверх панелей
+            // невидимым — щелчок по списку там не должен отдавать ему клавиатуру.
             guard let tv, let window = tv.window,
-                  event.window === window, !tv.isHidden, tv.superview != nil,
+                  event.window === window, !tv.isHiddenOrHasHiddenAncestor, tv.superview != nil,
                   window.firstResponder !== tv
             else { return event }
             let inTerminal = tv.convert(event.locationInWindow, from: nil)
             if tv.bounds.contains(inTerminal) {
                 window.makeFirstResponder(tv)
+                self?.onActivated?()
             }
             return event
         }
@@ -332,7 +266,37 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
             NSEvent.removeMonitor(clickFocusMonitor)
             self.clickFocusMonitor = nil
         }
+        if let contextMenuMonitor {
+            NSEvent.removeMonitor(contextMenuMonitor)
+            self.contextMenuMonitor = nil
+        }
     }
+
+    /// Правый щелчок (или ⌃-щелчок) по терминалу — своё меню программы. Сам SwiftTerm меню
+    /// не показывает, а мышью удобнее, чем держать в голове клавиши.
+    private func installContextMenu(on tv: LocalProcessTerminalView) {
+        guard contextMenuMonitor == nil else { return }
+        contextMenuMonitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) {
+            [weak self, weak tv] event in
+            guard let self, let tv, let window = tv.window, event.window === window,
+                  !tv.isHiddenOrHasHiddenAncestor,
+                  event.type == .rightMouseDown || event.modifierFlags.contains(.control),
+                  tv.bounds.contains(tv.convert(event.locationInWindow, from: nil)),
+                  let menu = self.makeContextMenu?()
+            else { return event }
+            window.makeFirstResponder(tv)
+            self.onActivated?()
+            ContextPopupMenuController.shared.show(menu, at: window.convertPoint(toScreen: event.locationInWindow))
+            return nil
+        }
+    }
+
+    /// Выделено ли что-нибудь в терминале — есть ли что копировать.
+    var hasSelection: Bool { localTermView?.selectionActive ?? false }
+
+    func copySelection() { localTermView?.copy(self) }
+
+    func pasteClipboard() { localTermView?.paste(self) }
 
     func changeDirectory(_ path: String) {
         guard let tv = localTermView, path != currentDirectory else { return }
@@ -392,6 +356,7 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
             window.makeKey()
         }
         window.makeFirstResponder(tv)
+        onActivated?()
         return true
     }
 
@@ -443,6 +408,11 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
 
     nonisolated func processTerminated(source: SwiftTerm.TerminalView, exitCode: Int32?) {
         Task { @MainActor in
+            // В разделении часть просто закрывается — как вкладка в iTerm после `exit`.
+            if let onProcessExit = self.onProcessExit {
+                onProcessExit()
+                return
+            }
             let msg = "\r\n[Process exited with code \(exitCode ?? -1)]\r\n"
             self.localTermView?.feed(text: msg)
         }

@@ -471,6 +471,9 @@ let package = Package(
                 "Services/NotificationService.swift",
                 "Services/OperationLogService.swift",
                 "Views/Common/OperationLogView.swift",
+                "Views/Terminal/TerminalLayout.swift",
+                "Views/Terminal/TerminalSplitView.swift",
+                "Views/Terminal/TerminalToggle.swift",
                 "Views/Terminal/TerminalView.swift"
             ],
             resources: [
@@ -622,6 +625,9 @@ let package = Package(
                 "ViewModelTests/ColumnOrderTests.swift",
                 "ViewModelTests/ExternalTerminalTests.swift",
                 "ViewModelTests/TerminalDropFocusTests.swift",
+                "ViewModelTests/TerminalLayoutTests.swift",
+                "ViewModelTests/TerminalToggleTests.swift",
+                "ViewModelTests/TerminalSplitViewTests.swift",
                 "ViewModelTests/DiskImageOpenModeTests.swift",
                 "ViewModelTests/SpotlightQueryTests.swift",
                 "ViewModelTests/NameCellEditingTests.swift",

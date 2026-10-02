@@ -45,9 +45,15 @@ enum SettingsSearchIndex {
         ],
         .terminal: [
             ("settings.terminalPlacement", "settings.section.terminal"),
+            ("settings.terminalToggleAction", "settings.section.terminal"),
             ("settings.externalTerminal", "settings.section.terminal"),
             ("settings.keys.terminal", "settings.section.terminal"),
             ("settings.terminal.shortcut", "settings.section.terminal"),
+            ("settings.terminal.splitSideBySide", "settings.section.terminal"),
+            ("settings.terminal.splitStacked", "settings.section.terminal"),
+            ("settings.terminal.movePane", "settings.section.terminal"),
+            ("settings.terminal.closePane", "settings.section.terminal"),
+            ("settings.terminal.newTab", "settings.section.terminal"),
         ],
         .list: [
             ("settings.sort.field", nil),

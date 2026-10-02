@@ -9,6 +9,8 @@ struct PanelTabsBarView: View {
     /// The favourites, dropped from the star beside the plus.
     var onShowFavorites: () -> Void = {}
     var currentViewModeRaw: String = ""
+    /// Новая вкладка терминала — пункт меню вкладки и правого щелчка по «+».
+    var onNewTerminal: (() -> Void)? = nil
 
     @AppStorage("tabBarHeight") private var tabBarHeight: Double = 32
     @AppStorage("tabBarSpacing") private var tabBarSpacing: Double = 10
@@ -79,7 +81,8 @@ struct PanelTabsBarView: View {
                                 onRename: { tabsVM.renameTab(at: index, to: $0) },
                                 onPinViewMode: { tabsVM.pinViewMode(at: index, mode: currentViewModeRaw) },
                                 onUnpinViewMode: { tabsVM.unpinViewMode(at: index) },
-                                isLoading: tabsVM.loadingTabIDs.contains(tab.id)
+                                isLoading: tabsVM.loadingTabIDs.contains(tab.id),
+                                onNewTerminal: onNewTerminal
                             )
                             .frame(width: chipWidth)
                             .onDrop(of: [.text], delegate: TabDropDelegate(
@@ -128,6 +131,14 @@ struct PanelTabsBarView: View {
             }
             .buttonStyle(.plain)
             .onHover { hoveringPlus = $0 }
+            // Правый щелчок — выбор: файловая вкладка или терминал. Левый — как всегда.
+            .overlay {
+                if let onNewTerminal {
+                    TabContextMenuHelper(makeMenu: {
+                        TabBarMenus.newTabMenu(onNewTab: onNewTab, onNewTerminal: onNewTerminal)
+                    })
+                }
+            }
             .frame(width: plusButtonWidth, height: tabBarHeight)
         }
         .frame(height: tabBarHeight)

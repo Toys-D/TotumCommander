@@ -3049,51 +3049,114 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
 
     // MARK: - Terminal
 
+    /// Терминал, который спрятали последним, — ⌘` возвращает именно его.
+    private var lastHiddenTerminal: TerminalSpot?
+
+    private var containerVC: MainContainerViewController? {
+        window?.contentViewController as? MainContainerViewController
+    }
+
+    /// ⌘` и кнопка терминала. Видимый терминал прячется или закрывается — как выбрано в
+    /// настройках; спрятанный возвращается; нет ни одного — открывается по месту из настроек.
     private func handleTerminal() {
-        // If ANY terminal is already open anywhere — close it and return
-        if closeAnyOpenTerminal() { return }
+        let mode = TerminalToggleMode.current()
+        let hidden = TerminalToggle.hiddenOrder(all: hiddenTerminals(), lastHidden: lastHiddenTerminal)
+        switch TerminalToggle.step(mode: mode, visible: visibleTerminals(), hidden: hidden) {
+        case .hide(let spot): hideTerminal(spot)
+        case .close(let spot): closeTerminal(spot)
+        case .show(let spot): showTerminal(spot)
+        case .open: openTerminalByPlacement()
+        }
+    }
 
-        // No terminal open — open one according to the setting
-        let terminalPlacement = UserDefaults.standard.string(forKey: "terminalPlacement") ?? "ask"
-
-        switch terminalPlacement {
+    private func openTerminalByPlacement() {
+        switch UserDefaults.standard.string(forKey: "terminalPlacement") ?? "ask" {
         case "bottom":
-            handleTerminalBottom()
+            containerVC?.showBottomTerminal(directory: splitVC.activePanelViewModel.currentPath)
         case "activePanel":
-            handleTerminalActive()
+            openNewTerminalTab(in: splitVC.activePanel)
         case "leftPanel":
-            handleTerminalInPanel(.left)
+            openNewTerminalTab(in: .left)
         case "rightPanel":
-            handleTerminalInPanel(.right)
+            openNewTerminalTab(in: .right)
         default:
             // "ask" — показать меню выбора размещения
             showTerminalPlacementMenu()
         }
     }
 
-    /// Check all places where a terminal can be open, close the first one found.
-    /// Returns true if a terminal was closed.
-    private func closeAnyOpenTerminal() -> Bool {
-        // 1. Bottom terminal
-        if let containerVC = window?.contentViewController as? MainContainerViewController,
-           containerVC.isBottomTerminalVisible {
-            containerVC.hideBottomTerminal()
-            return true
-        }
+    private func panelVC(_ side: MainSplitViewController.PanelSide) -> PanelViewController {
+        side == .left ? splitVC.leftPanelVC : splitVC.rightPanelVC
+    }
 
-        // 2. Terminal tab in left panel
-        if let idx = splitVC.leftTabsVM.tabs.firstIndex(where: { $0.isTerminal }) {
-            splitVC.leftPanelVC.closeTerminalTab(at: idx)
-            return true
-        }
+    private func spot(_ side: MainSplitViewController.PanelSide, _ id: UUID) -> TerminalSpot {
+        side == .left ? .left(id) : .right(id)
+    }
 
-        // 3. Terminal tab in right panel
-        if let idx = splitVC.rightTabsVM.tabs.firstIndex(where: { $0.isTerminal }) {
-            splitVC.rightPanelVC.closeTerminalTab(at: idx)
-            return true
-        }
+    /// Панели в порядке важности: активная, потом другая.
+    private var panelSidesByPriority: [MainSplitViewController.PanelSide] {
+        splitVC.activePanel == .left ? [.left, .right] : [.right, .left]
+    }
 
-        return false
+    /// Показанные терминалы; первым — тот, где клавиатура.
+    private func visibleTerminals() -> [TerminalSpot] {
+        var spots: [(spot: TerminalSpot, focused: Bool)] = []
+        if let containerVC, containerVC.isBottomTerminalVisible {
+            spots.append((.bottom, containerVC.bottomTerminalHoldsKeyboard))
+        }
+        for side in panelSidesByPriority {
+            let panel = panelVC(side)
+            if let id = panel.visibleTerminalTabID {
+                spots.append((spot(side, id), panel.terminalHoldsKeyboard))
+            }
+        }
+        return spots.filter(\.focused).map(\.spot) + spots.filter { !$0.focused }.map(\.spot)
+    }
+
+    /// Живые, но спрятанные терминалы: нижняя полоса и вкладки терминала, не показанные сейчас.
+    private func hiddenTerminals() -> [TerminalSpot] {
+        var spots: [TerminalSpot] = []
+        if let containerVC, containerVC.hasBottomTerminal, !containerVC.isBottomTerminalVisible {
+            spots.append(.bottom)
+        }
+        for side in panelSidesByPriority {
+            let panel = panelVC(side)
+            for id in panel.terminalTabIDs where id != panel.visibleTerminalTabID {
+                spots.append(spot(side, id))
+            }
+        }
+        return spots
+    }
+
+    private func hideTerminal(_ spot: TerminalSpot) {
+        lastHiddenTerminal = spot
+        switch spot {
+        case .bottom: containerVC?.hideBottomTerminal()
+        case .left: splitVC.leftPanelVC.hideVisibleTerminalTab()
+        case .right: splitVC.rightPanelVC.hideVisibleTerminalTab()
+        }
+    }
+
+    private func closeTerminal(_ spot: TerminalSpot) {
+        switch spot {
+        case .bottom: containerVC?.closeBottomTerminal()
+        case .left(let id): splitVC.leftPanelVC.closeTerminalTab(id: id)
+        case .right(let id): splitVC.rightPanelVC.closeTerminalTab(id: id)
+        }
+    }
+
+    private func showTerminal(_ spot: TerminalSpot) {
+        switch spot {
+        case .bottom:
+            containerVC?.showBottomTerminal(directory: splitVC.activePanelViewModel.currentPath)
+        case .left(let id): splitVC.leftPanelVC.showTerminalTab(id: id)
+        case .right(let id): splitVC.rightPanelVC.showTerminalTab(id: id)
+        }
+    }
+
+    private func openNewTerminalTab(in side: MainSplitViewController.PanelSide) {
+        let vm = side == .left ? splitVC.leftPanelVM : splitVC.rightPanelVM
+        panelVC(side).openNewTerminalTab(directory: vm.currentPath)
     }
 
     private func showTerminalPlacementMenu() {
@@ -3118,38 +3181,36 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
     @objc private func terminalMenuLeft()   { handleTerminalInPanel(.left) }
     @objc private func terminalMenuRight()  { handleTerminalInPanel(.right) }
 
+    /// Нижний терминал из меню размещения: видимый — спрятать или закрыть по настройке,
+    /// спрятанный — вернуть, нет — открыть.
     private func handleTerminalBottom() {
-        guard let containerVC = window?.contentViewController as? MainContainerViewController else { return }
-        containerVC.toggleBottomTerminal(directory: splitVC.activePanelViewModel.currentPath)
+        guard let containerVC else { return }
+        if containerVC.isBottomTerminalVisible {
+            TerminalToggleMode.current() == .hide ? hideTerminal(.bottom) : closeTerminal(.bottom)
+        } else {
+            containerVC.showBottomTerminal(directory: splitVC.activePanelViewModel.currentPath)
+        }
     }
 
     func handleTerminalShortcut() { handleTerminal() }
 
     private func handleTerminalActive() {
-        let isLeft = splitVC.activePanel == .left
-        openTerminalAsTab(in: isLeft ? splitVC.leftTabsVM : splitVC.rightTabsVM,
-                          panelVM: isLeft ? splitVC.leftPanelVM : splitVC.rightPanelVM)
+        handleTerminalInPanel(splitVC.activePanel)
     }
 
+    /// Терминал в панели из меню размещения: показанный — спрятать или закрыть по настройке;
+    /// спрятанный в этой панели — вернуть (последний спрятанный первым); нет — открыть новый.
     private func handleTerminalInPanel(_ side: MainSplitViewController.PanelSide) {
-        switch side {
-        case .left:
-            openTerminalAsTab(in: splitVC.leftTabsVM, panelVM: splitVC.leftPanelVM)
-        case .right:
-            openTerminalAsTab(in: splitVC.rightTabsVM, panelVM: splitVC.rightPanelVM)
+        let panel = panelVC(side)
+        if let id = panel.visibleTerminalTabID {
+            TerminalToggleMode.current() == .hide ? hideTerminal(spot(side, id)) : closeTerminal(spot(side, id))
+            return
         }
-    }
-
-    private func openTerminalAsTab(in tabsVM: PanelTabsViewModel, panelVM: PanelViewModel) {
-        let panelVC = tabsVM === splitVC.leftTabsVM ? splitVC.leftPanelVC! : splitVC.rightPanelVC!
-        if tabsVM.activeTab.isTerminal {
-            // Toggle OFF: close terminal tab, kill process, switch to files
-            let idx = tabsVM.activeIndex
-            panelVC.closeTerminalTab(at: idx)
+        let mine = panel.terminalTabIDs.map { spot(side, $0) }
+        if let back = TerminalToggle.hiddenOrder(all: mine, lastHidden: lastHiddenTerminal).first {
+            showTerminal(back)
         } else {
-            // Toggle ON: create new terminal tab
-            tabsVM.newTerminalTab(directory: panelVM.currentPath)
-            panelVC.activateCurrentTab()
+            openNewTerminalTab(in: side)
         }
     }
 
@@ -4955,14 +5016,23 @@ final class MainContainerViewController: NSViewController {
 
     private let splitVC: MainSplitViewController
     private let footerBar: FooterBar
-    private var terminalView: SwiftTermContainerView?
+    private var terminalView: TerminalSplitView?
     private var terminalHeightConstraint: NSLayoutConstraint?
     private var splitBottomToFooter: NSLayoutConstraint!
     private var splitBottomToDivider: NSLayoutConstraint?
     private var dividerView: NSView?
     private var terminalWrapper: NSView?
 
-    var isBottomTerminalVisible: Bool { terminalView != nil }
+    /// Полоса на экране.
+    var isBottomTerminalVisible: Bool { terminalView.map { !$0.isHidden } ?? false }
+    /// Полоса жива — на экране или спрятана с работающими оболочками.
+    var hasBottomTerminal: Bool { terminalView != nil }
+
+    /// Клавиатура в нижнем терминале.
+    var bottomTerminalHoldsKeyboard: Bool {
+        guard let terminalView, let responder = view.window?.firstResponder as? NSView else { return false }
+        return responder.isDescendant(of: terminalView)
+    }
 
     init(splitVC: MainSplitViewController, footerBar: FooterBar) {
         self.splitVC = splitVC
@@ -5028,8 +5098,17 @@ final class MainContainerViewController: NSViewController {
 
     // MARK: - Bottom Terminal
 
+    /// Показать нижний терминал: спрятанный — вернуть как был, иначе открыть новый.
     func showBottomTerminal(directory: String) {
-        guard terminalView == nil else { return }
+        if let term = terminalView {
+            guard term.isHidden else { return }
+            term.isHidden = false
+            dividerView?.isHidden = false
+            splitBottomToFooter.isActive = false
+            splitBottomToDivider?.isActive = true
+            term.focusActivePane()
+            return
+        }
 
         let container = view
 
@@ -5047,8 +5126,10 @@ final class MainContainerViewController: NSViewController {
         self.dividerView = divider
 
         // Terminal
-        let term = SwiftTermContainerView(frame: .zero)
+        let term = TerminalSplitView(directory: directory)
         term.translatesAutoresizingMaskIntoConstraints = false
+        // Последняя часть закрыта (⌘W или exit) — полоса уходит.
+        term.onEmpty = { [weak self] in self?.closeBottomTerminal() }
         container.addSubview(term)
         self.terminalView = term
 
@@ -5080,12 +5161,25 @@ final class MainContainerViewController: NSViewController {
             heightConstraint,
         ])
 
-        term.startTerminal(directory: directory)
+        term.start()
         TerminalProcessRegistry.shared.register(term, for: TerminalProcessRegistry.bottomTerminalID)
     }
 
+    /// Убрать полосу с глаз; оболочки работают дальше, ⌘` вернёт её как была.
     func hideBottomTerminal() {
+        guard let term = terminalView, !term.isHidden else { return }
+        let hadKeyboard = bottomTerminalHoldsKeyboard
+        term.isHidden = true
+        dividerView?.isHidden = true
+        splitBottomToDivider?.isActive = false
+        splitBottomToFooter.isActive = true
+        if hadKeyboard { splitVC.activePanelVC.claimFirstResponder() }
+    }
+
+    /// Закрыть полосу и остановить все её оболочки.
+    func closeBottomTerminal() {
         guard let term = terminalView else { return }
+        let hadKeyboard = bottomTerminalHoldsKeyboard || !term.isHidden
         TerminalProcessRegistry.shared.terminate(tabID: TerminalProcessRegistry.bottomTerminalID)
         term.removeFromSuperview()
         dividerView?.removeFromSuperview()
@@ -5096,14 +5190,7 @@ final class MainContainerViewController: NSViewController {
         splitBottomToDivider?.isActive = false
         splitBottomToDivider = nil
         splitBottomToFooter.isActive = true
-    }
-
-    func toggleBottomTerminal(directory: String) {
-        if terminalView != nil {
-            hideBottomTerminal()
-        } else {
-            showBottomTerminal(directory: directory)
-        }
+        if hadKeyboard { splitVC.activePanelVC.claimFirstResponder() }
     }
 }
 
