@@ -72,7 +72,9 @@ final class ShelfNavigationTests: XCTestCase {
     /// не должно сломать возврат.
     func test_сПолкиНаверхВозвращаетОткудаПришли() async throws {
         let vm = panel()
-        let came = NSTemporaryDirectory()
+        // Своя маленькая папка, а не общая временная: в той у людей десятки тысяч записей
+        // от чужих программ, чтение не укладывалось в срок ожидания, и тест падал под нагрузкой.
+        let came = folder + "/внутри"
         vm.loadDirectory(at: came)
         try await подождать(vm) {
             (vm.currentPath as NSString).standardizingPath
