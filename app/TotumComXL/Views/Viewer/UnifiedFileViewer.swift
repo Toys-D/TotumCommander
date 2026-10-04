@@ -9,12 +9,6 @@ import FCXLBridgeObjC
 
 // MARK: - Shared Types
 
-struct ViewerTextLine: Identifiable {
-    let number: Int
-    let value: String
-    var id: Int { number }
-}
-
 struct ViewerHexLine: Identifiable {
     let index: Int
     let offset: UInt64
@@ -86,7 +80,9 @@ struct UnifiedFileViewer: View {
     @State private var remoteCancel = CancelBox()
     @State private var forcedMode: PreviewMode? = nil
     @State private var encoding: String = "UTF-8"
-    @State private var textLines: [ViewerTextLine] = []
+    /// Текст файла до 256 КБ, уже раскодированный. nil — текста нет (не загружен или файл
+    /// большой и показывается прямо с диска).
+    @State private var plainText: String?
     @State private var fastPreviewFilePath: String = ""
     @State private var useFastPreview: Bool = false
     @State private var markdownContent: NSAttributedString?
@@ -106,7 +102,7 @@ struct UnifiedFileViewer: View {
     @State private var showingOriginal = false
     @State private var keepImageMetadata = true
     @State private var imageSaveNote: String?
-    /// Text found INSIDE a picture (Vision), as opposed to `textLines` — the lines of a text
+    /// Text found INSIDE a picture (Vision), as opposed to `plainText` — the text of a text
     /// file the viewer is showing.
     @State private var pictureText: [RecognizedLine] = []
     @State private var isReadingText = false
@@ -798,31 +794,15 @@ struct UnifiedFileViewer: View {
         Group {
             if useFastPreview {
                 FastTextPreview(filePath: fastPreviewFilePath, encoding: encoding)
-            } else if textLines.isEmpty && !isLoading {
+            } else if let plainText {
+                // Не список строк SwiftUI: тот на длинных строках проседал и отставал от
+                // трекпада — см. NumberedTextView.
+                NumberedTextPreview(text: plainText)
+            } else if !isLoading {
                 Text(L("viewer.emptyFile"))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(12)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(textLines) { line in
-                            HStack(alignment: .top, spacing: 10) {
-                                Text(String(line.number))
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 56, alignment: .trailing)
-                                Text(line.value)
-                                    .font(.system(.body, design: .monospaced))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .id(line.id)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 2)
-                        }
-                    }
-                }
-                .textSelection(.enabled)
             }
         }
     }
@@ -2046,7 +2026,7 @@ struct UnifiedFileViewer: View {
 
         loadError = nil
         encoding = "UTF-8"
-        textLines = []
+        plainText = nil
         fastPreviewFilePath = ""
         useFastPreview = false
         markdownContent = nil
@@ -2124,9 +2104,7 @@ struct UnifiedFileViewer: View {
                     let (_, isBinary) = decodeTextContent(data: probeData, probe: encodingProbe)
 
                     if isBinary {
-                        textLines = [ViewerTextLine(number: 1, value: "(\(L("viewer.binaryFile")))"),
-                                     ViewerTextLine(number: 2, value: ""),
-                                     ViewerTextLine(number: 3, value: L("viewer.useBinaryHint"))]
+                        plainText = "(\(L("viewer.binaryFile")))\n\n" + L("viewer.useBinaryHint")
                         useFastPreview = false
                     } else {
                         // Get file size to decide strategy
@@ -2137,17 +2115,14 @@ struct UnifiedFileViewer: View {
                             // Large file — use FastTextPreview with direct file path (memory-mapped loading in NSTextView)
                             useFastPreview = true
                             fastPreviewFilePath = filePath
-                            textLines = []
+                            plainText = nil
                         } else {
                             // Small file — use line-by-line SwiftUI view
                             let fullData = try await readFileDataAsync(path: filePath)
                             if Task.isCancelled { return }
                             let (decodedText, _) = decodeTextContent(data: fullData, probe: encodingProbe)
                             useFastPreview = false
-                            let parts = decodedText.split(separator: "\n", omittingEmptySubsequences: false)
-                            textLines = parts.enumerated().map { index, part in
-                                ViewerTextLine(number: index + 1, value: String(part))
-                            }
+                            plainText = decodedText
                         }
                     }
 
