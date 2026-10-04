@@ -624,12 +624,13 @@ struct CenterDividerView: View {
 /// app-wide monitor lesson.
 private struct EscapeClosesPopover: ViewModifier {
     let close: () -> Void
-    @State private var monitor: Any?
+    /// В коробке, не в `@State` напрямую — иначе снятое не отпускалось (см. EventMonitorBox).
+    @State private var monitor = EventMonitorBox()
 
     func body(content: Content) -> some View {
         content
             .onAppear {
-                monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                monitor.install(matching: .keyDown) { event in
                     if event.keyCode == 53 {   // Escape
                         close()
                         return nil
@@ -638,10 +639,7 @@ private struct EscapeClosesPopover: ViewModifier {
                 }
             }
             .onDisappear {
-                if let monitor {
-                    NSEvent.removeMonitor(monitor)
-                    self.monitor = nil
-                }
+                monitor.remove()
             }
     }
 }

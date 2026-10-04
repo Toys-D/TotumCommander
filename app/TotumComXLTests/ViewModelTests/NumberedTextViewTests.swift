@@ -121,12 +121,22 @@ final class NumberedTextViewTests: XCTestCase {
         let host = NSHostingView(rootView: UnifiedFileViewer(viewModel: vm, onClose: nil, operations: nil))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 1000),
                               styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
         window.contentView = host
         window.alphaValue = 0
         window.ignoresMouseEvents = true
         window.setFrameOrigin(.zero)
         window.orderFrontRegardless()
-        cleanup.append { window.orderOut(nil) }
+        // Сначала уходят просмотрщик и слежка модели панели, и только потом — папка (уборка
+        // идёт с конца). Модель, потеряв папку, уходит в ближайшую родительскую — общую
+        // временную, на десятки тысяч записей, — и перечитывает её при каждом изменении: все
+        // тесты после этого шли вдвое дольше, а ждущие переходов панели падали по сроку.
+        // Что закрытый просмотрщик отпускает модель, проверяет EventMonitorBoxTests.
+        cleanup.append { [weak vm] in
+            vm?.stopWatching()
+            window.contentView = nil
+            window.close()
+        }
 
         let loaded = Date().addingTimeInterval(10)
         var view: NumberedTextView?

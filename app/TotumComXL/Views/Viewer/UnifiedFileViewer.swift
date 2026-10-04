@@ -123,7 +123,9 @@ struct UnifiedFileViewer: View {
     @State private var pictureOverlaySize: CGSize = .zero
     /// Короткая вспышка выделения после ⌘C — единственный знак, что скопировалось.
     @State private var selectionFlash = false
-    @State private var contextMonitor: Any?
+    // Перехватчики — в коробках, не в `@State` напрямую: иначе закрытый просмотрщик со всем
+    // показанным оставался в памяти (см. EventMonitorBox).
+    @State private var contextMonitor = EventMonitorBox()
     @State private var djvuReader: FCXLDjVuReader?
     @State private var book: BookDocument?
     @State private var bookState = BookReaderState()
@@ -165,8 +167,8 @@ struct UnifiedFileViewer: View {
     @State private var loadError: String?
     @State private var isLoading: Bool = false
     @State private var loadTask: Task<Void, Never>?
-    @State private var keyMonitor: Any?
-    @State private var scrollMonitor: Any?
+    @State private var keyMonitor = EventMonitorBox()
+    @State private var scrollMonitor = EventMonitorBox()
     /// The window the viewer lives in — the main one when it is embedded, its own when it is not.
     @State private var hostWindow: NSWindow?
 
@@ -1829,8 +1831,7 @@ struct UnifiedFileViewer: View {
     /// накладка сделана в SwiftUI, а правый щелчок там не поймать иначе, чем системным
     /// меню, которое выглядит чужим.
     private func installContextMonitor() {
-        guard contextMonitor == nil else { return }
-        contextMonitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown]) { event in
+        contextMonitor.install(matching: [.rightMouseDown]) { event in
             guard isEventForThisViewer(event), !pictureText.isEmpty,
                   let point = pictureHoverPoint else { return event }
             let word = TextRecognitionService.word(at: point, lines: pictureText,
@@ -1856,10 +1857,7 @@ struct UnifiedFileViewer: View {
     }
 
     private func removeContextMonitor() {
-        if let contextMonitor {
-            NSEvent.removeMonitor(contextMonitor)
-            self.contextMonitor = nil
-        }
+        contextMonitor.remove()
     }
 
     /// Put one page of a document on screen as a picture and read it.
@@ -2377,8 +2375,7 @@ struct UnifiedFileViewer: View {
     // MARK: - Keyboard
 
     private func installKeyMonitor() {
-        guard keyMonitor == nil else { return }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [self] event in
+        keyMonitor.install(matching: [.keyDown]) { [self] event in
             // A local monitor sees the keys of EVERY window of the app, this one included but
             // not only. Esc pressed in a share panel or any other window of ours used to close
             // the viewer and be swallowed here, so the window the person was actually looking
@@ -2455,10 +2452,7 @@ struct UnifiedFileViewer: View {
     }
 
     private func removeKeyMonitor() {
-        if let keyMonitor {
-            NSEvent.removeMonitor(keyMonitor)
-            self.keyMonitor = nil
-        }
+        keyMonitor.remove()
     }
 
     /// Trackpad two-finger swipe / mouse wheel arrives as scrollWheel events,
@@ -2466,8 +2460,7 @@ struct UnifiedFileViewer: View {
     /// We forward those deltas to imgOffset so panning a zoomed image works
     /// with the trackpad as the user expects.
     private func installScrollMonitor() {
-        guard scrollMonitor == nil else { return }
-        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { event in
+        scrollMonitor.install(matching: [.scrollWheel]) { event in
             guard self.isEventForThisViewer(event) else { return event }
             guard self.effectiveMode == .image || self.effectiveMode == .postScript,
                   self.image != nil else { return event }
@@ -2490,10 +2483,7 @@ struct UnifiedFileViewer: View {
     }
 
     private func removeScrollMonitor() {
-        if let scrollMonitor {
-            NSEvent.removeMonitor(scrollMonitor)
-            self.scrollMonitor = nil
-        }
+        scrollMonitor.remove()
     }
 
     /// PostScript/AI files are rasterised, so zooming in eventually shows the pixel grid.
