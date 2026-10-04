@@ -14,7 +14,7 @@ struct SettingsDividerView: View {
             Section(L("design.section.divider")) {
                 slider(L("design.centerDividerWidth"), value: $centerDividerWidth, in: 20...150, step: 2)
                 slider(L("design.quickLinksGap"), value: $quickLinksGap, in: 0...30, step: 2)
-                slider(L("design.dividerIconSpacing"), value: $dividerIconSpacing, in: 0...10, step: 1)
+                slider(L("design.dividerIconSpacing"), value: $dividerIconSpacing, in: 0...20, step: 1)
                 slider(L("design.dividerOffsetY"), value: $dividerOffsetY, in: -100...100, step: 5)
                 Toggle(L("design.dividerShowQuickLinks"), isOn: $dividerShowQuickLinks).settingAnchor("design.dividerShowQuickLinks")
                 Toggle(L("design.dividerShowLabels"), isOn: $dividerShowLabels).settingAnchor("design.dividerShowLabels")
