@@ -731,6 +731,15 @@ final class PanelViewModel: ObservableObject {
     private var directoryCacheLRU: [String] = []
     private(set) var currentPathIsSlowVolume: Bool = false
 
+    // Знак «новое внутри» у папок (см. PanelViewModel+FolderNews).
+    /// Запрос к Spotlight. Ставит его панель на экране (watchFolderNews): модель без экрана —
+    /// в тестах, в служебных местах — Spotlight не трогает.
+    var folderNewsQuery: FolderNewsQuery?
+    /// Последний ответ об открытой папке: подпапка → сколько новых файлов внутри и когда последний.
+    var folderNews: [String: FolderNews.Inside] = [:]
+    /// О какой папке этот ответ.
+    var folderNewsFolder: String?
+
     // MARK: - Network Browser
 
     private var networkUpdateObserver: Any?
@@ -2782,6 +2791,9 @@ final class PanelViewModel: ObservableObject {
                 return item.withSize(remembered)
             }
         }
+        // Знак «новое внутри» — сразу со списком, как и запомненные размеры: перечитка
+        // собирает элементы заново, и без этого знаки пропадали бы до ответа Spotlight.
+        itemsToSort = withFolderNews(itemsToSort, in: destination)
 
         adoptSort(forEntering: destination)
         var sorted = sortItemsForDisplay(itemsToSort)
@@ -2864,6 +2876,7 @@ final class PanelViewModel: ObservableObject {
             scheduleFolderSizeRefresh(for: destination)
         }
         restartFSWatcherIfNeeded(for: destination)
+        refreshFolderNews()
     }
 
     // MARK: - FSEvents Watcher
@@ -4612,7 +4625,7 @@ final class PanelViewModel: ObservableObject {
     }
 
     /// Places the panel shows that no filesystem has: the Trash and the network browser.
-    private static func isVirtualLocation(_ path: String) -> Bool {
+    static func isVirtualLocation(_ path: String) -> Bool {
         TrashService.isTrashPath(path) || NetworkBrowserService.isNetworkPath(path)
     }
 

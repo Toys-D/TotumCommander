@@ -108,6 +108,37 @@ final class FileListBriefViewTests: XCTestCase {
         withExtendedLifetime(window) {}
     }
 
+    /// Ответ Spotlight о новом внутри приходит, когда список уже на экране, и меняет только
+    /// знак у папки. Счётчик обязан появиться сразу, а не после щелчка по панели.
+    func test_счётчикНовогоВнутриПоявляетсяБезСменыСписка() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("fcxl-news-brief-\(UUID().uuidString)")
+        try fm.createDirectory(at: root.appendingPathComponent("Проект"), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let vm = PanelViewModel(service: CoreBridgeService(), initialPath: root.path,
+                                pathDefaultsKey: "newsb.\(UUID().uuidString)",
+                                viewModeDefaultsKey: "newsbm.\(UUID().uuidString)", showHiddenFiles: true)
+        let host = NSHostingView(rootView: makeBriefView(viewModel: vm))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 260),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        let probe = try DropRingProbe(host: host, viewModel: vm, expectedCount: 2)
+
+        /// Подсказка у плашки — «Новых файлов внутри: N»; плашки нет — и подсказки нет.
+        func chipTooltip() throws -> String? {
+            let index = try XCTUnwrap(vm.items.firstIndex { $0.name == "Проект" })
+            let cell = try XCTUnwrap(probe.collectionView.item(at: IndexPath(item: index, section: 0))?.view)
+            return cell.subviews.compactMap { ($0 as? NSImageView)?.image != nil ? $0.toolTip : nil }
+                .first { $0.contains("12") }
+        }
+
+        XCTAssertNil(try chipTooltip(), "пока нового нет — счётчика нет")
+        vm.applyFolderNews([root.appendingPathComponent("Проект").path: FolderNews.Inside(count: 12, newest: Date())],
+                           in: vm.currentPath)
+        probe.settle()
+        XCTAssertEqual(try chipTooltip(), String(format: L("folderNews.tooltip"), 12), "«+12» — без смены списка")
+    }
+
     private func makeBriefView(viewModel: PanelViewModel) -> FileListBriefView {
         FileListBriefView(
             viewModel: viewModel,

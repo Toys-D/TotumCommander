@@ -1351,6 +1351,9 @@ final class ThumbnailItemView: NSView, DropRingCell {
     private let iconView = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
     private let dotsView = NSImageView()
+    /// Счётчик нового внутри папки — плашка «+12» в правом верхнем углу картинки
+    /// (FolderNewsChip), как плашка git: на картинке понятно, к чему она относится.
+    private let newsView = NSImageView()
     /// Git's mark. The tag dots hold the icon's bottom-right corner, so this takes the top-left
     /// one — the two never meet, and both stay on the picture they belong to.
     private let gitView = NSImageView()
@@ -1439,6 +1442,9 @@ final class ThumbnailItemView: NSView, DropRingCell {
         gitView.translatesAutoresizingMaskIntoConstraints = false
         gitView.imageScaling = .scaleNone
         addSubview(dotsView)
+        newsView.translatesAutoresizingMaskIntoConstraints = false
+        newsView.imageScaling = .scaleNone
+        addSubview(newsView)
         addSubview(gitView)
         addSubview(renameField)
 
@@ -1452,6 +1458,8 @@ final class ThumbnailItemView: NSView, DropRingCell {
             iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
 
             dotsView.trailingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 3),
+            newsView.trailingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 3),
+            newsView.topAnchor.constraint(equalTo: iconView.topAnchor, constant: -2),
             dotsView.bottomAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 2),
 
             // ON the picture, not beside it: at the bottom-left corner of the icon, where the
@@ -1588,6 +1596,14 @@ final class ThumbnailItemView: NSView, DropRingCell {
             // contrast on the cursor row, accent otherwise). nil for normal (baked) icons.
             iconView.contentTintColor = iconTint
         }
+        // Счётчик нового внутри папки — плашка «+12» на картинке (FolderNewsChip). У остальных
+        // она убирается: ячейки переиспользуются.
+        let newsMark = FolderNews.mark(for: item)
+        let newsCount = newsMark == nil ? 0 : item.newInsideCount
+        newsView.image = newsMark.flatMap {
+            FolderNewsChip.plaqueImage(count: newsCount, mark: $0, font: .systemFont(ofSize: 11))
+        }
+        newsView.toolTip = newsCount > 0 ? String(format: L("folderNews.tooltip"), newsCount) : nil
         // "Lift" the icon on the cursor cell (settings-gated); grows from its centre.
         CursorIconZoom.apply(to: iconView, scale: CursorIconZoom.scale(atDistance: cursorDistance),
                              animated: liftAnimated)

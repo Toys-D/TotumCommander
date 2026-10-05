@@ -993,6 +993,9 @@ final class PanelViewController: NSViewController,
         }
         reloadAppearanceSettings()
         bindViewModel()
+        // Панель на экране спрашивает Spotlight о новом внутри подпапок (FolderNews) —
+        // до первой загрузки, чтобы и первая папка получила свои знаки.
+        viewModel.watchFolderNews()
         viewModel.loadDirectory()
 
         // Observe appearance-related UserDefaults keys via KVO
@@ -1046,6 +1049,8 @@ final class PanelViewController: NSViewController,
                 self?.reloadAppearanceSettings()
                 // Сроки могли поменяться — значит и шаг перекраски другой.
                 self?.restartFreshnessTimer()
+                // И срок новизны для знаков у папок, и сам знак мог выключиться.
+                self?.viewModel.refreshFolderNews()
             }
         }
 
@@ -1330,6 +1335,11 @@ final class PanelViewController: NSViewController,
             // A new cell size is a new layout, not a new colour: rebuild the thumbnails view.
             updateAlternateHosting()
         } else if let keyPath, Self.appearanceKeys.contains(keyPath) {
+            // Акцент красит лист «новое внутри» у папок (FolderNews). Краткий вид и миниатюры
+            // перенастраивают ячейки по счётчику перекрасок — без него лист остался бы старым.
+            if keyPath == PanelAppearanceSettings.accentColorHexKey {
+                FileColorRulesStore.shared.markRepaint()
+            }
             reloadAppearanceSettings()
         } else if let keyPath, Self.cursorBeautyKeys.contains(keyPath) {
             // Live cursor-beauty tweak: repaint just the detailed-mode glow (+ mark rows so
@@ -4184,6 +4194,7 @@ final class PanelViewController: NSViewController,
                 }
                 // The cursor row draws at a larger font, so the dots are sized for it as well.
                 (cellView as? NameCellView)?.setTags(viewModel.tagsByPath[item.path] ?? [], font: rowFont)
+                (cellView as? NameCellView)?.setNews(item, font: rowFont)
                 (cellView as? NameCellView)?.setGit(viewModel.gitByPath[item.path],
                                                     font: gitGutterFont, gutter: gitGutterWidth,
                                                     isCursor: isCursor)
@@ -4364,6 +4375,7 @@ final class PanelViewController: NSViewController,
         label.font = baseFont
         label.attributedStringValue = decoratedName(for: item, font: baseFont, color: textColor)
         cellView.setTags(viewModel.tagsByPath[item.path] ?? [], font: baseFont)
+        cellView.setNews(item, font: baseFont)
         // The gutter is drawn at the LIST's font, not the cursor-enlarged one: a column that
         // widened under the cursor would shift every name as the cursor passed.
         cellView.setGit(viewModel.gitByPath[item.path], font: gitGutterFont,

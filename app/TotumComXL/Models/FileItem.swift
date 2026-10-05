@@ -4,6 +4,12 @@ struct FileItem: Identifiable, Hashable {
     /// Relative subpath shown instead of the bare name while the panel is in branch view
     /// (Ctrl+B). Display-only: every operation keeps using `name` and `path`.
     var branchPath: String? = nil
+    /// Для папки: когда внутри неё, на любой глубине, последний раз появился файл — если это
+    /// было в срок новизны. Его узнаёт панель у Spotlight (см. FolderNews); nil — нового нет
+    /// или не спрашивали.
+    var newestInside: Date? = nil
+    /// Сколько файлов появилось внутри за тот же срок — для счётчика «+12» после имени.
+    var newInsideCount: Int = 0
 
     let path: String
     let name: String
@@ -160,8 +166,11 @@ struct FileItem: Identifiable, Hashable {
         return normalizedExtension
     }
 
+    /// Тот же элемент с другим размером — со всем остальным, что у него было: размер папки
+    /// приходит позже списка, и знак «новое внутри» или путь в виде ветки не должны
+    /// пропадать вместе с его приходом.
     func withSize(_ newSize: UInt64) -> FileItem {
-        FileItem(
+        var copy = FileItem(
             path: path,
             name: name,
             fileExtension: fileExtension,
@@ -169,6 +178,7 @@ struct FileItem: Identifiable, Hashable {
             isDirectory: isDirectory,
             isHidden: isHidden,
             isSymlink: isSymlink,
+            isAlias: isAlias,
             symlinkTarget: symlinkTarget,
             hardlinkCount: hardlinkCount,
             permissions: permissions,
@@ -178,5 +188,9 @@ struct FileItem: Identifiable, Hashable {
             owner: owner,
             entryCount: entryCount
         )
+        copy.branchPath = branchPath
+        copy.newestInside = newestInside
+        copy.newInsideCount = newInsideCount
+        return copy
     }
 }

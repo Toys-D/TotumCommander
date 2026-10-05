@@ -1330,6 +1330,12 @@ final class BriefItemView: NSView, DropRingCell {
     /// there too, so the two modes read the same way.
     private let lockView = NSImageView()
     private var lockWidthConstraint: NSLayoutConstraint!
+    /// Счётчик нового внутри папки — «+12» вплотную за именем (FolderNewsChip). Место под него
+    /// в конце колонки отложено всегда, когда он есть: длинное имя обрезается до него.
+    private let newsView = NSImageView()
+    private var newsWidthConstraint: NSLayoutConstraint!
+    private var newsLeadingConstraint: NSLayoutConstraint!
+    private var nameTrailingConstraint: NSLayoutConstraint!
     /// The icon-to-name gap now belongs to the gutter, which stands between them.
     private var gitLeadingConstraint: NSLayoutConstraint?
     private var dotsWidthConstraint: NSLayoutConstraint?
@@ -1438,6 +1444,12 @@ final class BriefItemView: NSView, DropRingCell {
         addSubview(gitView)
         addSubview(branchView)
         addSubview(lockView)
+        newsView.translatesAutoresizingMaskIntoConstraints = false
+        newsView.imageScaling = .scaleNone
+        newsView.imageAlignment = .alignLeft
+        newsView.setContentHuggingPriority(.required, for: .horizontal)
+        newsView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        addSubview(newsView)
         addSubview(iconView)
         addSubview(nameLabel)
         addSubview(extensionLabel)
@@ -1459,6 +1471,10 @@ final class BriefItemView: NSView, DropRingCell {
         gitWidthConstraint = gitView.widthAnchor.constraint(equalToConstant: 0)
         branchWidthConstraint = branchView.widthAnchor.constraint(equalToConstant: 0)
         lockWidthConstraint = lockView.widthAnchor.constraint(equalToConstant: 0)
+        newsWidthConstraint = newsView.widthAnchor.constraint(equalToConstant: 0)
+        newsLeadingConstraint = newsView.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor)
+        newsLeadingConstraint.priority = .defaultHigh
+        nameTrailingConstraint = nameLabel.trailingAnchor.constraint(equalTo: lockView.leadingAnchor, constant: -6)
         iconLeadingConstraint = iconView.leadingAnchor.constraint(equalTo: leadingAnchor,
                                                                   constant: PanelAppearanceSettings.resolvedIconEdgeInset)
 
@@ -1475,7 +1491,12 @@ final class BriefItemView: NSView, DropRingCell {
             iconHeightConstraint,
 
             nameLeadingConstraint,
-            nameLabel.trailingAnchor.constraint(equalTo: lockView.leadingAnchor, constant: -6),
+            nameTrailingConstraint,
+
+            newsLeadingConstraint,
+            newsView.trailingAnchor.constraint(lessThanOrEqualTo: lockView.leadingAnchor, constant: -6),
+            newsView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            newsWidthConstraint,
 
             lockView.trailingAnchor.constraint(equalTo: branchView.leadingAnchor),
             lockView.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -1599,6 +1620,7 @@ final class BriefItemView: NSView, DropRingCell {
             // contrast on the cursor row, accent otherwise). nil for normal (baked) icons.
             iconView.contentTintColor = iconTint
         }
+
         if iconWidthConstraint?.constant != iconSize {
             iconWidthConstraint?.constant = iconSize
         }
@@ -1625,6 +1647,7 @@ final class BriefItemView: NSView, DropRingCell {
             lockView.isHidden = true
             extensionLabel.isHidden = true
             renameField.isHidden = false
+            newsView.isHidden = true
             InlineRenameLook.apply(to: renameField, font: InlineRenameLook.font(matching: nameLabel.font))
             if renameField.stringValue != renameText {
                 renameField.stringValue = renameText
@@ -1652,6 +1675,7 @@ final class BriefItemView: NSView, DropRingCell {
             renameField.isHidden = true
             nameLabel.isHidden = false
             lockView.isHidden = false
+            newsView.isHidden = false
             let parts = BriefNameLayout.parts(for: item.name, isDirectory: item.isDirectory)
             displayedBaseName = parts.baseName
             displayedVaultUnlocked = (item.name != ".." && VaultService.isVault(item.path))
@@ -1674,6 +1698,9 @@ final class BriefItemView: NSView, DropRingCell {
             displayedExtensionText = parts.extensionName.isEmpty ? "" : ".\(parts.extensionName)"
             extensionLabel.isHidden = displayedExtensionText.isEmpty
             updateTextColor()
+            // Счётчик нового внутри папки — «+12» вплотную за именем (FolderNewsChip); у
+            // остальных убирается: ячейки переиспользуются. После имени — встаёт за ним.
+            applyNews(for: item, font: baseFont)
             if liftAnimated {
                 CursorLift.animateTextGrowth(of: nameLabel, ratio: liftRatio, centred: false)
                 CursorLift.animateTextGrowth(of: extensionLabel, ratio: liftRatio, centred: false)
@@ -1682,6 +1709,18 @@ final class BriefItemView: NSView, DropRingCell {
     }
 
     private var displayedVaultUnlocked: Bool?
+
+    private func applyNews(for item: FileItem, font: NSFont) {
+        let mark = FolderNews.mark(for: item)
+        let count = mark == nil ? 0 : item.newInsideCount
+        newsView.image = mark.flatMap { FolderNewsChip.image(count: count, mark: $0, font: font) }
+        newsView.toolTip = count > 0 ? String(format: L("folderNews.tooltip"), count) : nil
+        let width = FolderNewsChip.width(count: count, font: font)
+        if newsWidthConstraint.constant != width { newsWidthConstraint.constant = width }
+        if nameTrailingConstraint.constant != -6 - width { nameTrailingConstraint.constant = -6 - width }
+        let end = FolderNewsChip.textEnd(of: nameLabel)
+        if newsLeadingConstraint.constant != end { newsLeadingConstraint.constant = end }
+    }
 
     private func updateTextColor() {
         // Цвет по правилам считается там, где ещё виден сам файл (configure), и хранится

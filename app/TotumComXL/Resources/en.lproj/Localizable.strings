@@ -2427,6 +2427,9 @@ A frequent culprit is Parallels Desktop (usually F6): open its Settings ▸ Shor
 "colors.rules.column.colorLight" = "colour (light)";
 "colors.rules.column.colorDark" = "colour (dark)";
 "colors.rules.hint.themes" = "The colour is remembered separately for the light and the dark theme: you are editing the one in use right now.";
+"colors.folderNews" = "Mark folders with something new inside";
+"colors.folderNews.hint" = "After the name of a folder where files appeared within the period of the “any name” rule — at any depth — a counter in the accent colour shows how many: “+12” new files inside; towards the end of the period it fades. Asks Spotlight instead of walking the disk: where Spotlight does not index (network, hidden folders, unindexed disks) there is no counter.";
+"folderNews.tooltip" = "New files inside: %d";
 "network.field.accessKey" = "Access key";
 "network.field.secretKey" = "Secret key";
 "network.field.bucket" = "Bucket";

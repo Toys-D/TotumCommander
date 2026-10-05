@@ -361,6 +361,13 @@ final class NameCellView: NSTableCellView {
     /// уезжал вместе с многоточием.
     private let lockView = NSImageView()
     private var lockWidth: NSLayoutConstraint!
+    /// Счётчик нового внутри папки — «+12» вплотную за именем (FolderNewsChip). Место под
+    /// него в конце колонки отложено всегда, когда он есть: длинное имя обрезается до него, и
+    /// он встаёт у края; короткое — он стоит сразу за последней буквой.
+    private let newsView = NSImageView()
+    private var newsWidth: NSLayoutConstraint!
+    private var newsLeading: NSLayoutConstraint!
+    private var labelTrailing: NSLayoutConstraint!
     /// The hidden-file eye. A fixed view at the cell's edge, NOT part of the name text: a
     /// long name truncates BEFORE it, so the eye survives every "…" — appended to the
     /// string it was the first thing the ellipsis ate.
@@ -398,7 +405,13 @@ final class NameCellView: NSTableCellView {
         lockView.imageAlignment = .alignRight
         lockView.setContentHuggingPriority(.required, for: .horizontal)
         lockView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        newsView.translatesAutoresizingMaskIntoConstraints = false
+        newsView.imageScaling = .scaleNone
+        newsView.imageAlignment = .alignLeft
+        newsView.setContentHuggingPriority(.required, for: .horizontal)
+        newsView.setContentCompressionResistancePriority(.required, for: .horizontal)
         addSubview(label)
+        addSubview(newsView)
         addSubview(dotsView)
         addSubview(eyeView)
         addSubview(gitView)
@@ -410,13 +423,22 @@ final class NameCellView: NSTableCellView {
         branchWidth = branchView.widthAnchor.constraint(equalToConstant: 0)
         dotsWidth = dotsView.widthAnchor.constraint(equalToConstant: 0)
         eyeWidth = eyeView.widthAnchor.constraint(equalToConstant: 0)
+        newsWidth = newsView.widthAnchor.constraint(equalToConstant: 0)
+        newsLeading = newsView.leadingAnchor.constraint(equalTo: label.leadingAnchor)
+        newsLeading.priority = .defaultHigh
+        labelTrailing = label.trailingAnchor.constraint(equalTo: lockView.leadingAnchor)
         NSLayoutConstraint.activate([
             gitView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
             gitView.centerYAnchor.constraint(equalTo: centerYAnchor),
             gitWidth,
 
             label.leadingAnchor.constraint(equalTo: gitView.trailingAnchor),
-            label.trailingAnchor.constraint(equalTo: lockView.leadingAnchor),
+            labelTrailing,
+
+            newsLeading,
+            newsView.trailingAnchor.constraint(lessThanOrEqualTo: lockView.leadingAnchor),
+            newsView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            newsWidth,
 
             lockView.trailingAnchor.constraint(equalTo: branchView.leadingAnchor),
             lockView.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -440,6 +462,20 @@ final class NameCellView: NSTableCellView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// Счётчик нового внутри папки — «+12» (FolderNewsChip). Нового нет — ширина нулевая, и имя
+    /// получает всю колонку, как раньше.
+    func setNews(_ item: FileItem, font: NSFont) {
+        let mark = FolderNews.mark(for: item)
+        let count = mark == nil ? 0 : item.newInsideCount
+        newsView.image = mark.flatMap { FolderNewsChip.image(count: count, mark: $0, font: font) }
+        newsView.toolTip = count > 0 ? String(format: L("folderNews.tooltip"), count) : nil
+        let width = FolderNewsChip.width(count: count, font: font)
+        if newsWidth.constant != width { newsWidth.constant = width }
+        if labelTrailing.constant != -width { labelTrailing.constant = -width }
+        let text = FolderNewsChip.textEnd(of: label)
+        if newsLeading.constant != text { newsLeading.constant = text }
+    }
 
     /// Width collapses to zero for an untagged file, which gives the name back the whole column.
     func setTags(_ tags: [FinderTag], font: NSFont) {
@@ -498,5 +534,6 @@ final class NameCellView: NSTableCellView {
         gitView.isHidden = editing
         lockView.isHidden = editing
         branchView.isHidden = editing
+        newsView.isHidden = editing
     }
 }

@@ -116,6 +116,7 @@ enum SettingsSearchIndex {
         .fileColors: [
             ("colors.rules.section", nil),
             ("colors.rules.empty", nil),
+            ("colors.folderNews", nil),
             ("colors.rules.column.colorDark", nil),
             ("colors.rules.column.colorLight", nil),
             ("colors.rules.column.mask", nil),

@@ -413,7 +413,7 @@ Row height, icon scale, thumbnail size (thumbnails mode), the ".." icon (chevron
 Theme (system, light, dark), accent colour, panel background, interface, window title, folders and their names, files, selected files, text and background under the cursor, alternation. Every colour has its own picker (hue, saturation, brightness, eyedropper, saved colours).
 
 ### File Colours
-Rules colouring names by masks, separately for the light and the dark theme, "only for recent" with fading. Order — by dragging.
+Rules colouring names by masks, separately for the light and the dark theme, "only for recent" with fading. Order — by dragging. **Mark folders with something new inside**: after the name of a folder where files appeared within the period of the "any name" rule — at any depth — stands a counter in the accent colour, "+12": that many new files inside; towards the end of the period it fades. In thumbnails the counter is a plaque in the corner of the picture. What is new is asked of Spotlight, the disk is not walked; where Spotlight does not index (network, hidden folders, unindexed disks) there is no counter.
 
 ### Cursor
 Blur, height, width, rounding, offset and anchor, outline (colour, width), custom colour, a **custom cursor mask**: drawn with a brush or a pen, presets (gradients, bar, capsule, ellipse, slant, arrow), loading a picture. "Beauty mode" (blur and glow) is available on Apple Silicon with 14+ GPU cores.

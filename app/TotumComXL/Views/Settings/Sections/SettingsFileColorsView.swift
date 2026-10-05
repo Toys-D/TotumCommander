@@ -13,6 +13,8 @@ struct SettingsFileColorsView: View {
     /// В какой теме сейчас рисуют. Образец цвета один, а правит он цвет ТОЙ темы, которая
     /// включена: переключил тему — в окошке цвет для неё, и меняется тоже он.
     @State private var isDark = FileColorRulesStore.isDarkNow
+    /// Знак папки, внутри которой появилось новое: счётчик «+12» акцентного цвета (FolderNews).
+    @AppStorage(FolderNews.defaultsKey) private var folderNewsMark = true
 
     private var accent: Color {
         PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple)
@@ -65,12 +67,30 @@ struct SettingsFileColorsView: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.top, 2)
+
+                // Той же новизны, что у правила «любое имя» выше: его срок и угасание. Цвет знака —
+                // акцентный.
+                FCXLFormCard {
+                    FCXLToggleRow(label: L("colors.folderNews"), isOn: $folderNewsMark,
+                                  showDivider: false)
+                }
+                .settingAnchor("colors.folderNews")
+                .padding(.top, 10)
+                Text(L("colors.folderNews.hint"))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
         }
         .onReceive(NotificationCenter.default.publisher(for: .fcxlAppearanceChanged)) { _ in
             isDark = FileColorRulesStore.isDarkNow
+        }
+        // Панели перезапускают запрос к Spotlight и перерисовываются по тому же сигналу, что
+        // и после правки правил.
+        .onChange(of: folderNewsMark) { _ in
+            NotificationCenter.default.post(name: .fcxlFileColorsChanged, object: nil)
         }
     }
 
