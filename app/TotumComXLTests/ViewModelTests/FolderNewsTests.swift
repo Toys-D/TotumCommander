@@ -159,6 +159,145 @@ final class FolderNewsTests: XCTestCase {
         XCTAssertNotNil(FolderNewsChip.plaqueImage(count: 12, mark: mark, font: font))
     }
 
+    // MARK: - Пришло по журналу диска (не дожидаясь Spotlight)
+
+    /// Папка с подпапкой «Проект» и файлами внутри — свежими (дата добавления — сейчас).
+    private func freshTree() throws -> (root: URL, inner: URL) {
+        let fm = FileManager.default
+        let top = fm.temporaryDirectory.appendingPathComponent("fcxl-arrive-\(UUID().uuidString)")
+        let inner = top.appendingPathComponent("Проект")
+        try fm.createDirectory(at: inner.appendingPathComponent("глубже"), withIntermediateDirectories: true)
+        try Data("новое".utf8).write(to: inner.appendingPathComponent("отчёт.docx"))
+        try Data().write(to: inner.appendingPathComponent(".DS_Store"))
+        try Data().write(to: top.appendingPathComponent("в-самой-папке.txt"))
+        return (top, inner)
+    }
+
+    /// Крутить главный цикл, пока не сбудется (FSEvents и ответы приходят не сразу).
+    private func wait(_ seconds: TimeInterval = 10, until done: () -> Bool) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while !done(), Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+    }
+
+    func test_пришедшийФайлЗапоминается_ушедшийЗабывается() throws {
+        let arrivals = FolderNewsArrivals()
+        let (top, inner) = try freshTree()
+        defer { try? FileManager.default.removeItem(at: top) }
+        let report = inner.appendingPathComponent("отчёт.docx").path
+        arrivals.note([report, inner.appendingPathComponent(".DS_Store").path,
+                       inner.appendingPathComponent("глубже").path])
+        let since = Date().addingTimeInterval(-3600)
+        XCTAssertEqual(arrivals.entries(under: top.path, since: since).map(\.path), [report],
+                       "файл — да; скрытое и папка — нет")
+        XCTAssertTrue(arrivals.entries(under: top.path, since: Date().addingTimeInterval(3600)).isEmpty,
+                      "раньше срока — не в счёт")
+
+        var gone: [String] = []
+        let observer = NotificationCenter.default.addObserver(forName: FolderNewsArrivals.changed, object: nil,
+                                                              queue: nil) { note in
+            gone += note.userInfo?["gone"] as? [String] ?? []
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        try FileManager.default.removeItem(atPath: report)
+        arrivals.note([report])
+        XCTAssertTrue(arrivals.entries(under: top.path, since: since).isEmpty, "ушёл — забыт")
+        XCTAssertEqual(gone, [report], "и сказано, что его на месте нет — Spotlight может ещё числить")
+    }
+
+    /// Документ-пакет (.pages, программа) — одна новость, а не сотни файлов внутри.
+    func test_пакетСчитаетсяЦеликом() throws {
+        let arrivals = FolderNewsArrivals()
+        let (top, inner) = try freshTree()
+        defer { try? FileManager.default.removeItem(at: top) }
+        let app = inner.appendingPathComponent("Программа.app")
+        let inside = app.appendingPathComponent("Contents/MacOS/Программа")
+        try FileManager.default.createDirectory(at: inside.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try Data().write(to: inside)
+        arrivals.note([app.path, inside.path])
+        XCTAssertEqual(arrivals.entries(under: top.path, since: Date().addingTimeInterval(-3600)).map(\.path),
+                       [app.path])
+    }
+
+    /// Брошенное, пока ни одна панель здесь не стояла (через Finder, программа в фоне), — из
+    /// журнала диска при входе. Spotlight временную папку не индексирует: счёт — только по журналу.
+    func test_журналДочитываетсяПриВходе_иДальшеВживую() throws {
+        FolderNewsArrivals.shared.forgetAll()
+        defer { FolderNewsArrivals.shared.forgetAll() }
+        let (top, inner) = try freshTree()
+        defer { try? FileManager.default.removeItem(at: top) }
+        let deep = inner.appendingPathComponent("глубже/далеко.txt")
+        try Data().write(to: deep)
+        Thread.sleep(forTimeInterval: 1.5)   // журнал пишется с задержкой
+
+        let query = FolderNewsQuery()
+        defer { query.stop() }
+        var answer: [String: FolderNews.Inside] = [:]
+        query.onUpdate = { _, news in answer = news }
+        query.follow(top.path, period: 3600)
+        wait { answer[inner.path]?.count == 2 }
+        XCTAssertEqual(answer[inner.path]?.count, 2, "отчёт и файл глубже; скрытое и файл в самой папке — нет")
+
+        try Data().write(to: inner.appendingPathComponent("ещё.pdf"))
+        wait { answer[inner.path]?.count == 3 }
+        XCTAssertEqual(answer[inner.path]?.count, 3, "брошенное потом — тоже сразу")
+
+        try FileManager.default.moveItem(at: deep, to: top.appendingPathComponent("унёс.txt"))
+        wait { answer[inner.path]?.count == 2 }
+        XCTAssertEqual(answer[inner.path]?.count, 2, "унесли — счёт меньше")
+    }
+
+    /// Вернулся в папку — журнал дочитывается с места, где остановился, а не за весь срок заново.
+    func test_возвратВПапку_журналСТогоЖеМеста() throws {
+        FolderNewsArrivals.shared.forgetAll()
+        defer { FolderNewsArrivals.shared.forgetAll() }
+        let (top, _) = try freshTree()
+        defer { try? FileManager.default.removeItem(at: top) }
+        let queue = DispatchQueue(label: "test")
+        let first = try XCTUnwrap(FolderNewsStream(folder: top.path, period: 3600, queue: queue))
+        first.stop()
+        queue.sync {}
+        let read = try XCTUnwrap(FolderNewsArrivals.shared.readRange(of: top.path))
+        let wanted = FolderNewsStream.eventID(before: Date().addingTimeInterval(-3600), on: top.path)
+        XCTAssertLessThanOrEqual(read.from, wanted, "прочитано с начала срока")
+
+        let second = try XCTUnwrap(FolderNewsStream(folder: top.path, period: 3600, queue: queue))
+        second.stop()
+        queue.sync {}
+        XCTAssertEqual(FolderNewsArrivals.shared.readRange(of: top.path)?.from, read.from,
+                       "дочитано после прежнего — начало то же")
+    }
+
+    func test_одинПутьСчитаетсяОдинРаз() throws {
+        FolderNewsArrivals.shared.forgetAll()
+        defer { FolderNewsArrivals.shared.forgetAll() }
+        let (top, inner) = try freshTree()
+        defer { try? FileManager.default.removeItem(at: top) }
+        let report = inner.appendingPathComponent("отчёт.docx").path
+        let tally = FolderNewsTally(folder: top.path, since: Date().addingTimeInterval(-3600))
+        // Spotlight пишет путь настоящим (/private/var/…), а журнал мог — путём панели.
+        tally.take([(FolderNews.realPath(report), Date())])
+        FolderNewsArrivals.shared.note([report])
+        XCTAssertNotEqual(FolderNews.realPath(report), report, "временная папка — за ссылкой /var")
+        XCTAssertEqual(tally.recount()?[inner.path]?.count, 1, "знает и Spotlight, и журнал — один файл")
+        XCTAssertNil(tally.recount(), "ничего не поменялось — перерисовывать нечего")
+    }
+
+    /// Spotlight о переносе узнаёт с опозданием и числит файл там, откуда его унесли, — такое
+    /// не считается.
+    func test_устаревшийОтветSpotlightНеСчитается() throws {
+        FolderNewsArrivals.shared.forgetAll()
+        defer { FolderNewsArrivals.shared.forgetAll() }
+        let (top, inner) = try freshTree()
+        defer { try? FileManager.default.removeItem(at: top) }
+        let report = FolderNews.realPath(inner.appendingPathComponent("отчёт.docx").path)
+        let tally = FolderNewsTally(folder: top.path, since: Date().addingTimeInterval(-3600))
+        tally.take([(report, Date()), (inner.appendingPathComponent("унесённый.docx").path, Date())])
+        XCTAssertEqual(tally.recount()?[inner.path]?.count, 1, "файла, которого нет на месте, не считать")
+        XCTAssertTrue(tally.forget([report]), "журнал сказал: ушёл")
+        XCTAssertNil(tally.recount()?[inner.path])
+    }
+
     // MARK: - В панели
 
     private var root: URL!

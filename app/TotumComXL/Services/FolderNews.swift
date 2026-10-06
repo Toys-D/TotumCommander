@@ -3,11 +3,12 @@ import AppKit
 /// Новое внутри папки: в ней, на любой глубине, появились файлы за срок новизны.
 ///
 /// Новизна та же, что красит новые файлы: первое включённое правило «любое имя» со сроком в
-/// «Цвета файлов» — его срок и угасание. Узнаётся у Spotlight, а не обходом: обход всех
-/// подпапок нагружал бы диск так же, как подсчёт размеров папок, а Spotlight уже всё
-/// проиндексировал. Где он не индексирует — сеть, скрытые папки, диски без индекса, — знака
-/// просто нет. Знак — счётчик «+12» после имени (FolderNewsChip): сколько нового, гаснет к
-/// концу срока. Цвет — акцентный: им программа отмечает своё.
+/// «Цвета файлов» — его срок и угасание. Узнаётся не обходом — обход всех подпапок нагружал бы
+/// диск так же, как подсчёт размеров папок, — а у системы: из журнала изменений диска (FSEvents,
+/// FolderNewsArrivals) — сразу, в том числе перенесённое; у Spotlight — давнее. Spotlight о
+/// переносе узнаёт с большим опозданием. В сети и скрытых папках знака нет. Знак — счётчик
+/// «+12» после имени (FolderNewsChip): сколько нового, гаснет к концу срока. Цвет — акцентный:
+/// им программа отмечает своё.
 enum FolderNews {
 
     /// Отмечать ли папки с новым внутри. Включение и правка правил шлют
@@ -202,83 +203,148 @@ enum FolderNewsChip {
     }
 }
 
-/// Живой запрос к Spotlight: какие файлы внутри папки появились за срок новизны.
+/// Живой запрос к Spotlight и слежка по журналу диска (FolderNewsStream) — на одной фоновой
+/// очереди.
 ///
-/// Разбор — на своей фоновой очереди: в домашней папке за сутки появляются десятки тысяч
-/// файлов (почти все в ~/Library/Application Support, программы пишут туда постоянно), и
-/// перебирать их на главном потоке значило бы дёргать интерфейс каждую секунду. Первый сбор
-/// считается целиком, дальше — только добавленное и изменённое; удалённое — пересчётом.
-/// На главный поток уходит готовый словарь по подпапкам. Раз в десять минут запрос
-/// собирается заново: файлы, вышедшие за срок, выпадают из счёта.
+/// Разбор — не на главном потоке: в домашней папке за сутки появляются десятки тысяч файлов
+/// (почти все в ~/Library/Application Support, программы пишут туда постоянно), и перебирать их
+/// на главном значило бы дёргать интерфейс. Счёт — по объединению: что знает Spotlight и что
+/// пришло по журналу, один путь считается один раз. Раз в десять минут запрос к Spotlight
+/// собирается заново: файлы, вышедшие за срок, выпадают из счёта; слежка при этом не трогается.
+/// На главный поток уходит готовый словарь.
 final class FolderNewsQuery {
     private var query: NSMetadataQuery?
     private var observers: [NSObjectProtocol] = []
+    private var arrivalsObserver: NSObjectProtocol?
+    private var stream: FolderNewsStream?
     private var renewal: Timer?
-    private let queue: OperationQueue = {
+    private let work = DispatchQueue(label: "FolderNews", qos: .utility)
+    private lazy var queue: OperationQueue = {
         let queue = OperationQueue()
         queue.name = "FolderNews"
         queue.maxConcurrentOperationCount = 1
-        queue.qualityOfService = .utility
+        queue.underlyingQueue = work
         return queue
     }()
     /// Ответы старого запроса, доехавшие после перехода, узнаются по этому счётчику.
     private var generation = 0
     private(set) var folder: String?
     private(set) var period: TimeInterval?
+    /// Счёт последнего собранного запроса и отложенный пересчёт — только на очереди `work`.
+    private var tally: FolderNewsTally?
+    private var recountPending = false
     static let renewInterval: TimeInterval = 600
+    /// Пачки событий складываются: пересчёт не чаще раза в полсекунды.
+    static let recountDelay: TimeInterval = 0.5
     /// Папка и новое по её подпапкам. На главном потоке.
     var onUpdate: ((String, [String: FolderNews.Inside]) -> Void)?
 
-    /// Следить за папкой. Та же папка с тем же сроком — ничего не делает. С главного потока.
+    /// Следить за папкой. С главного потока, после каждого чтения папки панелью; та же папка с
+    /// тем же сроком — всё остаётся как есть.
     func follow(_ folder: String, period: TimeInterval) {
         guard folder != self.folder || period != self.period else { return }
-        start(folder, period: period)
-    }
-
-    private func start(_ folder: String, period: TimeInterval) {
         stop()
         generation &+= 1
-        let generation = self.generation
+        self.folder = folder
+        self.period = period
+        stream = FolderNewsStream(folder: folder, period: period, queue: work)
+        let bases = FolderNewsArrivals.bases(of: folder)
+        let generation = generation
+        let work = work
+        // Без очереди-получателя и с переходом вручную: с очередью отправитель ждал бы, пока
+        // блок выполнится, а шлёт и сама слежка с этой же очереди — встали бы оба.
+        arrivalsObserver = NotificationCenter.default.addObserver(
+            forName: FolderNewsArrivals.changed, object: nil, queue: nil) { [weak self] note in
+            work.async { self?.arrivalsChanged(note, bases: bases, generation: generation) }
+        }
+        ask(folder, period: period)
+    }
+
+    private func ask(_ folder: String, period: TimeInterval) {
+        stopQuery()
+        let generation = generation
         let query = NSMetadataQuery()
         query.predicate = NSPredicate(format: "%K >= %@", "kMDItemDateAdded",
                                       Date(timeIntervalSinceNow: -period) as NSDate)
         query.searchScopes = [URL(fileURLWithPath: folder, isDirectory: true)]
         query.notificationBatchingInterval = 1
         query.operationQueue = queue
-        let tally = FolderNewsTally(folder: folder)
+        let tally = FolderNewsTally(folder: folder, since: Date(timeIntervalSinceNow: -period),
+                                    generation: generation)
         let center = NotificationCenter.default
         observers = [
             center.addObserver(forName: .NSMetadataQueryDidFinishGathering, object: query,
                                queue: queue) { [weak self] _ in
-                self?.deliver(tally.gathered(from: query), folder: folder, generation: generation)
+                tally.gathered(from: query)
+                self?.adopt(tally)
             },
             center.addObserver(forName: .NSMetadataQueryDidUpdate, object: query,
                                queue: queue) { [weak self] note in
-                self?.deliver(tally.updated(by: note, in: query), folder: folder, generation: generation)
+                tally.updated(by: note, in: query)
+                self?.scheduleRecount()
             },
         ]
         self.query = query
-        self.folder = folder
-        self.period = period
         if !query.start() {
-            stop()
-            return
+            // Spotlight здесь не отвечает — считается то, что пришло по журналу.
+            stopQuery()
+            work.async { [weak self] in self?.adopt(tally) }
         }
+        renewal?.invalidate()
         renewal = Timer.scheduledTimer(withTimeInterval: Self.renewInterval, repeats: false) { [weak self] _ in
             guard let self, let folder = self.folder, let period = self.period else { return }
-            self.start(folder, period: period)
+            self.ask(folder, period: period)
         }
+    }
+
+    /// Собранный запрос становится текущим. До того в силе прежний — переход к новому сроку
+    /// не гасит счётчики на время сбора. На очереди `work`.
+    private func adopt(_ tally: FolderNewsTally) {
+        if let current = self.tally, current.generation == tally.generation, current.since > tally.since { return }
+        self.tally = tally
+        deliver(tally.recount(), folder: tally.folder, generation: tally.generation)
+    }
+
+    /// Журнал принёс пачку. Ушедшее с места Spotlight может ещё числить — забыть сразу.
+    /// На очереди `work`.
+    private func arrivalsChanged(_ note: Notification, bases: [String], generation: Int) {
+        guard let tally, tally.generation == generation else { return }
+        let inside = { (path: String) in bases.contains { path.hasPrefix($0) } }
+        let gone = (note.userInfo?["gone"] as? [String] ?? []).filter(inside)
+        let paths = note.userInfo?["paths"] as? [String] ?? []
+        if tally.forget(gone) || paths.contains(where: inside) { scheduleRecount() }
+    }
+
+    /// На очереди `work`.
+    private func scheduleRecount() {
+        guard !recountPending else { return }
+        recountPending = true
+        work.asyncAfter(deadline: .now() + Self.recountDelay) { [weak self] in
+            guard let self else { return }
+            self.recountPending = false
+            guard let tally = self.tally else { return }
+            self.deliver(tally.recount(), folder: tally.folder, generation: tally.generation)
+        }
+    }
+
+    private func stopQuery() {
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers = []
+        // Запрос живёт на своей очереди — там же и останавливается.
+        if let query { queue.addOperation { query.stop() } }
+        query = nil
     }
 
     func stop() {
         generation &+= 1
         renewal?.invalidate()
         renewal = nil
-        observers.forEach(NotificationCenter.default.removeObserver)
-        observers = []
-        // Запрос живёт на своей очереди — там же и останавливается.
-        if let query { queue.addOperation { query.stop() } }
-        query = nil
+        stopQuery()
+        stream?.stop()
+        stream = nil
+        if let arrivalsObserver { NotificationCenter.default.removeObserver(arrivalsObserver) }
+        arrivalsObserver = nil
+        work.async { [weak self] in self?.tally = nil }
         folder = nil
         period = nil
     }
@@ -294,52 +360,93 @@ final class FolderNewsQuery {
     deinit {
         renewal?.invalidate()
         observers.forEach(NotificationCenter.default.removeObserver)
+        if let arrivalsObserver { NotificationCenter.default.removeObserver(arrivalsObserver) }
         if let query { queue.addOperation { query.stop() } }
+        stream?.stop()
     }
 }
 
-/// Счёт нового по подпапкам для одного запроса. Живёт на очереди запроса.
+/// Счёт нового по подпапкам для одного запроса: что знает Spotlight и что пришло по журналу.
+/// Живёт на очереди запроса.
 final class FolderNewsTally {
     let folder: String
-    private(set) var news: [String: FolderNews.Inside] = [:]
+    let since: Date
+    let generation: Int
+    /// Что нашёл Spotlight и что лежит на месте: путь → когда появился.
+    private(set) var spotlight: [String: Date] = [:]
+    /// Путь панели и настоящий — разные, если панель пришла по ссылке (/var → /private/var).
+    private let bases: [String]
+    private var delivered: [String: FolderNews.Inside]?
 
-    init(folder: String) { self.folder = folder }
+    init(folder: String, since: Date, generation: Int = 0) {
+        self.folder = folder
+        self.since = since
+        self.generation = generation
+        bases = FolderNewsArrivals.bases(of: folder)
+    }
 
     /// Первый сбор — целиком.
-    func gathered(from query: NSMetadataQuery) -> [String: FolderNews.Inside] {
+    func gathered(from query: NSMetadataQuery) {
         query.disableUpdates()
         let items = (0..<query.resultCount).compactMap { query.result(at: $0) as? NSMetadataItem }
-        let list = Self.files(in: items)
         query.enableUpdates()
-        news = FolderNews.newsByChild(of: folder, found: list)
+        spotlight = [:]
+        take(Self.files(in: items))
+    }
+
+    /// Обновление: добавленное и изменённое — поверх; если что-то удалили — сбор заново.
+    func updated(by note: Notification, in query: NSMetadataQuery) {
+        let info = note.userInfo ?? [:]
+        if let removed = info[NSMetadataQueryUpdateRemovedItemsKey] as? [Any], !removed.isEmpty {
+            gathered(from: query)
+            return
+        }
+        let fresh = ((info[NSMetadataQueryUpdateAddedItemsKey] as? [NSMetadataItem]) ?? [])
+            + ((info[NSMetadataQueryUpdateChangedItemsKey] as? [NSMetadataItem]) ?? [])
+        take(Self.files(in: fresh))
+    }
+
+    /// Находки Spotlight — только то, что лежит на месте: о переносе он узнаёт с опозданием и
+    /// долго числит файл там, откуда его унесли.
+    func take(_ found: [(String, Date)]) {
+        var info = stat()
+        for (path, added) in found where lstat(path, &info) == 0 {
+            spotlight[path] = max(spotlight[path] ?? added, added)
+        }
+    }
+
+    /// Журнал сказал, что этих файлов на месте нет. Было что забыть — true.
+    func forget(_ paths: [String]) -> Bool {
+        var forgot = false
+        for path in paths where spotlight.removeValue(forKey: path) != nil { forgot = true }
+        return forgot
+    }
+
+    /// Счёт по объединению: Spotlight и журнал, один путь — один раз. nil — с прошлого раза
+    /// ничего не поменялось, перерисовывать нечего.
+    func recount() -> [String: FolderNews.Inside]? {
+        var union: [String: Date] = [:]
+        let found = spotlight.map { (path: $0.key, added: $0.value) }
+            + FolderNewsArrivals.shared.entries(under: folder, since: since)
+        for (path, added) in found where added >= since {
+            let key = realSpelling(path)
+            union[key] = max(union[key] ?? added, added)
+        }
+        let news = FolderNews.newsByChild(of: folder, found: union.map { ($0.key, $0.value) })
+        guard news != delivered else { return nil }
+        delivered = news
         return news
     }
 
-    /// Обновление: добавленное — в счёт; изменённое — только свежайшая дата; если что-то
-    /// удалили — пересчёт. nil — для знака ничего не поменялось.
-    func updated(by note: Notification, in query: NSMetadataQuery) -> [String: FolderNews.Inside]? {
-        let info = note.userInfo ?? [:]
-        if let removed = info[NSMetadataQueryUpdateRemovedItemsKey] as? [Any], !removed.isEmpty {
-            let before = news
-            let after = gathered(from: query)
-            return after == before ? nil : after
-        }
-        let added = Self.files(in: (info[NSMetadataQueryUpdateAddedItemsKey] as? [NSMetadataItem]) ?? [])
-        let changed = Self.files(in: (info[NSMetadataQueryUpdateChangedItemsKey] as? [NSMetadataItem]) ?? [])
-        var next = FolderNews.adding(news, FolderNews.newsByChild(of: folder, found: added))
-        for (child, more) in FolderNews.newsByChild(of: folder, found: changed) {
-            if var known = next[child] {
-                known.newest = max(known.newest, more.newest)
-                next[child] = known
-            }
-        }
-        guard next != news else { return nil }
-        news = next
-        return next
+    /// Один файл — одно написание: Spotlight и журнал дают настоящий путь, тесты и ссылки —
+    /// как получится.
+    private func realSpelling(_ path: String) -> String {
+        guard bases.count == 2, path.hasPrefix(bases[0]) else { return path }
+        return bases[1] + path.dropFirst(bases[0].count)
     }
 
     /// Файлы — не папки: новая пустая папка внутри ещё не «новые файлы».
-    private static func files(in items: [NSMetadataItem]) -> [(path: String, added: Date)] {
+    private static func files(in items: [NSMetadataItem]) -> [(String, Date)] {
         items.compactMap { item in
             guard let path = item.value(forAttribute: NSMetadataItemPathKey) as? String,
                   let added = item.value(forAttribute: "kMDItemDateAdded") as? Date,

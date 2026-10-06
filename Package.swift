@@ -341,6 +341,7 @@ let package = Package(
                 "Services/BookmarkNames.swift",
                 "Services/FileColorRules.swift",
                 "Services/FolderNews.swift",
+                "Services/FolderNewsArrivals.swift",
                 "Views/Viewer/MediaPreviewView.swift",
                 "Views/MainWindow/MainWindowController.swift",
                 "Views/MainWindow/MainWindowController+MenuCommands.swift",

@@ -1,9 +1,9 @@
 import Foundation
 
-/// Знак «новое внутри» у подпапок открытой папки — по ответам Spotlight (см. FolderNews).
+/// Знак «новое внутри» у подпапок открытой папки — по журналу диска и Spotlight (см. FolderNews).
 extension PanelViewModel {
 
-    /// Начать спрашивать Spotlight. Зовёт панель на экране.
+    /// Начать следить за новым. Зовёт панель на экране.
     func watchFolderNews() {
         guard folderNewsQuery == nil else { return }
         let query = FolderNewsQuery()
@@ -31,7 +31,7 @@ extension PanelViewModel {
         query.follow(folder, period: minutes * 60)
     }
 
-    /// Ответ Spotlight — в папки списка. Ответ о папке, из которой панель уже ушла,
+    /// Счёт нового — в папки списка. Ответ о папке, из которой панель уже ушла,
     /// отбрасывается.
     func applyFolderNews(_ news: [String: FolderNews.Inside], in folder: String) {
         guard folder == currentPath else { return }
