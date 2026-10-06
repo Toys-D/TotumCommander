@@ -4,18 +4,26 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "fcxl/compare/file_diff.h"
+#include "fcxl/search/name_match.h"
 
 namespace fcxl::compare {
 namespace {
 
-auto collect_relative_paths(const std::filesystem::path& root)
-    -> common::Result<std::set<std::filesystem::path>> {
-    std::set<std::filesystem::path> paths;
+// Относительные пути дерева — по составленной (NFC) форме имени. macOS хранит имя в той форме,
+// в какой его записали: Finder и всё, что пишет через Cocoa, — разложенной («ё» = «е» + U+0308),
+// терминал и другие системы — составленной. Имя на экране одно, байты разные, и при побайтовом
+// сравнении один и тот же файл выходил «только слева» плюс «только справа». Значение — путь, как
+// он записан на этой стороне: по нему и открывается файл.
+using PathsByName = std::map<std::string, std::filesystem::path>;
+
+auto collect_relative_paths(const std::filesystem::path& root) -> common::Result<PathsByName> {
+    PathsByName paths;
     std::error_code ec;
 
     for (auto it = std::filesystem::recursive_directory_iterator(root, ec);
@@ -25,7 +33,12 @@ auto collect_relative_paths(const std::filesystem::path& root)
                                        "Directory traversal error: " + ec.message(),
                                        root.string());
         }
-        paths.insert(std::filesystem::relative(it->path(), root));
+        auto relative = std::filesystem::relative(it->path(), root);
+        // Два имени одной формы рядом (бывает только не на APFS) — остаются оба, второе под
+        // своими байтами.
+        if (!paths.emplace(search::to_composed_form(relative.string()), relative).second) {
+            paths.emplace(relative.string(), relative);
+        }
     }
 
     return paths;
@@ -73,31 +86,35 @@ auto DirDiff::compare(std::string_view dir_a, std::string_view dir_b, bool by_co
     const auto& paths_a = paths_a_result.value();
     const auto& paths_b = paths_b_result.value();
 
-    // Merge all unique relative paths
-    std::set<std::filesystem::path> all_paths;
-    all_paths.insert(paths_a.begin(), paths_a.end());
-    all_paths.insert(paths_b.begin(), paths_b.end());
+    // Merge all unique names
+    std::set<std::string> all_names;
+    for (const auto& [name, _] : paths_a) all_names.insert(name);
+    for (const auto& [name, _] : paths_b) all_names.insert(name);
 
     std::vector<DirDiffEntry> result;
-    result.reserve(all_paths.size());
+    result.reserve(all_names.size());
 
-    for (const auto& rel : all_paths) {
-        const bool in_a = paths_a.count(rel) > 0;
-        const bool in_b = paths_b.count(rel) > 0;
+    for (const auto& name : all_names) {
+        const auto found_a = paths_a.find(name);
+        const auto found_b = paths_b.find(name);
+        const bool in_a = found_a != paths_a.end();
+        const bool in_b = found_b != paths_b.end();
 
         DirDiffEntry entry;
-        entry.relative_path = rel;
+        // Написание левой стороны: APFS находит файл по любой форме имени, так что этим путём
+        // открывается и правый.
+        entry.relative_path = in_a ? found_a->second : found_b->second;
 
         if (in_a && !in_b) {
             entry.status = DirEntryStatus::LeftOnly;
-            entry.is_directory = std::filesystem::is_directory(root_a / rel, ec);
+            entry.is_directory = std::filesystem::is_directory(root_a / found_a->second, ec);
         } else if (!in_a && in_b) {
             entry.status = DirEntryStatus::RightOnly;
-            entry.is_directory = std::filesystem::is_directory(root_b / rel, ec);
+            entry.is_directory = std::filesystem::is_directory(root_b / found_b->second, ec);
         } else {
-            // Both exist
-            const auto full_a = root_a / rel;
-            const auto full_b = root_b / rel;
+            // Both exist — each side opened by its own spelling
+            const auto full_a = root_a / found_a->second;
+            const auto full_b = root_b / found_b->second;
             entry.is_directory = std::filesystem::is_directory(full_a, ec);
 
             if (entry.is_directory) {
