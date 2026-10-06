@@ -645,6 +645,21 @@ auto encrypted_entry_without_password(const ReaderSession& session, const mz_zip
            (file_info->flag & MZ_ZIP_FLAG_ENCRYPTED) != 0;
 }
 
+// Файл записи, который не вышел целиком, не остаётся на диске — ни пустой заглушкой, ни обрывком.
+// После отказа из-за пароля приложение повторяет распаковку с overwrite_existing = false, и
+// заглушку оно пропускало как уже распакованный файл: человек получал пустой файл без всякой
+// ошибки. Зовут только для файла, который эта распаковка сама создала или переписала; ссылку,
+// сквозь которую писали, не трогаем.
+void discard_partial_output(std::FILE* output, const stdfs::path& path) {
+    if (output != nullptr) {
+        std::fclose(output);
+    }
+    std::error_code ec;
+    if (stdfs::symlink_status(path, ec).type() == stdfs::file_type::regular) {
+        stdfs::remove(path, ec);
+    }
+}
+
 auto mz_file_write_callback(void* stream, const void* buf, int32_t len) -> int32_t {
     if (stream == nullptr || buf == nullptr || len < 0) {
         return MZ_PARAM_ERROR;
@@ -832,7 +847,7 @@ auto extract_single_zip_entry_with_minizip(
 
                 for (;;) {
                     if (should_cancel(cancelled)) {
-                        std::fclose(output);
+                        discard_partial_output(output, output_path);
                         return cancelled_error(session.path);
                     }
 
@@ -844,7 +859,7 @@ auto extract_single_zip_entry_with_minizip(
                         break;
                     }
                     if (mz_status < 0) {
-                        std::fclose(output);
+                        discard_partial_output(output, output_path);
                         return minizip_error_to_result(
                             mz_status,
                             "Extract ZIP entry",
@@ -864,6 +879,7 @@ auto extract_single_zip_entry_with_minizip(
                 }
 
                 if (std::fclose(output) != 0) {
+                    discard_partial_output(nullptr, output_path);
                     return make_error(common::ErrorCode::IOError,
                                       "Failed to flush output file",
                                       output_path.string());
@@ -1043,7 +1059,7 @@ auto extract_all_zip_entries_with_minizip(
 
                     for (;;) {
                         if (should_cancel(cancelled)) {
-                            std::fclose(output);
+                            discard_partial_output(output, output_path);
                             return cancelled_error(session.path);
                         }
 
@@ -1055,7 +1071,7 @@ auto extract_all_zip_entries_with_minizip(
                             break;
                         }
                         if (mz_status < 0) {
-                            std::fclose(output);
+                            discard_partial_output(output, output_path);
                             return minizip_error_to_result(
                                 mz_status,
                                 "Extract ZIP entry",
@@ -1075,6 +1091,7 @@ auto extract_all_zip_entries_with_minizip(
                     }
 
                     if (std::fclose(output) != 0) {
+                        discard_partial_output(nullptr, output_path);
                         return make_error(common::ErrorCode::IOError,
                                           "Failed to flush output file",
                                           output_path.string());
@@ -1340,6 +1357,15 @@ auto extract_entries(const ReaderSession& session,
         const std::string output_path_string = output_path.string();
         archive_entry_set_pathname(entry, output_path_string.c_str());
 
+        // Уже лежащий файл при overwrite_existing = false libarchive пропускает нетронутым, но
+        // данные записи всё равно читает — и может на них упасть. Такой файл не наш, и при отказе
+        // его не убирают.
+        std::error_code status_ec;
+        const bool writes_own_file =
+            !is_directory &&
+            (overwrite_existing ||
+             stdfs::symlink_status(output_path, status_ec).type() == stdfs::file_type::not_found);
+
         const int header_status = archive_write_header(writer.get(), entry);
         if (header_status < ARCHIVE_WARN) {
             return to_result_error("Failed to write extracted entry header", output_path_string, writer.get());
@@ -1353,11 +1379,18 @@ auto extract_entries(const ReaderSession& session,
                 [&report_progress, &entry_path]() {
                     report_progress(entry_path, true);
                 });
-            if (should_cancel(cancelled)) {
-                return cancelled_error(session.path);
-            }
-            if (copy_status < ARCHIVE_WARN) {
-                return to_result_error("Failed to extract archive entry data", output_path_string, reader.get());
+            const bool stopped = should_cancel(cancelled);
+            if (stopped || copy_status < ARCHIVE_WARN) {
+                const common::Error error =
+                    stopped ? cancelled_error(session.path)
+                            : to_result_error("Failed to extract archive entry data",
+                                              output_path_string, reader.get());
+                if (writes_own_file) {
+                    // libarchive держит файл открытым: сперва закрыть запись, потом убрать.
+                    (void)archive_write_finish_entry(writer.get());
+                    discard_partial_output(nullptr, output_path);
+                }
+                return error;
             }
         }
 

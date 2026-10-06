@@ -77,6 +77,25 @@ protected:
         return archive_path;
     }
 
+    // Дорога приложения: с обратным вызовом хода архив пишет libarchive, AES-256.
+    auto create_password_zip(std::string_view archive_name,
+                             const std::string& file_name,
+                             std::string_view content,
+                             std::string_view password) -> stdfs::path {
+        const auto source = test_dir_ / "source" / file_name;
+        write_file(source, content);
+
+        const auto archive_path = test_dir_ / archive_name;
+        archive::ArchiveWriter writer;
+        EXPECT_TRUE(writer.create(archive_path.string(), archive::ArchiveFormat::ZIP, password, 6,
+                                  false,
+                                  [](const std::string&, int64_t, int64_t, int, int, int64_t) {})
+                        .has_value());
+        EXPECT_TRUE(writer.add_file(source.string()).has_value());
+        EXPECT_TRUE(writer.finalize().has_value());
+        return archive_path;
+    }
+
     auto create_tar_xz_archive(
         std::string_view archive_name,
         const std::vector<std::pair<std::string, std::string>>& files) -> stdfs::path {
@@ -737,20 +756,9 @@ TEST_F(ArchiveReaderTest, should_refuse_encrypted_zip_entry_without_password) {
     // блок deflate, фиксированные коды, сразу конец блока), то, прочитанный без пароля как сжатые
     // данные, шифротекст — целый пустой поток, и распаковка «удавалась» пустым файлом. Так
     // случилось в одном из прогонов; здесь соль выставлена такой нарочно, а не ждёт случая.
-    const auto source = test_dir_ / "source" / "secret.txt";
-    write_file(source, "content that must not come out without the password");
-
-    // Дорога приложения: с обратным вызовом хода архив пишет libarchive, AES-256.
-    const auto archive_path = test_dir_ / "safe.zip";
-    {
-        archive::ArchiveWriter writer;
-        ASSERT_TRUE(writer.create(archive_path.string(), archive::ArchiveFormat::ZIP,
-                                  "password-123", 6, false,
-                                  [](const std::string&, int64_t, int64_t, int, int, int64_t) {})
-                        .has_value());
-        ASSERT_TRUE(writer.add_file(source.string()).has_value());
-        ASSERT_TRUE(writer.finalize().has_value());
-    }
+    const auto archive_path = create_password_zip(
+        "safe.zip", "secret.txt", "content that must not come out without the password",
+        "password-123");
 
     // Данные записи идут сразу за её локальным заголовком, и первыми в них лежит соль.
     {
@@ -780,4 +788,55 @@ TEST_F(ArchiveReaderTest, should_refuse_encrypted_zip_entry_without_password) {
     EXPECT_EQ(one.error().code, common::ErrorCode::PermissionDenied) << one.error().message;
 
     reader.close();
+}
+
+TEST_F(ArchiveReaderTest, should_leave_no_stub_when_password_is_refused) {
+    // Отказ из-за пароля не оставляет на диске заглушку. Приложение повторяет распаковку с
+    // верным паролем и overwrite_existing = false — и заглушку оно пропускало как уже
+    // распакованный файл: человек получал пустой файл без всякой ошибки. Обе дороги: .zip
+    // читает minizip, тот же архив под именем .cbz — libarchive.
+    const std::string secret = "content that must come out whole";
+    const auto zip_path = create_password_zip("safe.zip", "secret.txt", secret, "password-123");
+    stdfs::copy_file(zip_path, test_dir_ / "safe.cbz");
+
+    for (const std::string name : {"safe.zip", "safe.cbz"}) {
+        for (const std::string refused : {"", "wrong-password"}) {
+            SCOPED_TRACE(name + (refused.empty() ? ", без пароля" : ", неверный пароль"));
+            const auto archive_path = test_dir_ / name;
+            const auto out = test_dir_ / ("out-" + name + (refused.empty() ? "-none" : "-wrong"));
+
+            archive::ArchiveReader first;
+            ASSERT_TRUE(first.open(archive_path.string(), refused).has_value());
+            EXPECT_FALSE(first.extract_all(out.string(), nullptr, false, {}).has_value());
+            first.close();
+            EXPECT_FALSE(stdfs::exists(out / "secret.txt")) << "отказ оставил заглушку";
+
+            archive::ArchiveReader retry;
+            ASSERT_TRUE(retry.open(archive_path.string(), "password-123").has_value());
+            const auto result = retry.extract_all(out.string(), nullptr, false, {});
+            retry.close();
+            ASSERT_TRUE(result.has_value()) << result.error().message;
+            EXPECT_EQ(read_file(out / "secret.txt"), secret);
+        }
+    }
+}
+
+TEST_F(ArchiveReaderTest, should_keep_existing_file_when_refused_entry_was_skipped) {
+    // При overwrite_existing = false уже лежащий файл распаковка пропускает, но libarchive всё
+    // равно читает данные записи — и с неверным паролем падает. Убирать недописанное можно
+    // только своё: чужой файл, который распаковка и не трогала, отказ уносить не должен.
+    const auto zip_path = create_password_zip("safe.zip", "secret.txt", "archived", "password-123");
+    stdfs::copy_file(zip_path, test_dir_ / "safe.cbz");
+
+    for (const std::string name : {"safe.zip", "safe.cbz"}) {
+        SCOPED_TRACE(name);
+        const auto out = test_dir_ / ("out-" + name);
+        write_file(out / "secret.txt", "mine");
+
+        archive::ArchiveReader reader;
+        ASSERT_TRUE(reader.open((test_dir_ / name).string(), "wrong-password").has_value());
+        (void)reader.extract_all(out.string(), nullptr, false, {});
+        reader.close();
+        EXPECT_EQ(read_file(out / "secret.txt"), "mine");
+    }
 }

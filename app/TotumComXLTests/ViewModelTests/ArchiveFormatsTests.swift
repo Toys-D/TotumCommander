@@ -490,11 +490,11 @@ final class PasswordArchiveTests: XCTestCase {
             XCTAssertTrue(ArchivePasswords.isPasswordFailure(error),
                           "не распознано как запрос пароля: \(error)")
         }
-        // The refusal may leave an empty stub behind; what must NEVER appear is the content.
-        let leaked = (try? String(contentsOfFile: (out as NSString)
-            .appendingPathComponent("тайна.txt"), encoding: .utf8)) ?? ""
-        XCTAssertFalse(leaked.contains("не должно читаться"),
-                       "the secret came out without the password")
+        // The refusal leaves nothing behind: not the content, and not an empty stub either — the
+        // retry with the password would take the stub for an already extracted file.
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: (out as NSString).appendingPathComponent("тайна.txt")),
+            "отказ оставил файл на месте распаковки")
 
         // A wrong password is the same refusal — and classifies the same way.
         XCTAssertThrowsError(try bridge.extractArchiveAll(
@@ -504,9 +504,10 @@ final class PasswordArchiveTests: XCTestCase {
                           "неверный пароль не распознан как запрос пароля: \(error)")
         }
 
-        // The right one opens it, byte for byte.
+        // The right one opens it, byte for byte — retried the way the unpack retries, without
+        // overwriting: whatever a refusal left behind would be skipped as already extracted.
         try bridge.extractArchiveAll(archivePath: archive, destinationPath: out,
-                                     overwriteExisting: true, password: "пароль-123",
+                                     overwriteExisting: false, password: "пароль-123",
                                      progress: { _, _, _, _, _, _ in })
         XCTAssertEqual(try String(contentsOfFile: (out as NSString)
             .appendingPathComponent("тайна.txt"), encoding: .utf8), secret)
