@@ -731,3 +731,53 @@ TEST_F(ArchiveReaderTest, should_extract_folder_with_its_files_from_iso) {
 
     reader.close();
 }
+
+TEST_F(ArchiveReaderTest, should_refuse_encrypted_zip_entry_without_password) {
+    // Шифротекст начинается с соли AES, а она случайна. Если её первые биты — 03 00 (последний
+    // блок deflate, фиксированные коды, сразу конец блока), то, прочитанный без пароля как сжатые
+    // данные, шифротекст — целый пустой поток, и распаковка «удавалась» пустым файлом. Так
+    // случилось в одном из прогонов; здесь соль выставлена такой нарочно, а не ждёт случая.
+    const auto source = test_dir_ / "source" / "secret.txt";
+    write_file(source, "content that must not come out without the password");
+
+    // Дорога приложения: с обратным вызовом хода архив пишет libarchive, AES-256.
+    const auto archive_path = test_dir_ / "safe.zip";
+    {
+        archive::ArchiveWriter writer;
+        ASSERT_TRUE(writer.create(archive_path.string(), archive::ArchiveFormat::ZIP,
+                                  "password-123", 6, false,
+                                  [](const std::string&, int64_t, int64_t, int, int, int64_t) {})
+                        .has_value());
+        ASSERT_TRUE(writer.add_file(source.string()).has_value());
+        ASSERT_TRUE(writer.finalize().has_value());
+    }
+
+    // Данные записи идут сразу за её локальным заголовком, и первыми в них лежит соль.
+    {
+        std::fstream zip(archive_path, std::ios::in | std::ios::out | std::ios::binary);
+        unsigned char header[30] = {};
+        zip.read(reinterpret_cast<char*>(header), sizeof(header));
+        ASSERT_EQ(std::string(reinterpret_cast<char*>(header), 4), std::string("PK\x03\x04", 4));
+        const int name_length = header[26] | (header[27] << 8);
+        const int extra_length = header[28] | (header[29] << 8);
+        zip.seekp(30 + name_length + extra_length);
+        const char empty_final_block[] = {0x03, 0x00};
+        zip.write(empty_final_block, sizeof(empty_final_block));
+        ASSERT_TRUE(zip.good());
+    }
+
+    archive::ArchiveReader reader;
+    ASSERT_TRUE(reader.open(archive_path.string()).has_value());
+
+    const auto all_dir = test_dir_ / "all";
+    const auto all = reader.extract_all(all_dir.string(), nullptr, true, {});
+    ASSERT_FALSE(all.has_value()) << "extract_all раскрыл зашифрованную запись без пароля";
+    EXPECT_EQ(all.error().code, common::ErrorCode::PermissionDenied) << all.error().message;
+
+    const auto one_dir = test_dir_ / "one";
+    const auto one = reader.extract_entry("secret.txt", one_dir.string());
+    ASSERT_FALSE(one.has_value()) << "extract_entry раскрыл зашифрованную запись без пароля";
+    EXPECT_EQ(one.error().code, common::ErrorCode::PermissionDenied) << one.error().message;
+
+    reader.close();
+}

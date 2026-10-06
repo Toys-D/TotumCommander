@@ -633,6 +633,18 @@ auto minizip_error_to_result(int32_t code,
                       path);
 }
 
+// Зашифрованная запись без пароля — отказ ДО распаковки, а не по её итогам. minizip без пароля
+// не отказывает сам: он отдаёт распаковщику сырой шифротекст, и «нужен пароль» держалось лишь на
+// том, что deflate на случайных байтах спотыкается. Но примерно раз на двести архивов случайный
+// шифротекст оказывается целым deflate-потоком, который кончается раньше данных: распаковка
+// «удавалась», CRC minizip в таком случае не сверяет, и вместо отказа выходил пустой файл или
+// горсть мусорных байтов.
+auto encrypted_entry_without_password(const ReaderSession& session, const mz_zip_file* file_info)
+    -> bool {
+    return session.password.empty() && file_info != nullptr &&
+           (file_info->flag & MZ_ZIP_FLAG_ENCRYPTED) != 0;
+}
+
 auto mz_file_write_callback(void* stream, const void* buf, int32_t len) -> int32_t {
     if (stream == nullptr || buf == nullptr || len < 0) {
         return MZ_PARAM_ERROR;
@@ -797,6 +809,10 @@ auto extract_single_zip_entry_with_minizip(
                                       files_done, files_total);
                 }
             } else {
+                if (encrypted_entry_without_password(session, file_info)) {
+                    return minizip_error_to_result(
+                        MZ_PASSWORD_ERROR, "Extract ZIP entry", entry_path);
+                }
                 std::FILE* output = std::fopen(output_path.string().c_str(), "wb");
                 if (output == nullptr) {
                     return make_error(common::ErrorCode::IOError,
@@ -1014,6 +1030,10 @@ auto extract_all_zip_entries_with_minizip(
                 }
 
                 if (shouldExtractFile) {
+                    if (encrypted_entry_without_password(session, file_info)) {
+                        return minizip_error_to_result(
+                            MZ_PASSWORD_ERROR, "Extract ZIP entry", entry_path);
+                    }
                     std::FILE* output = std::fopen(output_path.string().c_str(), "wb");
                     if (output == nullptr) {
                         return make_error(common::ErrorCode::IOError,
