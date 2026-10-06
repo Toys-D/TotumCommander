@@ -424,6 +424,7 @@ final class ContextMenuLayoutTests: XCTestCase {
         let folder = NSTemporaryDirectory() + "ctx-\(UUID().uuidString)"
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: folder + "/файл.txt", contents: Data("текст".utf8))
+        // Уборка папки записана раньше, чем панель, — значит, и выполнится после её слежки.
         addTeardownBlock { try? FileManager.default.removeItem(atPath: folder) }
         let vc = try panel()
         vc.viewModel.loadDirectory(at: folder)
@@ -440,6 +441,10 @@ final class ContextMenuLayoutTests: XCTestCase {
                                 pathDefaultsKey: "panel.path.ctx.\(id)",
                                 viewModeDefaultsKey: "panel.mode.ctx.\(id)",
                                 showHiddenFiles: false)
+        // Слежка уходит раньше папки (уборка идёт с конца). Модель, потеряв папку, уходит в
+        // ближайшую родительскую — общую временную, на десятки тысяч записей, — и перечитывает
+        // её при каждом изменении до конца прогона.
+        addTeardownBlock { [weak vm] in MainActor.assumeIsolated { vm?.stopWatching() } }
         let tabs = PanelTabsViewModel(panelKey: "tabs.ctx.\(id)", initialPath: NSHomeDirectory())
         let vc = PanelViewController(viewModel: vm, tabsVM: tabs, side: .left)
         vc.loadViewIfNeeded()

@@ -9,26 +9,30 @@ import XCTest
 @MainActor
 final class ContextMenuShapeTests: XCTestCase {
 
-    private func makePanel() -> PanelViewController {
+    /// Панель стоит в своей подпапке, а не в самой общей временной.
+    private func makePanel(in dir: String) -> PanelViewController {
         let vm = PanelViewModel(
             service: CoreBridgeService(),
-            initialPath: NSTemporaryDirectory(),
+            initialPath: dir,
             pathDefaultsKey: "menu.test.\(UUID().uuidString)",
             viewModeDefaultsKey: "menu.mode.\(UUID().uuidString)",
             showHiddenFiles: true)
+        // Слежка уходит раньше папки (уборка идёт с конца): модель, потеряв папку, уходит в
+        // общую временную и перечитывает её до конца прогона.
+        addTeardownBlock { [weak vm] in MainActor.assumeIsolated { vm?.stopWatching() } }
         let tabsVM = PanelTabsViewModel(panelKey: "menu.tabs.\(UUID().uuidString)",
-                                        initialPath: NSTemporaryDirectory())
+                                        initialPath: dir)
         let vc = PanelViewController(viewModel: vm, tabsVM: tabsVM, side: .left)
         vc.loadViewIfNeeded()
         return vc
     }
 
     private func menu(for name: String, contents: Data = Data("x".utf8)) throws -> NSMenu {
-        let vc = makePanel()
         let dir = (NSTemporaryDirectory() as NSString)
             .appendingPathComponent("fcxl-menu-\(UUID().uuidString)")
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(atPath: dir) }
+        let vc = makePanel(in: dir)
         let path = (dir as NSString).appendingPathComponent(name)
         try contents.write(to: URL(fileURLWithPath: path))
         vc.viewModel.loadDirectory(at: dir)
