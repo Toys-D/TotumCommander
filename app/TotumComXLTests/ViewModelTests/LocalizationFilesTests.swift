@@ -32,6 +32,33 @@ final class LocalizationFilesTests: XCTestCase {
         XCTAssertTrue(extra.isEmpty, "лишние в en: \(extra)")
     }
 
+    /// Каждый ключ, который код просит у L(), есть в обоих языках. Иначе на экран выходит сам
+    /// ключ: так заголовок ошибки переименования был «rename.errorTitle», окно «Переименовать»
+    /// — «rename.message», а окно настроек — «settings.title». Ключи, собранные на ходу из
+    /// частей, так не проверить — только написанные целиком.
+    func test_каждыйКлючИзКодаЕстьВОбоихЯзыках() throws {
+        let ru = try table("ru")
+        let en = try table("en")
+        let sources = resources.deletingLastPathComponent()
+        let call = try NSRegularExpression(pattern: #"\bL\("([^"\\]+)"\s*[,)]"#)
+        var keys: [String: String] = [:]
+        let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)
+        while let file = files?.nextObject() as? URL {
+            guard file.pathExtension == "swift", let text = try? String(contentsOf: file, encoding: .utf8)
+            else { continue }
+            let range = NSRange(text.startIndex..., in: text)
+            for match in call.matches(in: text, range: range) {
+                if let key = Range(match.range(at: 1), in: text).map({ String(text[$0]) }) {
+                    keys[key] = file.lastPathComponent
+                }
+            }
+        }
+        XCTAssertGreaterThan(keys.count, 1000, "ключи из кода не нашлись — не тот путь к исходникам")
+        let missing = keys.filter { ru[$0.key] == nil || en[$0.key] == nil }
+            .map { "\($0.key) (\($0.value))" }.sorted()
+        XCTAssertTrue(missing.isEmpty, "нет перевода: \(missing)")
+    }
+
     /// Английский бандл из сборки отдаёт английское: именно этим путём идёт L() после
     /// выбора языка в настройках.
     func test_английскийБандлСборкиОтдаётАнглийское() throws {

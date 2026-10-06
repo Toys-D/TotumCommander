@@ -373,6 +373,13 @@
 "rename.exists" = "A file with this name already exists";
 "rename.invalidName" = "Invalid name";
 "rename.slashError" = "File name must not contain /";
+"rename.errorTitle" = "Couldn’t rename";
+"rename.message" = "New name:";
+"rename.confirm" = "Rename";
+"rename.conflict.message" = "Create copy — the name becomes “%@”. Replace — the old “%@” is deleted.";
+"rename.conflict.messageNoReplace" = "Create copy — the name becomes “%@”. Replace isn’t possible: one of the two is a folder.";
+"rename.conflict.renamed" = "Being renamed:";
+"rename.conflict.existing" = "Existing:";
 
 /* === Create dir/file === */
 "mkdir.title" = "Create folder";
@@ -1039,6 +1046,7 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 // MARK: - Main menu / language
 "menu.about" = "About Totum Commander";
 "menu.settings" = "Settings…";
+"settings.title" = "Settings";
 "menu.hide" = "Hide Totum Commander";
 "menu.hideOthers" = "Hide Others";
 "menu.showAll" = "Show All";

@@ -158,6 +158,70 @@ final class FileOperationsServiceTests: XCTestCase {
         XCTAssertTrue(exists(src))
     }
 
+    /// На обычном диске Mac имя ищется без учёта регистра: по «Hair.svg» находился сам
+    /// «hair.svg», и смена одного регистра отвергалась как «уже существует».
+    func test_renameItem_сменаОдногоРегистра() throws {
+        let src = makeFile("hair.svg", "волосы")
+        let item = try item(at: src)
+        XCTAssertNil(ops.renameConflict(for: item, to: "Hair.svg"), "это он сам, а не другой файл")
+        try ops.renameItem(item, to: "Hair.svg")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: tmp), ["Hair.svg"])
+        XCTAssertEqual(read(path("Hair.svg")), "волосы")
+    }
+
+    func test_renameItem_занятоДругим_спрашиваетИЗаменяет() throws {
+        let src = makeFile("figure.svg", "новое")
+        let occupied = makeFile("hair.svg", "старое")
+        var asked: (occupied: String, copyName: String, canReplace: Bool)?
+        let name = try ops.renameItem(try item(at: src), to: "hair.svg") { occupied, copyName, canReplace in
+            asked = (occupied, copyName, canReplace)
+            return .replace
+        }
+        XCTAssertEqual(asked?.occupied, occupied)
+        XCTAssertEqual(asked?.copyName, "hair (1).svg", "имя для копии — как при копировании")
+        XCTAssertEqual(asked?.canReplace, true)
+        XCTAssertEqual(name, "hair.svg")
+        XCTAssertFalse(exists(src))
+        XCTAssertEqual(read(occupied), "новое", "прежний заменён переименованным")
+    }
+
+    func test_renameItem_занятоДругим_копияПолучаетСвободноеИмя() throws {
+        let src = makeFile("figure.svg", "новое")
+        let occupied = makeFile("hair.svg", "старое")
+        let name = try ops.renameItem(try item(at: src), to: "hair.svg") { _, _, _ in .copy }
+        XCTAssertEqual(name, "hair (1).svg")
+        XCTAssertEqual(read(path("hair (1).svg")), "новое")
+        XCTAssertEqual(read(occupied), "старое", "прежний не тронут")
+        XCTAssertFalse(exists(src))
+    }
+
+    func test_renameItem_занятоДругим_отменаНичегоНеМеняет() throws {
+        let src = makeFile("figure.svg", "новое")
+        let occupied = makeFile("hair.svg", "старое")
+        XCTAssertNil(try ops.renameItem(try item(at: src), to: "hair.svg") { _, _, _ in .cancel })
+        XCTAssertEqual(read(src), "новое")
+        XCTAssertEqual(read(occupied), "старое")
+    }
+
+    /// С папкой «заменить» значило бы стереть её целиком — не предлагается и не делается.
+    func test_renameItem_папкуНеЗаменяет() throws {
+        let src = makeFile("figure.svg", "новое")
+        let folder = path("hair")
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: false)
+        makeFile("hair/внутри.txt", "своё")
+        var canReplace: Bool?
+        XCTAssertNil(try ops.renameItem(try item(at: src), to: "hair") { _, _, can in
+            canReplace = can
+            return .cancel
+        })
+        XCTAssertEqual(canReplace, false)
+        XCTAssertThrowsError(try ops.renameItem(try item(at: src), to: "hair", replacing: true)) { error in
+            XCTAssertEqual(self.code(of: error), NSFileWriteFileExistsError)
+        }
+        XCTAssertEqual(read(path("hair/внутри.txt")), "своё", "папка цела")
+        XCTAssertEqual(read(src), "новое")
+    }
+
     func test_renameItem_sameNameIsNoop() throws {
         let src = makeFile("keep.txt", "v")
         XCTAssertNoThrow(try ops.renameItem(try item(at: src), to: "keep.txt"))

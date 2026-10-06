@@ -1467,7 +1467,9 @@ final class FileOperationsService {
         }
     }
 
-    func renameItem(_ item: FileItem, to newName: String) throws {
+    /// Переименовать. Имя занято другим файлом — ошибка «уже существует», а с `replacing`
+    /// прежний файл удаляется, как «Заменить» при копировании; папку так не заменить никогда.
+    func renameItem(_ item: FileItem, to newName: String, replacing: Bool = false) throws {
         let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
             return
@@ -1480,23 +1482,13 @@ final class FileOperationsService {
             )
         }
 
-        let sourceURL = URL(fileURLWithPath: item.path)
-        let destinationPath = sourceURL
-            .deletingLastPathComponent()
-            .appendingPathComponent(trimmedName)
-            .path
+        let destinationPath = renameDestination(of: item, to: trimmedName)
         if destinationPath == item.path {
             return
         }
-        if FileManager.default.fileExists(atPath: destinationPath) {
-            throw NSError(
-                domain: NSCocoaErrorDomain,
-                code: NSFileWriteFileExistsError,
-                userInfo: [NSLocalizedDescriptionKey: L("rename.exists")]
-            )
-        }
 
-        // Check if this is an NTFS volume — need special handling
+        // Check if this is an NTFS volume — need special handling. Before anything is replaced:
+        // the old file must not be gone when the rename itself cannot happen.
         if let vol = volumeInfo(for: item.path),
            vol.fsType.lowercased() == "ntfs" && vol.isReadOnly {
             throw NSError(
@@ -1504,6 +1496,19 @@ final class FileOperationsService {
                 code: -100,
                 userInfo: [NSLocalizedDescriptionKey: "NTFS_RENAME_NEEDED"]
             )
+        }
+
+        let occupied = renameConflict(for: item, to: trimmedName)
+        if let occupied {
+            guard replacing, Self.renameCanReplace(item, occupied: occupied) else {
+                throw NSError(
+                    domain: NSCocoaErrorDomain,
+                    code: NSFileWriteFileExistsError,
+                    userInfo: [NSLocalizedDescriptionKey: L("rename.exists")]
+                )
+            }
+            // Как «Заменить» при копировании: прежний удаляется насовсем, не в Корзину.
+            try FileManager.default.removeItem(atPath: occupied)
         }
 
         // rename() is O(1) — instant metadata update, no data movement.
@@ -1517,7 +1522,63 @@ final class FileOperationsService {
                 ]
             )
         }
-        Self.journal(.renamed(from: item.path, to: destinationPath))
+        // Замену журнал отмены не берёт — вернуть заменённое нечем (как и у копирования).
+        if occupied == nil {
+            Self.journal(.renamed(from: item.path, to: destinationPath))
+        }
+    }
+
+    /// Переименовать, а если имя занято другим — спросить `ask`, как при копировании: заменить
+    /// или дать свободное имя с номером. `ask` получает занятый путь, имя для копии
+    /// («hair (1).svg») и можно ли заменять. Возвращает имя, которое получил файл; nil — передумали.
+    func renameItem(_ item: FileItem, to newName: String,
+                    ask: (_ occupied: String, _ copyName: String, _ canReplace: Bool) -> ConflictResolution)
+        throws -> String? {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let occupied = renameConflict(for: item, to: name) else {
+            try renameItem(item, to: name)
+            return name
+        }
+        let copyName = (uniqueCopyPath(from: occupied) as NSString).lastPathComponent
+        switch ask(occupied, copyName, Self.renameCanReplace(item, occupied: occupied)) {
+        case .replace:
+            try renameItem(item, to: name, replacing: true)
+            return name
+        case .copy:
+            try renameItem(item, to: copyName)
+            return copyName
+        case .skip, .cancel:
+            return nil
+        }
+    }
+
+    /// Что занимает новое имя — путь к ДРУГОМУ файлу или папке; nil — имя свободно. Сам
+    /// переименовываемый не в счёт: на обычном диске Mac имя ищется без учёта регистра и формы
+    /// Unicode, и по «Hair.svg» находился сам «hair.svg» — смена одного регистра отвергалась
+    /// как «уже существует».
+    func renameConflict(for item: FileItem, to newName: String) -> String? {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let destination = renameDestination(of: item, to: name)
+        guard destination != item.path else { return nil }
+        var found = stat()
+        guard lstat(destination, &found) == 0 else { return nil }
+        var own = stat()
+        let itself = lstat(item.path, &own) == 0
+            && own.st_dev == found.st_dev && own.st_ino == found.st_ino
+            && item.name.compare(name, options: .caseInsensitive) == .orderedSame
+        return itself ? nil : destination
+    }
+
+    /// Заменить можно только файл файлом: с папкой (и пакетом вроде .app) с любой стороны
+    /// «заменить» значило бы стереть её целиком.
+    static func renameCanReplace(_ item: FileItem, occupied: String) -> Bool {
+        var own = stat(), found = stat()
+        guard lstat(item.path, &own) == 0, lstat(occupied, &found) == 0 else { return false }
+        return (own.st_mode & S_IFMT) != S_IFDIR && (found.st_mode & S_IFMT) != S_IFDIR
+    }
+
+    private func renameDestination(of item: FileItem, to name: String) -> String {
+        URL(fileURLWithPath: item.path).deletingLastPathComponent().appendingPathComponent(name).path
     }
 
     /// Async rename for NTFS volumes — unmounts, renames via libntfs-3g, remounts.

@@ -371,6 +371,13 @@
 "rename.exists" = "Файл с таким именем уже существует";
 "rename.invalidName" = "Некорректное имя";
 "rename.slashError" = "Имя файла не должно содержать /";
+"rename.errorTitle" = "Не удалось переименовать";
+"rename.message" = "Новое имя:";
+"rename.confirm" = "Переименовать";
+"rename.conflict.message" = "«Создать копию» — имя станет «%@». «Заменить» — прежний «%@» удаляется.";
+"rename.conflict.messageNoReplace" = "«Создать копию» — имя станет «%@». Заменить нельзя: с одной из сторон папка.";
+"rename.conflict.renamed" = "Переименовываемый:";
+"rename.conflict.existing" = "Уже с этим именем:";
 
 /* === Создание папки/файла === */
 "mkdir.title" = "Создать папку";
@@ -1166,6 +1173,7 @@
 // MARK: - Main menu / language
 "menu.about" = "О программе Totum Commander";
 "menu.settings" = "Настройки…";
+"settings.title" = "Настройки";
 "menu.hide" = "Скрыть Totum Commander";
 "menu.hideOthers" = "Скрыть остальные";
 "menu.showAll" = "Показать все";

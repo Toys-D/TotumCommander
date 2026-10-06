@@ -133,7 +133,7 @@ Tabs come in three kinds: a folder, a **terminal** (section 10) and a **remote c
 
 | Key | Operation | Details |
 |---|---|---|
-| F2 | Rename | Right in the list. ↩ confirms, ⎋ cancels. A name with `/` is refused. While a copy is running, F2 sends it to the queue. |
+| F2 | Rename | Right in the list. ↩ confirms, ⎋ cancels. A name with `/` is refused. If another file already has the name, you can replace it (the old one is deleted) or take a numbered name, “hair (1).svg”; with a folder — only the numbered name. Changing just the case (`hair` → `Hair`) works. While a copy is running, F2 sends it to the queue. |
 | F3 | View | Section 6. |
 | F4 | Edit | Section 7. |
 | F5 | Copy to the other panel | A dialog with the destination folder (any path can be typed), a "To queue (F2)" button and a "Don't show this window" checkbox. |

@@ -231,20 +231,9 @@ final class DialogService {
         destinationPath: String
     ) -> (resolution: ConflictResolution, applyToAll: Bool) {
         let fileName = URL(fileURLWithPath: destinationPath).lastPathComponent
-
-        // Source vs destination comparison, with "newer"/"larger" hints.
-        let (srcBase, srcSize, srcDate) = ConflictSideInfo.make(
-            label: L("conflict.sourceNew"), path: sourcePath)
-        let (dstBase, dstSize, dstDate) = ConflictSideInfo.make(
-            label: L("conflict.destinationExisting"), path: destinationPath)
-        var srcHints: [String] = []
-        var dstHints: [String] = []
-        if let s = srcDate, let d = dstDate, s != d {
-            if s > d { srcHints.append(L("conflict.hint.newer")) } else { dstHints.append(L("conflict.hint.newer")) }
-        }
-        if srcSize != dstSize {
-            if srcSize > dstSize { srcHints.append(L("conflict.hint.larger")) } else { dstHints.append(L("conflict.hint.larger")) }
-        }
+        let sides = conflictSides(source: sourcePath, sourceLabel: L("conflict.sourceNew"),
+                                  destination: destinationPath,
+                                  destinationLabel: L("conflict.destinationExisting"))
 
         let choice: ConflictDialogChoice? = FCXLDialog.runModal(
             size: NSSize(width: 700, height: 300)
@@ -252,8 +241,8 @@ final class DialogService {
             ConflictDialogView(
                 session: session,
                 fileName: fileName,
-                source: srcBase.withHints(srcHints),
-                destination: dstBase.withHints(dstHints)
+                source: sides.source,
+                destination: sides.destination
             )
         }
         switch choice {
@@ -264,6 +253,56 @@ final class DialogService {
         case .skipAll:    return (.skip, true)
         case nil:         return (.cancel, false)
         }
+    }
+
+    /// Имя при переименовании занято другим — тот же выбор, что при копировании, только без
+    /// «…все»: заменить (файл файлом) или дать свободное имя с номером, `copyName`.
+    func showRenameConflict(renaming source: String, occupied: String, copyName: String,
+                            allowReplace: Bool) -> ConflictResolution {
+        let name = (occupied as NSString).lastPathComponent
+        // Сравнение — только двух файлов: «размер» папки ничего не говорит.
+        let sides = allowReplace
+            ? conflictSides(source: source, sourceLabel: L("rename.conflict.renamed"),
+                            destination: occupied, destinationLabel: L("rename.conflict.existing"))
+            : nil
+        let message = allowReplace
+            ? L("rename.conflict.message", copyName, name)
+            : L("rename.conflict.messageNoReplace", copyName)
+        let choice: ConflictDialogChoice? = FCXLDialog.runModal(
+            size: NSSize(width: 600, height: allowReplace ? 250 : 150)
+        ) { session in
+            ConflictDialogView(
+                session: session,
+                fileName: name,
+                message: message,
+                source: sides?.source,
+                destination: sides?.destination,
+                allowReplace: allowReplace,
+                showApplyToAll: false
+            )
+        }
+        switch choice {
+        case .replace, .replaceAll: return .replace
+        case .createCopy:           return .copy
+        case .skip, .skipAll, nil:  return .cancel
+        }
+    }
+
+    /// Две стороны конфликта с подсказками «новее» и «больше».
+    private func conflictSides(source: String, sourceLabel: String,
+                               destination: String, destinationLabel: String)
+        -> (source: ConflictSideInfo, destination: ConflictSideInfo) {
+        let (srcBase, srcSize, srcDate) = ConflictSideInfo.make(label: sourceLabel, path: source)
+        let (dstBase, dstSize, dstDate) = ConflictSideInfo.make(label: destinationLabel, path: destination)
+        var srcHints: [String] = []
+        var dstHints: [String] = []
+        if let s = srcDate, let d = dstDate, s != d {
+            if s > d { srcHints.append(L("conflict.hint.newer")) } else { dstHints.append(L("conflict.hint.newer")) }
+        }
+        if srcSize != dstSize {
+            if srcSize > dstSize { srcHints.append(L("conflict.hint.larger")) } else { dstHints.append(L("conflict.hint.larger")) }
+        }
+        return (srcBase.withHints(srcHints), dstBase.withHints(dstHints))
     }
 
     func showTextInput(

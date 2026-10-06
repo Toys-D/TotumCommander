@@ -2299,8 +2299,20 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
             }
         } else {
             do {
-                try operationsService.renameItem(item, to: trimmed)
-                vm.reloadKeepingCursor(preferredName: trimmed)
+                // Имя занято другим — выбор, как при копировании: заменить или дать свободное
+                // имя с номером.
+                var replaced: String?
+                guard let finalName = try operationsService.renameItem(item, to: trimmed, ask: {
+                    occupied, copyName, canReplace in
+                    let answer = DialogService.shared.showRenameConflict(
+                        renaming: item.path, occupied: occupied, copyName: copyName,
+                        allowReplace: canReplace)
+                    if answer == .replace { replaced = occupied }
+                    return answer
+                }) else { return }
+                // Заменённого больше нет: вырезанный, он не должен «вставиться» переименованным.
+                if let replaced { FileClipboard.invalidate(paths: [replaced]) }
+                vm.reloadKeepingCursor(preferredName: finalName)
             } catch {
                 DialogService.shared.showOperationError(
                     title: L("rename.errorTitle"), error: error)
