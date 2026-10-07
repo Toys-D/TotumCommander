@@ -123,9 +123,37 @@ final class Renderer: NSObject, WKNavigationDelegate {
         return failure
     }
 
+    /// How much of the icon square the artwork's longer side takes. A macOS icon brings its own
+    /// margin — the system adds none — so a drawing that runs to the canvas edge sits in the Dock
+    /// bigger than its neighbours.
+    static let fill = 0.88
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        // One layout pass after load, then start snapshotting.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.next() }
+        // Frame the VISIBLE artwork, centred: Illustrator keeps hidden layers (the wordmark,
+        // guides) on the canvas, and what is left after hiding them need not sit in the middle —
+        // without the wordmark the folder would hug the top with an empty band below.
+        // getBBox skips display:none, so the frame is the drawing that actually shows.
+        let script = """
+        (() => {
+          const svg = document.querySelector('svg');
+          const box = svg.getBBox();
+          const side = Math.max(box.width, box.height) / \(Self.fill);
+          const x = box.x + box.width / 2 - side / 2, y = box.y + box.height / 2 - side / 2;
+          svg.setAttribute('viewBox', [x, y, side, side].join(' '));
+          svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+          return [box.x, box.y, box.width, box.height].map(Math.round).join(' ');
+        })()
+        """
+        webView.evaluateJavaScript(script) { [weak self] result, error in
+            guard let self else { return }
+            if let error {
+                failure = "cannot frame the artwork: \(error.localizedDescription)"
+                return
+            }
+            print("\(svg.lastPathComponent): artwork x y w h = \(result ?? "?")")
+            // One layout pass after the new frame, then start snapshotting.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.next() }
+        }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
