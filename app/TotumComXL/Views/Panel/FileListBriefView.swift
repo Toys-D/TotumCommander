@@ -1449,6 +1449,8 @@ final class BriefItemView: NSView, DropRingCell {
         newsView.imageAlignment = .alignLeft
         newsView.setContentHuggingPriority(.required, for: .horizontal)
         newsView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        newsView.wantsLayer = true
+        nameLabel.onGrowthFrame = { [weak self] in self?.followNameGrowth() }
         addSubview(newsView)
         addSubview(iconView)
         addSubview(nameLabel)
@@ -1710,10 +1712,23 @@ final class BriefItemView: NSView, DropRingCell {
 
     private var displayedVaultUnlocked: Bool?
 
+    override func layout() {
+        super.layout()
+        followNameGrowth()
+    }
+
+    /// Плашка растёт вместе с именем под курсором — тем же кадром, что и буквы.
+    private func followNameGrowth() {
+        FolderNewsChip.follow(newsView, label: nameLabel, textEnd: newsLeadingConstraint.constant,
+                              scale: nameLabel.currentGrowthScale)
+    }
+
     private func applyNews(for item: FileItem, font: NSFont) {
         let mark = FolderNews.mark(for: item)
         let count = mark == nil ? 0 : item.newInsideCount
-        newsView.image = mark.flatMap { FolderNewsChip.image(count: count, mark: $0, font: font) }
+        newsView.image = mark.flatMap {
+            FolderNewsChip.image(count: count, mark: $0, font: font, nameColor: nameColor)
+        }
         newsView.toolTip = count > 0 ? String(format: L("folderNews.tooltip"), count) : nil
         let width = FolderNewsChip.width(count: count, font: font)
         if newsWidthConstraint.constant != width { newsWidthConstraint.constant = width }
@@ -1722,16 +1737,21 @@ final class BriefItemView: NSView, DropRingCell {
         if newsLeadingConstraint.constant != end { newsLeadingConstraint.constant = end }
     }
 
-    private func updateTextColor() {
+    /// Цвет имени сейчас — его же берёт счётчик нового рядом.
+    private var nameColor: NSColor {
         // Цвет по правилам считается там, где ещё виден сам файл (configure), и хранится
         // здесь: у ячейки от него остаются только разложенные поля, а правилам нужны имя
         // и возраст целиком.
         let normalColor = displayedRuleColor
             ?? (displayedIsDirectory ? folderNameColor : fileNameColor)
         // Selection wins over the cursor, so a marked file under the cursor still shows its mark.
-        let resolvedColor = PanelAppearanceSettings.fileNameColor(
+        return PanelAppearanceSettings.fileNameColor(
             isCursor: isCursor, isSelected: isItemSelected,
             cursor: cursorNameColor, selected: PanelAppearanceSettings.selectedNameNSColor, normal: normalColor)
+    }
+
+    private func updateTextColor() {
+        let resolvedColor = nameColor
         // Same trap as the detailed list: for a link the name is an ATTRIBUTED string
         // (italic + a 🔗 attachment), and assigning .textColor replaces it with a plain
         // one — the marker would silently vanish on every colour refresh. Rebuild it.

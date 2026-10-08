@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 
 /// Новое внутри папки: в ней, на любой глубине, появились файлы за срок новизны.
 ///
@@ -141,15 +142,17 @@ enum FolderNewsChip {
     }
 
     /// Отступ слева от имени — входит в саму картинку: без нового ширина нулевая, и имя
-    /// получает всю колонку, как раньше.
-    static let leading: CGFloat = 5
+    /// получает всю колонку, как раньше. С 5 плашка липла к буквам.
+    static let leading: CGFloat = 8
 
-    /// Плашка для строки списка: цифры акцентом на подложке того же цвета.
-    static func image(count: Int, mark: FolderNews.Mark, font base: NSFont) -> NSImage? {
+    /// Плашка для строки списка: цифры цветом имени рядом, на подложке того же цвета, — читаются
+    /// как продолжение имени. Под курсором имя в цвете курсора — и цифры в нём же.
+    static func image(count: Int, mark: FolderNews.Mark, font base: NSFont,
+                      nameColor: NSColor) -> NSImage? {
         guard count > 0 else { return nil }
         let font = NSFont.systemFont(ofSize: max(9, base.pointSize - 1), weight: .medium)
-        let ink = mark.color.withAlphaComponent(mark.opacity)
-        let plate = mark.color.withAlphaComponent(0.16 * mark.opacity)
+        let ink = nameColor.withAlphaComponent(mark.opacity)
+        let plate = nameColor.withAlphaComponent(0.16 * mark.opacity)
         return capsule(text(count: count), font: font, ink: ink, plate: plate, leading: leading)
     }
 
@@ -160,6 +163,26 @@ enum FolderNewsChip {
     static func textEnd(of label: NSView) -> CGFloat {
         let intrinsic = label.intrinsicContentSize.width
         return intrinsic == NSView.noIntrinsicMetric ? 0 : ceil(max(0, intrinsic))
+    }
+
+    /// Плашка растёт вместе с именем под курсором (CursorLift): тот же масштаб, что у букв на
+    /// этом кадре, опора — начало имени, поэтому она и едет за последней буквой. Длинное имя
+    /// обрезано, и плашка прижата к краю колонки — тогда опора её собственный левый край: буквы
+    /// упираются в неё на любом кадре. Единица — рост окончен, плашка стоит как есть.
+    @MainActor
+    static func follow(_ chip: NSView, label: NSView, textEnd: CGFloat, scale: CGFloat) {
+        guard let layer = chip.layer else { return }
+        guard abs(scale - 1) > 0.001, chip.frame.width > 0 else {
+            if !CATransform3DIsIdentity(layer.transform) { layer.transform = CATransform3DIdentity }
+            return
+        }
+        let pinned = chip.frame.minX < label.frame.minX + textEnd - 0.5
+        // Слой плашки, как у всех видов AppKit, держится за угол: опора задаётся сдвигом.
+        let px = pinned ? 0 : label.frame.minX - chip.frame.minX
+        let py = layer.bounds.height / 2
+        var transform = CATransform3DMakeTranslation(px, py, 0)
+        transform = CATransform3DScale(transform, scale, scale, 1)
+        layer.transform = CATransform3DTranslate(transform, -px, -py, 0)
     }
 
     static func width(count: Int, font base: NSFont) -> CGFloat {

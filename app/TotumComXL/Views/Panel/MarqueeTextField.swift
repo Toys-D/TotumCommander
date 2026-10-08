@@ -78,6 +78,9 @@ final class MarqueeTextField: NSView {
     private var growth: TextGrowth?
     private var growthStartedAt: TimeInterval = 0
     private var growthTimer: Timer?
+    /// Кадр роста сменился (и в начале, и в конце): соседям имени, которые растут вместе с ним, —
+    /// плашке «+12» — пора взять `currentGrowthScale`.
+    var onGrowthFrame: (() -> Void)?
 
     // MARK: - Init
 
@@ -228,6 +231,7 @@ final class MarqueeTextField: NSView {
         RunLoop.main.add(timer, forMode: .common)
         growthTimer = timer
         needsDisplay = true
+        onGrowthFrame?()
     }
 
     func stopGrowth() {
@@ -236,6 +240,7 @@ final class MarqueeTextField: NSView {
         if growth != nil {
             growth = nil
             needsDisplay = true
+            onGrowthFrame?()
         }
     }
 
@@ -250,6 +255,7 @@ final class MarqueeTextField: NSView {
             stopGrowth()
         }
         needsDisplay = true
+        onGrowthFrame?()
     }
 
     /// Что рисовать в этот кадр: настоящий текст или он же в промежуточном кегле роста.
@@ -410,6 +416,8 @@ final class NameCellView: NSTableCellView {
         newsView.imageAlignment = .alignLeft
         newsView.setContentHuggingPriority(.required, for: .horizontal)
         newsView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        newsView.wantsLayer = true
+        label.onGrowthFrame = { [weak self] in self?.followNameGrowth() }
         addSubview(label)
         addSubview(newsView)
         addSubview(dotsView)
@@ -463,12 +471,25 @@ final class NameCellView: NSTableCellView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// Счётчик нового внутри папки — «+12» (FolderNewsChip). Нового нет — ширина нулевая, и имя
-    /// получает всю колонку, как раньше.
-    func setNews(_ item: FileItem, font: NSFont) {
+    override func layout() {
+        super.layout()
+        followNameGrowth()
+    }
+
+    /// Плашка растёт вместе с именем под курсором — тем же кадром, что и буквы.
+    private func followNameGrowth() {
+        FolderNewsChip.follow(newsView, label: label, textEnd: newsLeading.constant,
+                              scale: label.currentGrowthScale)
+    }
+
+    /// Счётчик нового внутри папки — «+12» (FolderNewsChip) цветом имени, под курсором — его
+    /// цветом под курсором. Нового нет — ширина нулевая, и имя получает всю колонку, как раньше.
+    func setNews(_ item: FileItem, font: NSFont, nameColor: NSColor) {
         let mark = FolderNews.mark(for: item)
         let count = mark == nil ? 0 : item.newInsideCount
-        newsView.image = mark.flatMap { FolderNewsChip.image(count: count, mark: $0, font: font) }
+        newsView.image = mark.flatMap {
+            FolderNewsChip.image(count: count, mark: $0, font: font, nameColor: nameColor)
+        }
         newsView.toolTip = count > 0 ? String(format: L("folderNews.tooltip"), count) : nil
         let width = FolderNewsChip.width(count: count, font: font)
         if newsWidth.constant != width { newsWidth.constant = width }

@@ -150,13 +150,128 @@ final class FolderNewsTests: XCTestCase {
         let font = NSFont.systemFont(ofSize: 12)
         XCTAssertEqual(FolderNewsChip.width(count: 0, font: font), 0)
         let mark = FolderNews.Mark(color: teal, strength: 1)
-        XCTAssertNil(FolderNewsChip.image(count: 0, mark: mark, font: font))
-        let chip = try XCTUnwrap(FolderNewsChip.image(count: 12, mark: mark, font: font))
+        XCTAssertNil(FolderNewsChip.image(count: 0, mark: mark, font: font, nameColor: teal))
+        let chip = try XCTUnwrap(FolderNewsChip.image(count: 12, mark: mark, font: font, nameColor: teal))
         XCTAssertEqual(chip.size.width, FolderNewsChip.width(count: 12, font: font), accuracy: 0.5,
                        "ширина колонки — ровно по плашке")
         XCTAssertGreaterThan(FolderNewsChip.width(count: 123, font: font),
                              FolderNewsChip.width(count: 1, font: font), "больше цифр — шире")
         XCTAssertNotNil(FolderNewsChip.plaqueImage(count: 12, mark: mark, font: font))
+    }
+
+    /// Под курсором плашка растёт вместе с именем: на каждом кадре в том же масштабе и ровно за
+    /// последней буквой. Прижатая к краю колонки (имя обрезано) — растёт на месте.
+    func test_плашкаРастётВместеСИменем() {
+        let cell = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        let label = NSView(frame: NSRect(x: 10, y: 2, width: 200, height: 20))
+        let chip = NSView(frame: NSRect(x: 90, y: 2, width: 40, height: 20))
+        chip.wantsLayer = true
+        cell.addSubview(label)
+        cell.addSubview(chip)
+        func left(_ view: NSView) -> CGFloat {
+            let shift = CATransform3DGetAffineTransform(view.layer?.transform ?? CATransform3DIdentity)
+            return view.frame.minX + CGPoint(x: 0, y: 10).applying(shift).x
+        }
+
+        FolderNewsChip.follow(chip, label: label, textEnd: 80, scale: 0.8)
+        XCTAssertEqual(left(chip), 10 + 80 * 0.8, accuracy: 0.01, "за последней буквой этого кадра")
+        let height = CGPoint(x: 0, y: 20).applying(CATransform3DGetAffineTransform(chip.layer!.transform)).y
+            - CGPoint(x: 0, y: 0).applying(CATransform3DGetAffineTransform(chip.layer!.transform)).y
+        XCTAssertEqual(height, 16, accuracy: 0.01, "в масштабе букв")
+
+        FolderNewsChip.follow(chip, label: label, textEnd: 80, scale: 1)
+        XCTAssertTrue(CATransform3DIsIdentity(chip.layer!.transform), "рост окончен — на месте")
+
+        FolderNewsChip.follow(chip, label: label, textEnd: 250, scale: 0.8)
+        XCTAssertEqual(left(chip), 90, accuracy: 0.01, "имя обрезано, плашка у края — не уезжает на буквы")
+    }
+
+    /// Поле имени сообщает о каждом кадре роста — с первого (прежний размер) до последнего.
+    func test_полеИмениСообщаетКадрыРоста() {
+        let field = MarqueeTextField(labelWithString: "Downloads")
+        var scales: [CGFloat] = []
+        field.onGrowthFrame = { scales.append(field.currentGrowthScale) }
+        field.animateGrowth(fromRatio: 0.8, duration: 0.15)
+        XCTAssertEqual(scales.first ?? 0, 0.8, accuracy: 0.02, "первый кадр — прежний размер")
+        field.stopGrowth()
+        XCTAssertEqual(scales.last, 1, "последний — настоящий")
+    }
+
+    /// Цифры — цветом имени рядом, а не акцентом: под курсором имя в цвете курсора, и цифры в
+    /// нём же. Акцентом их было не прочитать ни на тёмном курсоре, ни рядом с именем другого цвета.
+    func test_цифрыЦветомИмени() throws {
+        let mark = FolderNews.Mark(color: teal, strength: 1)
+        let font = NSFont.systemFont(ofSize: 13)
+        let red = NSColor(srgbRed: 0.85, green: 0.1, blue: 0.1, alpha: 1)
+        let digits = try XCTUnwrap(digitsColor(try XCTUnwrap(
+            FolderNewsChip.image(count: 64, mark: mark, font: font, nameColor: red))))
+        XCTAssertGreaterThan(digits.redComponent, 0.6, "цвет имени, а не акцент")
+        XCTAssertLessThan(digits.greenComponent, 0.3)
+    }
+
+    /// Строка с плашкой — на фоне панели и на тёмном и светлом курсоре, с именем того цвета, что
+    /// у него там, — в папку FCXL_LOOK_DIR, посмотреть глазами.
+    func test_плашкаНаКурсорахДляПросмотра() throws {
+        guard let dir = ProcessInfo.processInfo.environment["FCXL_LOOK_DIR"] else { return }
+        let slate = NSColor(srgbRed: 0x6B / 255.0, green: 0x77 / 255.0, blue: 0x85 / 255.0, alpha: 1)
+        let font = NSFont.systemFont(ofSize: 15)
+        // Фон строки (панель или курсор) и цвет имени на нём.
+        let rows: [(ground: String, name: NSColor)] = [
+            ("#EDEDEDFF", NSColor(srgbRed: 0.17, green: 0.24, blue: 0.31, alpha: 1)),
+            ("#59676FFF", NSColor(srgbRed: 0.35, green: 0.78, blue: 0.98, alpha: 1)),
+            ("#FFE680FF", .black),
+            ("#2B2F33FF", NSColor(white: 0.85, alpha: 1)),
+            ("#C9D3DBFF", .black),
+        ]
+        let rowHeight = 30, width = 260, scale = 2
+        let rep = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width * scale, pixelsHigh: rowHeight * rows.count * scale,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        rep.size = NSSize(width: width, height: rowHeight * rows.count)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        for (index, row) in rows.enumerated() {
+            let ground = try XCTUnwrap(PanelAppearanceSettings.optionalNSColor(from: row.ground))
+            let rect = NSRect(x: 0, y: (rows.count - 1 - index) * rowHeight, width: width, height: rowHeight)
+            ground.setFill()
+            rect.fill()
+            let name = NSAttributedString(string: "Downloads",
+                                          attributes: [.font: font, .foregroundColor: row.name])
+            let nameSize = name.size()
+            name.draw(at: NSPoint(x: 12, y: rect.midY - nameSize.height / 2))
+            let chip = try XCTUnwrap(FolderNewsChip.image(count: 64, mark: FolderNews.Mark(color: slate, strength: 1),
+                                                          font: font, nameColor: row.name))
+            chip.draw(at: NSPoint(x: 12 + ceil(nameSize.width), y: rect.midY - chip.size.height / 2),
+                      from: .zero, operation: .sourceOver, fraction: 1)
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+        try png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("folder-news-chip.png"))
+    }
+
+    /// Цвет цифр плашки: самая непрозрачная точка — буквы, подложка под ними прозрачнее.
+    private func digitsColor(_ image: NSImage) -> NSColor? {
+        let width = Int(image.size.width * 2), height = Int(image.size.height * 2)
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8,
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: width * 4, bitsPerPixel: 32) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSAppearance(named: .aqua)?.performAsCurrentDrawingAppearance {
+            image.draw(in: NSRect(x: 0, y: 0, width: width, height: height))
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        var best: NSColor?
+        for y in 0..<height {
+            for x in 0..<width {
+                guard let color = rep.colorAt(x: x, y: y),
+                      color.alphaComponent > (best?.alphaComponent ?? 0) else { continue }
+                best = color
+            }
+        }
+        return best
     }
 
     // MARK: - Пришло по журналу диска (не дожидаясь Spotlight)

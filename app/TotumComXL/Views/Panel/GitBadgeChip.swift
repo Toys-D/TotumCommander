@@ -85,9 +85,9 @@ enum GitBadgeChip {
     }
 
     /// The ink a mark takes on the cursor row. The cursor bar is a colour of the person's own
-    /// choosing, and a state colour can land close enough to it to disappear — white is what the
-    /// rest of the row already uses over it.
-    static let cursorInk = NSColor.white
+    /// choosing, and a state colour can land close enough to it to disappear. Black or white,
+    /// whichever reads on the bar — it used to be white always, and vanished on a light cursor.
+    static var cursorInk: NSColor { PanelAppearanceSettings.cursorMarkInk }
 
     /// The branch of a repository folder, for the far end of the row.
     ///

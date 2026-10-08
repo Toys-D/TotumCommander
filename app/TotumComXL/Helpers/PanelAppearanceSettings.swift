@@ -876,6 +876,42 @@ enum PanelAppearanceSettings {
         return contrastingTextColor(on: resolvedCursorBackground())
     }
 
+    /// Знаки на строке курсора — буква и ветка git, замок хранилища: чёрные или белые, что
+    /// читаемее на самой полосе курсора (тот же замер, что у надписей на акценте). Тёмный
+    /// курсор — белые, светлый — чёрные. Своим цветом знак мог слиться с курсором, а всегда
+    /// белый пропадал на светлом. Цвет живой: тема, курсор или фон сменились — знаки следом.
+    static let cursorMarkInk = NSColor(name: "fcxlCursorMarkInk") { appearance in
+        contrastingTextColor(on: cursorGround(dark: appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua))
+    }
+
+    /// Фон панели в теме, непрозрачный: полупрозрачный смешан с тем, что под окном.
+    static func panelGround(dark: Bool) -> NSColor {
+        let hex = UserDefaults.standard.string(forKey: panelBackgroundKey(dark: dark)) ?? ""
+        let underneath: NSColor = dark ? .black : .white
+        if let own = optionalNSColor(from: hex) { return opaque(own, over: underneath) }
+        // Своего нет — системный, той темы, о которой спросили, а не той, что рисуют сейчас.
+        var system = underneath
+        NSAppearance(named: dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
+            system = NSColor.controlBackgroundColor.usingColorSpace(.sRGB) ?? underneath
+        }
+        return opaque(system, over: underneath)
+    }
+
+    /// Полоса курсора на фоне панели. «Красивый» курсор — свечение того же цвета.
+    static func cursorGround(dark: Bool) -> NSColor {
+        opaque(resolvedCursorBackground(), over: panelGround(dark: dark))
+    }
+
+    /// Цвет, положенный на подложку: прозрачность смешивается с тем, что под ним.
+    static func opaque(_ color: NSColor, over ground: NSColor) -> NSColor {
+        guard let top = color.usingColorSpace(.sRGB), top.alphaComponent < 1,
+              let bottom = ground.usingColorSpace(.sRGB) else { return color }
+        let a = top.alphaComponent
+        return NSColor(srgbRed: top.redComponent * a + bottom.redComponent * (1 - a),
+                       green: top.greenComponent * a + bottom.greenComponent * (1 - a),
+                       blue: top.blueComponent * a + bottom.blueComponent * (1 - a), alpha: 1)
+    }
+
     static func nsColor(from hex: String, fallback: NSColor) -> NSColor {
         optionalNSColor(from: hex) ?? fallback
     }

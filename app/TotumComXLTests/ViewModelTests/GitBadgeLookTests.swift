@@ -80,6 +80,29 @@ final class GitBadgeLookTests: XCTestCase {
         }
     }
 
+    /// На строке курсора метки — чёрные или белые по самому курсору: всегда белые пропадали на
+    /// светлом. Полупрозрачный курсор считается вместе с фоном панели под ним.
+    func test_наКурсореМеткиЧитаемы_тёмныйБелые_светлыйЧёрные() {
+        let d = UserDefaults.standard
+        let keys = [PanelAppearanceSettings.cursorUsesCustomColorKey,
+                    PanelAppearanceSettings.cursorBackgroundColorHexKey,
+                    PanelAppearanceSettings.panelBackgroundKey(dark: false)]
+        let saved = keys.map { d.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, saved) { d.set(value, forKey: key) } }
+        d.set(true, forKey: PanelAppearanceSettings.cursorUsesCustomColorKey)
+        d.set("#FFFFFFFF", forKey: PanelAppearanceSettings.panelBackgroundKey(dark: false))
+
+        for (cursor, expected) in [("#59676FFF", CGFloat(1)), ("#3A3F44FF", 1), ("#FFE680FF", 0),
+                                   ("#E8E8E8FF", 0), ("#59676F1A", 0)] {
+            d.set(cursor, forKey: PanelAppearanceSettings.cursorBackgroundColorHexKey)
+            XCTAssertEqual(luminance(GitBadgeChip.cursorInk, under: .aqua), expected, accuracy: 0.001,
+                           "курсор \(cursor)")
+        }
+        d.set("#1E1E1EFF", forKey: PanelAppearanceSettings.panelBackgroundKey(dark: false))
+        XCTAssertEqual(luminance(GitBadgeChip.cursorInk, under: .aqua), 1, accuracy: 0.001,
+                       "бледный курсор на тёмном фоне панели — белые")
+    }
+
     func test_вСветлойТемеЦветЗатемнёнНаЗаданнуюДолю() {
         // Эталон считается ПОД светлой темой: systemOrange сам двойной, и смешанный вне
         // темы он взял бы оттенок той темы, какая случилась у процесса на этот момент.

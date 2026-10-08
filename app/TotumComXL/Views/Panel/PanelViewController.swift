@@ -4196,10 +4196,12 @@ final class PanelViewController: NSViewController,
                 }
                 // The cursor row draws at a larger font, so the dots are sized for it as well.
                 (cellView as? NameCellView)?.setTags(viewModel.tagsByPath[item.path] ?? [], font: rowFont)
-                (cellView as? NameCellView)?.setNews(item, font: rowFont)
+                (cellView as? NameCellView)?.setNews(item, font: rowFont, nameColor: nameColor)
+                // Знаки цветом курсора — только там, где он нарисован: в соседней панели
+                // курсора нет, и белая буква git пропадала на светлом фоне.
                 (cellView as? NameCellView)?.setGit(viewModel.gitByPath[item.path],
                                                     font: gitGutterFont, gutter: gitGutterWidth,
-                                                    isCursor: isCursor)
+                                                    isCursor: isCursor && isActivePanel)
                 (cellView as? NameCellView)?.setVaultLock(
                     vaultLockImage(for: item, ink: nameColor, isCursor: isCursor))
                 if isCursor {
@@ -4369,7 +4371,7 @@ final class PanelViewController: NSViewController,
         let defaultColor = colorForName(of: item)
         let textColor = PanelAppearanceSettings.fileNameColor(
             isCursor: isCursor && isActivePanel, isSelected: isSelected,
-            cursor: resolvedCursorNameColor, selected: PanelAppearanceSettings.accentNSColor, normal: defaultColor)
+            cursor: resolvedCursorNameColor, selected: PanelAppearanceSettings.selectedNameNSColor, normal: defaultColor)
 
         // Name uses the configured list font, enlarged by the cursor wave: full on the
         // cursor row, easing down over the neighbours it reaches.
@@ -4377,11 +4379,11 @@ final class PanelViewController: NSViewController,
         label.font = baseFont
         label.attributedStringValue = decoratedName(for: item, font: baseFont, color: textColor)
         cellView.setTags(viewModel.tagsByPath[item.path] ?? [], font: baseFont)
-        cellView.setNews(item, font: baseFont)
+        cellView.setNews(item, font: baseFont, nameColor: textColor)
         // The gutter is drawn at the LIST's font, not the cursor-enlarged one: a column that
         // widened under the cursor would shift every name as the cursor passed.
         cellView.setGit(viewModel.gitByPath[item.path], font: gitGutterFont,
-                        gutter: gitGutterWidth, isCursor: isCursor)
+                        gutter: gitGutterWidth, isCursor: isCursor && isActivePanel)
         cellView.setVaultLock(vaultLockImage(for: item, ink: textColor, isCursor: isCursor))
         // The eye lives at the cell's edge, outside the truncating label — a long name
         // ends in "…" BEFORE the eye instead of swallowing it.
