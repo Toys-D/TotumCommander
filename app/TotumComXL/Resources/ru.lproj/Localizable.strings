@@ -503,6 +503,8 @@
 "xattr.help.provenance" = "Служебная запись macOS о происхождении файла (появилась в новых версиях системы). Ни на что заметное не влияет.";
 "xattr.help.zoneIdentifier" = "Метка Windows «скачано из интернета» — аналог карантина macOS, приехавший вместе с файлом с NTFS-диска или из Windows-программы. На Mac ни на что не влияет, можно смело удалить.";
 "xattr.help.lastUsed" = "Когда файл открывали в последний раз — записывает система. Только справка.";
+"xattr.folderPicture" = "Картинку папки назначили в Totum Commander";
+"xattr.help.folderPicture" = "Метка Totum Commander: картинку этой папке назначили в «Свойствах», поэтому панели показывают её, даже если она похожа на обычную папку (такие картинки от установщиков скрываются). Удалите метку — и похожая на папку картинка тоже будет скрыта; сама картинка останется.";
 "xattr.quarantine" = "Карантин Gatekeeper — метка «скачано из интернета»";
 "xattr.quarantine.by" = "Карантин: поставлен программой %@";
 "xattr.quarantine.by.at" = "Карантин: поставлен программой %@, %@";
@@ -1168,6 +1170,19 @@
 "properties.actor.everyone" = "Все";
 "properties.applyToEnclosed" = "Применить ко вложенным";
 "properties.applyErrorTitle" = "Не удалось применить изменения";
+"properties.picture.section" = "Картинка папки";
+"properties.picture.choose" = "Выбрать…";
+"properties.picture.paste" = "Вставить";
+"properties.picture.remove" = "Убрать";
+"properties.picture.hint" = "Как в Finder: картинку видят и другие программы. Можно перетащить её на значок.";
+"properties.picture.chooseTitle" = "Картинка для папки «%@»";
+"properties.picture.turnedOn" = "Показ картинок на папках включён — «Настройки ▸ Папки и иконки».";
+"properties.picture.noImage" = "В буфере нет картинки.";
+"properties.picture.unreadable" = "Это не картинка.";
+"properties.picture.failed" = "Не удалось записать картинку: %@";
+"properties.picture.blocked.trash" = "В Корзине картинки папкам не назначают.";
+"properties.picture.blocked.readOnly" = "Папка только для чтения — картинку не записать.";
+"properties.picture.blocked.symlink" = "Это ссылка — картинку назначают самой папке.";
 "properties.permPartialFail" = "Права изменены не для всех вложенных объектов: пропущено %d.";
 
 // MARK: - Main menu / language
@@ -1235,6 +1250,35 @@
 "folderIconStyle.catalogV7" = "Каталог V7";
 "folderIconStyle.catalogV8" = "Каталог V8";
 "folderIconStyle.catalogV9" = "Каталог V9";
+"folderStyles.own" = "Свой…";
+"folderStyles.add.title" = "Своя иконка папки — SVG или PNG";
+"folderStyles.delete" = "Удалить";
+"folderStyles.recolor" = "Перекрашивать в цвет папок";
+"folderStyles.hint" = "Свой стиль — SVG или PNG. SVG перекрашивается, как встроенные: квадратный холст, только залитые фигуры, цвета #FF00FF — цвет папки, #B000B0 — темнее, #FFFFFF — белый, #000000 — тень; без текста, картинок, ссылок, скриптов и скрытых слоёв, стили — только простыми классами, как пишет Illustrator; до 200 КБ. PNG: квадрат от 512 до 2048 px, прозрачный фон, до 2 МБ. Убрать свой — крестик при наведении или правый щелчок.";
+"folderStyles.sample" = "Образец SVG…";
+"folderStyles.sample.failed" = "Не удалось сохранить образец";
+"folderStyles.rejected.title" = "Эту картинку не взять";
+"folderStyles.problem.format" = "Подходят только SVG и PNG.";
+"folderStyles.problem.fileTooBig" = "Файл больше %d КБ.";
+"folderStyles.problem.notSVG" = "Файл не читается как SVG.";
+"folderStyles.problem.noViewBox" = "Нет viewBox — задайте квадратный холст, например 0 0 512 512.";
+"folderStyles.problem.notSquare" = "Холст не квадратный — нужен квадратный viewBox.";
+"folderStyles.problem.text" = "В рисунке есть текст — переведите его в кривые.";
+"folderStyles.problem.styleBlock" = "Блок стилей <style> сложнее простых классов вида .st0 { fill: #FF00FF; } — оставьте только такие или в Illustrator выберите «Свойства CSS: атрибуты стиля».";
+"folderStyles.problem.hiddenLayers" = "Есть скрытые слои — удалите их: macOS всё равно их нарисует.";
+"folderStyles.problem.references" = "Есть ссылки, градиенты, маски, фильтры, скрипты или обработчики событий — уберите их.";
+"folderStyles.problem.forbidden" = "Недопустимые элементы: %@. Можно только фигуры: path, rect, circle, ellipse, polygon, polyline, line и группы.";
+"folderStyles.problem.colors" = "Цвета не из набора: %@. Можно только #FF00FF (цвет папки), #B000B0 (цвет папки темнее), #FFFFFF (белый) и #000000 (тень).";
+"folderStyles.problem.noFolderColor" = "Нет ни одной фигуры цвета #FF00FF — перекрашивать нечего.";
+"folderStyles.problem.tooComplex" = "Больше %d элементов — упростите рисунок.";
+"folderStyles.problem.unrenderable" = "macOS не смогла нарисовать этот SVG.";
+"folderStyles.problem.pngUnreadable" = "Файл не читается как PNG.";
+"folderStyles.problem.pngNotSquare" = "Картинка не квадратная: %d × %d.";
+"folderStyles.problem.pngTooSmall" = "Картинка меньше %d px по стороне (сейчас %d).";
+"folderStyles.problem.pngTooLarge" = "Картинка больше %d px по стороне (сейчас %d).";
+"folderStyles.problem.pngNoAlpha" = "Нет прозрачности — нужен прозрачный фон.";
+"folderStyles.problem.pngOpaqueBackground" = "Фон не прозрачный: углы картинки должны быть пустыми.";
+"folderStyles.problem.empty" = "Картинка пустая.";
 "quickLink.applications" = "Программы";
 "quickLink.short.applications" = "Прог.";
 "quickLink.desktop" = "Рабочий стол";
@@ -1649,7 +1693,7 @@
 "tags.writeFailed.message" = "Метки не изменены у %d объект(ов). Возможно, том доступен только для чтения или нет прав на запись.";
 
 "settings.folders.customIcons" = "Отображать изображения на папках";
-"settings.folders.customIcons.hint" = "Показывать картинки, назначенные папкам в Finder (Свойства → вставить изображение). Папки без картинки сохраняют выбранный стиль и цвет — включая те, которым установщики назначили изображение обычной папки.";
+"settings.folders.customIcons.hint" = "Показывать картинки, назначенные папкам в Finder (Свойства → вставить изображение) или здесь, в «Свойствах» (⌘I). Папки без картинки сохраняют выбранный стиль и цвет — включая те, которым установщики назначили изображение обычной папки.";
 
 "quickFilter.prompt" = "Фильтр…";
 "quickFilter.matches" = "%1$d из %2$d";

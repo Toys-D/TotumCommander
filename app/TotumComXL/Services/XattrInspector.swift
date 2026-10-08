@@ -114,6 +114,8 @@ enum XattrInspector {
         case "Zone.Identifier":
             // Windows' own quarantine, carried over on NTFS/exFAT: [ZoneTransfer] ZoneId=3.
             return L("xattr.zoneIdentifier")
+        case FolderPicture.markerAttribute:
+            return L("xattr.folderPicture")
         case "com.apple.lastuseddate#PS":
             guard data.count >= 8 else { return nil }
             let seconds = data.prefix(8).withUnsafeBytes { $0.loadUnaligned(as: Int64.self) }
@@ -141,6 +143,7 @@ enum XattrInspector {
             "com.apple.provenance": "xattr.help.provenance",
             "Zone.Identifier": "xattr.help.zoneIdentifier",
             "com.apple.lastuseddate#PS": "xattr.help.lastUsed",
+            FolderPicture.markerAttribute: "xattr.help.folderPicture",
         ]
         return keys[name].map { L($0) }
     }

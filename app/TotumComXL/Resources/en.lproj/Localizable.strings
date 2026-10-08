@@ -493,6 +493,8 @@
 "xattr.help.provenance" = "macOS bookkeeping about the file’s origin (newer systems). No visible effect.";
 "xattr.help.zoneIdentifier" = "Windows’ «downloaded from the internet» mark — the NTFS cousin of macOS quarantine, carried over with the file. Has no effect on a Mac; safe to remove.";
 "xattr.help.lastUsed" = "When the file was last opened — written by the system. Informational only.";
+"xattr.folderPicture" = "Folder picture assigned in Totum Commander";
+"xattr.help.folderPicture" = "A Totum Commander mark: this folder’s picture was assigned in Properties, so the panels show it even when it looks like an ordinary folder (such pictures from installers are hidden). Delete the mark and a folder-like picture is hidden too; the picture itself stays.";
 "xattr.quarantine" = "Gatekeeper quarantine — the “downloaded from the internet” mark";
 "xattr.quarantine.by" = "Quarantine: set by %@";
 "xattr.quarantine.by.at" = "Quarantine: set by %@, %@";
@@ -1041,6 +1043,19 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "properties.actor.everyone" = "Everyone";
 "properties.applyToEnclosed" = "Apply to enclosed items";
 "properties.applyErrorTitle" = "Couldn't apply changes";
+"properties.picture.section" = "Folder picture";
+"properties.picture.choose" = "Choose…";
+"properties.picture.paste" = "Paste";
+"properties.picture.remove" = "Remove";
+"properties.picture.hint" = "As in Finder: other apps see the picture too. You can also drop one onto the icon.";
+"properties.picture.chooseTitle" = "Picture for the folder “%@”";
+"properties.picture.turnedOn" = "Pictures on folders are now shown — Settings ▸ Folders & Icons.";
+"properties.picture.noImage" = "There’s no picture on the clipboard.";
+"properties.picture.unreadable" = "That’s not a picture.";
+"properties.picture.failed" = "Couldn’t write the picture: %@";
+"properties.picture.blocked.trash" = "Folders in the Trash don’t get pictures.";
+"properties.picture.blocked.readOnly" = "The folder is read-only — the picture can’t be written.";
+"properties.picture.blocked.symlink" = "This is a link — assign the picture to the folder itself.";
 "properties.permPartialFail" = "Permissions weren't changed for every enclosed item: %d skipped.";
 
 // MARK: - Main menu / language
@@ -1229,6 +1244,35 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "folderIconStyle.catalogV7" = "Catalog V7";
 "folderIconStyle.catalogV8" = "Catalog V8";
 "folderIconStyle.catalogV9" = "Catalog V9";
+"folderStyles.own" = "Custom…";
+"folderStyles.add.title" = "Your own folder icon — SVG or PNG";
+"folderStyles.delete" = "Delete";
+"folderStyles.recolor" = "Recolour to the folder colour";
+"folderStyles.hint" = "A style of your own — SVG or PNG. SVG recolours like the built-in ones: square canvas, filled shapes only, colours #FF00FF — folder colour, #B000B0 — darker, #FFFFFF — white, #000000 — shadow; no text, images, links, scripts or hidden layers, styles only as plain classes the way Illustrator writes them; up to 200 KB. PNG: a square of 512 to 2048 px, transparent background, up to 2 MB. To remove one of yours — the cross on hover or a right-click.";
+"folderStyles.sample" = "Sample SVG…";
+"folderStyles.sample.failed" = "Couldn’t save the sample";
+"folderStyles.rejected.title" = "This picture can’t be used";
+"folderStyles.problem.format" = "Only SVG and PNG will do.";
+"folderStyles.problem.fileTooBig" = "The file is larger than %d KB.";
+"folderStyles.problem.notSVG" = "The file doesn’t read as SVG.";
+"folderStyles.problem.noViewBox" = "No viewBox — set a square canvas, e.g. 0 0 512 512.";
+"folderStyles.problem.notSquare" = "The canvas isn’t square — the viewBox has to be.";
+"folderStyles.problem.text" = "The drawing has text — convert it to outlines.";
+"folderStyles.problem.styleBlock" = "The <style> block goes beyond plain classes like .st0 { fill: #FF00FF; } — keep only those, or in Illustrator choose “CSS Properties: Style Attributes”.";
+"folderStyles.problem.hiddenLayers" = "There are hidden layers — delete them: macOS draws them anyway.";
+"folderStyles.problem.references" = "There are links, gradients, masks, filters, scripts or event handlers — remove them.";
+"folderStyles.problem.forbidden" = "Elements not allowed: %@. Only shapes will do: path, rect, circle, ellipse, polygon, polyline, line and groups.";
+"folderStyles.problem.colors" = "Colours outside the set: %@. Only #FF00FF (folder colour), #B000B0 (folder colour, darker), #FFFFFF (white) and #000000 (shadow) are allowed.";
+"folderStyles.problem.noFolderColor" = "Not a single shape in #FF00FF — there is nothing to recolour.";
+"folderStyles.problem.tooComplex" = "More than %d elements — simplify the drawing.";
+"folderStyles.problem.unrenderable" = "macOS couldn’t draw this SVG.";
+"folderStyles.problem.pngUnreadable" = "The file doesn’t read as PNG.";
+"folderStyles.problem.pngNotSquare" = "The picture isn’t square: %d × %d.";
+"folderStyles.problem.pngTooSmall" = "The picture is smaller than %d px a side (it is %d).";
+"folderStyles.problem.pngTooLarge" = "The picture is larger than %d px a side (it is %d).";
+"folderStyles.problem.pngNoAlpha" = "No transparency — the background has to be transparent.";
+"folderStyles.problem.pngOpaqueBackground" = "The background isn’t transparent: the picture’s corners have to be empty.";
+"folderStyles.problem.empty" = "The picture is empty.";
 "quickLink.applications" = "Applications";
 "quickLink.short.applications" = "Apps";
 "quickLink.desktop" = "Desktop";
@@ -1643,7 +1687,7 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "tags.writeFailed.message" = "Tags were not changed for %d item(s). The volume may be read-only, or you may not have permission to write.";
 
 "settings.folders.customIcons" = "Show custom folder pictures";
-"settings.folders.customIcons.hint" = "Show pictures assigned to folders in Finder (Get Info → paste a picture). Folders without a picture keep the chosen style and colour — including those an installer gave artwork of an ordinary folder.";
+"settings.folders.customIcons.hint" = "Show pictures assigned to folders in Finder (Get Info → paste a picture) or here, in Properties (⌘I). Folders without a picture keep the chosen style and colour — including those an installer gave artwork of an ordinary folder.";
 
 "quickFilter.prompt" = "Filter…";
 "quickFilter.matches" = "%1$d of %2$d";

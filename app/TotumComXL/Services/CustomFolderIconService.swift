@@ -17,6 +17,23 @@ enum CustomFolderIconService {
 
     static var isEnabled: Bool { UserDefaults.standard.bool(forKey: enabledKey) }
 
+    /// Растёт, когда картинку назначили или убрали в «Свойствах» (FolderPicture). Панели
+    /// наблюдают его, как настройки вида, и перечитывают значки. Без точек: на ключах с точкой
+    /// наблюдение за настройками молча не срабатывает.
+    static let generationKey = "customFolderIconGeneration"
+
+    /// Для ключей кэшей значков в видах списка: показ включён ли и какое поколение.
+    static var cacheToken: String {
+        "\(isEnabled)-\(UserDefaults.standard.integer(forKey: generationKey))"
+    }
+
+    /// Картинку назначили или убрали — забыть прочитанное и дать панелям знать.
+    static func pictureChanged() {
+        clearCache()
+        let defaults = UserDefaults.standard
+        defaults.set(defaults.integer(forKey: generationKey) + 1, forKey: generationKey)
+    }
+
     /// macOS keeps a hand-assigned folder icon in a hidden `Icon\r` file inside the folder itself.
     /// `URLResourceKey.customIconKey` looks like the official answer but is unimplemented — it
     /// returns nil even for a folder that visibly has one, measured on this system.
@@ -94,7 +111,8 @@ enum CustomFolderIconService {
             if FileManager.default.fileExists(atPath: iconFile) {
                 let assigned = NSWorkspace.shared.icon(forFile: item.path)
                 // Artwork of a plain folder is not a picture — let the configured style win.
-                found = isFolderArtwork(assigned) ? nil : assigned
+                // Unless the user assigned it here: then it is exactly the picture they chose.
+                found = isFolderArtwork(assigned) && !FolderPicture.isAssignedHere(item.path) ? nil : assigned
             } else {
                 found = nil
             }

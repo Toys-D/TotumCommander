@@ -374,6 +374,7 @@ struct FCXLChipButtonStyle: ButtonStyle {
         let configuration: Configuration
         let compact: Bool
         @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
+        @Environment(\.isEnabled) private var isEnabled
         @State private var isHovered = false
 
         private var accent: Color {
@@ -387,8 +388,10 @@ struct FCXLChipButtonStyle: ButtonStyle {
                 .padding(.vertical, compact ? 3 : 5)
                 .background(RoundedRectangle(cornerRadius: 6)
                     .fill(configuration.isPressed ? accent.opacity(0.30)
-                          : isHovered ? accent.opacity(0.18)
+                          : isHovered && isEnabled ? accent.opacity(0.18)
                           : Color.secondary.opacity(0.10)))
+                // Нажать нельзя — видно сразу, а не после щелчка, который ничего не сделал.
+                .opacity(isEnabled ? 1 : 0.4)
                 .contentShape(Rectangle())
                 .onHover { isHovered = $0 }
         }

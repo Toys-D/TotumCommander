@@ -97,7 +97,7 @@ Bubble buttons: **Select** what is shown, **Deselect**, **Invert**, **Delete** w
 - **Git state** — a letter before the name (M, A, D, R, ?, !, ·) and the branch name on a repository folder with an orange "unsaved changes" dot. Enabled in the "List" settings. Details in the program's help (⌘?).
 - **Colours by file type** — names are coloured by the rules in "Settings ▸ File Colours": a mask (`*.dmg;*.pkg`), a colour for the light and the dark theme, "only for recent" with gradual fading.
 - **Pictures on folders** — icons assigned to folders in Finder (setting "Show images on folders").
-- **Folder icon styles** — "Catalog V3…V9" in the "Folders & Icons" settings.
+- **Folder icon styles** — "Catalog V3…V9" and "Totum" (the app's own folder: the body takes the folder colour, the outline and the white "TC" stay) in the "Folders & Icons" settings, and your own: the "Custom…" tile takes an SVG or a PNG.
 
 ### 2.7. Volume bar
 
@@ -290,7 +290,7 @@ Removes EXIF: only the place (GPS) or all info. A copy marked "(no info)" or ove
 The command "Tools ▸ Uninstall Program…" or F8 on a single `.app` (or the folder a program was installed into) opens the list of everything left of it: the program itself, data, cache, preferences, containers, saved state, logs, installer receipt, cookies, login items — with sizes and check marks. What is ticked goes to the Trash. ⇧F8 and deleting several files at once take the ordinary road (no list).
 
 ### 9.14. Properties, attributes, links, tags
-- **Properties** (⌘I): name, type, path, size (with folder counting), dates, permissions, owner; for folders — how many files and folders inside; for archives — the path inside the archive. Sections "Attributes" (hidden), "Permissions" (a read/write/execute grid for owner, group, everyone, the code, apply to enclosed) and "Extended attributes" with an explanation of each (quarantine, where from, tags, resource fork, encoding…) and a button to remove an attribute.
+- **Properties** (⌘I): name, type, path, size (with folder counting), dates, permissions, owner; for folders — how many files and folders inside; for archives — the path inside the archive. Sections "Attributes" (hidden), "Permissions" (a read/write/execute grid for owner, group, everyone, the code, apply to enclosed) and "Extended attributes" with an explanation of each (quarantine, where from, tags, resource fork, encoding…) and a button to remove an attribute. A folder also gets "Folder picture", as in Finder: choose a picture, paste it from the clipboard or drop it onto the icon, or remove it — it applies at once, and Finder and other apps see it too. A picture assigned here is shown in the panels even when it looks like an ordinary folder; if showing pictures on folders was off, it is turned on.
 - **Change Attributes…** for several files: permissions, date modified, date created ("Now"), remove the "downloaded from the internet" quarantine.
 - **Create Link**: symbolic, alias, hard (not for folders).
 - **Tags** (Tools ▸ Tags, context menu): the seven Finder colours, a check mark — already set, "Remove tags".
@@ -419,7 +419,9 @@ Rules colouring names by masks, separately for the light and the dark theme, "on
 Blur, height, width, rounding, offset and anchor, outline (colour, width), custom colour, a **custom cursor mask**: drawn with a brush or a pen, presets (gradients, bar, capsule, ellipse, slant, arrow), loading a picture. "Beauty mode" (blur and glow) is available on Apple Silicon with 14+ GPU cores.
 
 ### Folders & Icons
-Folder icon style (Catalog V3…V9), images on folders from Finder, enlarging the icon under the cursor (amount, spread to neighbours).
+Folder icon style (Catalog V3…V9, Totum or your own), images on folders from Finder, enlarging the icon under the cursor (amount, spread to neighbours).
+
+**Your own folder style.** The "Custom…" tile takes an SVG or a PNG and checks it strictly: what breaks the rules is not taken, and the refusal says what to fix. An SVG recolours to the folder colour like the built-in styles: a square canvas (viewBox), filled shapes only, colour roles — `#FF00FF` folder colour, `#B000B0` darker, `#FFFFFF` white, `#000000` shadow (may be translucent); no text (convert it to outlines), images, links, scripts, hidden layers, gradients, masks or filters; styles only as plain classes (`.st0 { fill: #FF00FF; }`), the way Illustrator writes them; up to 200 KB. "Sample SVG…" saves a ready folder drawn to these rules — redraw it as you like. A PNG is a square of 512 to 2048 px on a transparent background, up to 2 MB: it is recoloured by lightness (its main tone becomes the folder colour) or, with "Recolour to the folder colour" off, kept as it is. The picture is copied to the app — the original can be deleted. To remove a style of yours — the cross on hover or a right-click.
 
 ### Font
 Family, bold, size, letter spacing, enlarging the font under the cursor, preview.

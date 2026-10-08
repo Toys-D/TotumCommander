@@ -135,11 +135,14 @@ enum SettingsSearchIndex {
         ],
         .folders: [
             ("design.folderIconStyle", "design.section.folderIcons"),
+            ("folderStyles.recolor", "design.section.folderIcons"),
+            ("folderStyles.sample", "design.section.folderIcons"),
             ("settings.folders.customIcons", "design.section.folderIcons"),
             ("settings.folders.iconZoomSection", "design.section.folderIcons"),
             ("settings.folders.iconZoom", "design.section.folderIcons"),
             ("settings.folders.iconZoomAmount", "design.section.folderIcons"),
             ("settings.folders.iconZoomSpread", "design.section.folderIcons"),
+            ("folderStyles.own", "design.section.folderIcons"),
         ],
         .font: [
             ("settings.font.section", nil),

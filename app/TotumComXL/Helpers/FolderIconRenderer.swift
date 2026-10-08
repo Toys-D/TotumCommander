@@ -3,15 +3,52 @@ import SwiftUI
 
 // MARK: - FolderIconStyle enum
 
-enum FolderIconStyle: String, CaseIterable, Identifiable {
-    case macos = "macos"
-    case catalogV3 = "catalogV3"
-    case catalogV4 = "catalogV4"
-    case catalogV5 = "catalogV5"
-    case catalogV6 = "catalogV6"
-    case catalogV7 = "catalogV7"
-    case catalogV8 = "catalogV8"
-    case catalogV9 = "catalogV9"
+enum FolderIconStyle: Hashable, Identifiable, RawRepresentable, CaseIterable {
+    case macos
+    case catalogV3
+    case catalogV4
+    case catalogV5
+    case catalogV6
+    case catalogV7
+    case catalogV8
+    case catalogV9
+    /// Папка-знак программы: тело в цвет папок, обводка, лист и белые «TC» — всегда свои.
+    case totum
+    /// Свой стиль из библиотеки (FolderStyleLibrary) — картинка, которую человек добавил сам.
+    case custom(String)
+
+    /// Встроенные — в том порядке, в каком стоят в настройках. Свои добавляются следом.
+    static let allCases: [FolderIconStyle] = [
+        .macos, .catalogV3, .catalogV4, .catalogV5, .catalogV6, .catalogV7, .catalogV8, .catalogV9, .totum,
+    ]
+
+    private static let customPrefix = "custom:"
+
+    init?(rawValue: String) {
+        if rawValue.hasPrefix(Self.customPrefix) {
+            let id = String(rawValue.dropFirst(Self.customPrefix.count))
+            guard !id.isEmpty else { return nil }
+            self = .custom(id)
+            return
+        }
+        guard let builtIn = Self.allCases.first(where: { $0.rawValue == rawValue }) else { return nil }
+        self = builtIn
+    }
+
+    var rawValue: String {
+        switch self {
+        case .macos: return "macos"
+        case .catalogV3: return "catalogV3"
+        case .catalogV4: return "catalogV4"
+        case .catalogV5: return "catalogV5"
+        case .catalogV6: return "catalogV6"
+        case .catalogV7: return "catalogV7"
+        case .catalogV8: return "catalogV8"
+        case .catalogV9: return "catalogV9"
+        case .totum: return "totum"
+        case .custom(let id): return Self.customPrefix + id
+        }
+    }
 
     var id: String { rawValue }
 
@@ -25,10 +62,22 @@ enum FolderIconStyle: String, CaseIterable, Identifiable {
         case .catalogV7: return L("folderIconStyle.catalogV7")
         case .catalogV8: return L("folderIconStyle.catalogV8")
         case .catalogV9: return L("folderIconStyle.catalogV9")
+        case .totum: return "Totum"
+        case .custom(let id): return FolderStyleLibrary.entry(id)?.name ?? ""
         }
     }
 
+    /// Для ключей кэшей картинок. Свой стиль может перерисоваться под тем же именем — PNG
+    /// включили или выключили перекрашивать, — поэтому к имени добавляется поколение библиотеки.
+    var cacheToken: String {
+        guard case .custom = self else { return rawValue }
+        return "\(rawValue)-g\(FolderStyleLibrary.generation)"
+    }
+
     static let storageKey = "folderIconStyle"
+
+    /// Цвет папки, пока в настройках он не выбран, — один на все стили, встроенные и свои.
+    static let defaultTint = NSColor(srgbRed: 0.42, green: 0.73, blue: 0.95, alpha: 1)
 }
 
 // MARK: - FolderIconRenderer (Canvas → NSImage + cache)
@@ -41,7 +90,7 @@ enum FolderIconRenderer {
     @MainActor
     static func image(style: FolderIconStyle, size: CGFloat, tintColor: NSColor?) -> NSImage {
         let tintKey = tintColor.map { PanelAppearanceSettings.hexString(from: $0) } ?? "default"
-        let key = "\(style.rawValue)_\(Int(size))_\(tintKey)"
+        let key = "\(style.cacheToken)_\(Int(size))_\(tintKey)"
 
         lock.lock()
         if let cached = cache[key] {
@@ -50,7 +99,21 @@ enum FolderIconRenderer {
         }
         lock.unlock()
 
-        let rendered = renderCanvas(style: style, size: size, tintColor: tintColor)
+        let rendered: NSImage
+        if style == .totum {
+            rendered = FolderStyleArt.image(svg: TotumFolderArt.svg, size: size,
+                                            tint: tintColor ?? FolderIconStyle.defaultTint,
+                                            scale: NSScreen.main?.backingScaleFactor ?? 2.0)
+                ?? macosImage(size: size, tintColor: tintColor)
+        } else if case .custom(let id) = style {
+            // Своей картинки нет (стёрли за спиной программы) — папка в стиле macOS.
+            rendered = FolderStyleLibrary.entry(id).flatMap {
+                FolderStyleArt.image(for: $0, size: size, tint: tintColor ?? FolderIconStyle.defaultTint,
+                                     scale: NSScreen.main?.backingScaleFactor ?? 2.0)
+            } ?? macosImage(size: size, tintColor: tintColor)
+        } else {
+            rendered = renderCanvas(style: style, size: size, tintColor: tintColor)
+        }
 
         lock.lock()
         cache[key] = rendered
@@ -82,12 +145,7 @@ enum FolderIconRenderer {
 
     @MainActor
     private static func renderCanvas(style: FolderIconStyle, size: CGFloat, tintColor: NSColor?) -> NSImage {
-        let baseColor: Color
-        if let tint = tintColor {
-            baseColor = Color(nsColor: tint)
-        } else {
-            baseColor = Color(red: 0.42, green: 0.73, blue: 0.95)
-        }
+        let baseColor = Color(nsColor: tintColor ?? FolderIconStyle.defaultTint)
 
         let view = FolderCanvasView(style: style, baseColor: baseColor)
             .frame(width: size, height: size)
@@ -129,6 +187,14 @@ struct FolderCanvasView: View {
             Canvas { ctx, size in drawCatalogV8(context: &ctx, size: size, base: baseColor) }.clipped()
         case .catalogV9:
             Canvas { ctx, size in drawCatalogV9(context: &ctx, size: size, base: baseColor) }.clipped()
+        case .totum, .custom:
+            // Рисунок из SVG — тем же путём, что в панелях.
+            GeometryReader { proxy in
+                Image(nsImage: FolderIconRenderer.image(style: style, size: max(proxy.size.width, 16),
+                                                        tintColor: NSColor(baseColor)))
+                    .resizable()
+                    .scaledToFit()
+            }
         }
     }
 }
@@ -408,3 +474,22 @@ private func drawCatalogV9(context: inout GraphicsContext, size: CGSize, base: C
     context.fill(body, with: bodyShade)
     context.fill(tab, with: bodyShade); context.fill(tab, with: darkShade)
 }
+
+// MARK: - Totum
+
+/// Папка-знак программы (из Logo/folder2.svg). Тело — роль «цвет папки» (#FF00FF) и
+/// перекрашивается, как у всех стилей; обводка, задний лист и буквы «TC» остаются своими: так
+/// папка узнаётся при любом цвете. Холст — квадрат по рисунку: во всю ширину, по высоте по
+/// центру, как встают остальные стили.
+enum TotumFolderArt {
+    static let svg = """
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="4.5 -7.5 491 491">
+      <polygon fill="#E8E8E8" points="419.29 369.85 369.7 382.73 369.7 128.86 490.1 128.86 419.29 369.85"/>
+      <path fill="#FF00FF" d="M378.72,369.85H47.24c-22.69,0-41.12-18.32-41.26-41.01l-1.25-200.18s195.02,8.18,213.09-4.27c18.07-12.45,24.48-31.21,24.48-31.21h136.42v276.67Z"/>
+      <path fill="#FFFFFF" d="M182,214.92h-36.26v102.47h-25.7v-102.47h-36.43v-22.3h98.38v22.3Z"/>
+      <path fill="#FFFFFF" d="M223.88,311.09c-9.76-5.67-17.28-13.45-22.55-23.32s-7.91-20.88-7.91-33.02,2.64-23.09,7.91-32.85c5.28-9.76,12.79-17.45,22.55-23.06,9.76-5.62,21.11-8.43,34.04-8.43s23.66,2.36,32.51,7.06c8.85,4.71,16.28,11.26,22.3,19.66l-19.24,13.79c-3.63-5.33-8.57-9.64-14.8-12.94-6.24-3.29-13.17-4.94-20.77-4.94-7.15,0-13.73,1.7-19.74,5.11-6.02,3.41-10.78,8.26-14.3,14.55-3.52,6.3-5.28,13.65-5.28,22.04s1.76,15.92,5.28,22.21c3.52,6.3,8.26,11.15,14.21,14.55s12.57,5.1,19.83,5.1c8.28,0,15.52-1.62,21.7-4.85,6.18-3.23,11.49-8.14,15.91-14.72l17.7,13.62c-5.56,8.97-12.85,16.03-21.87,21.19-9.02,5.16-20.17,7.74-33.45,7.74s-24.28-2.84-34.04-8.51Z"/>
+      <path fill="#566070" d="M386.95,128.86v12.88h91.49l-55.1,203.9c-5.79,23.76-24.11,24.19-24.89,24.2v.06s0,0,0,0v-.06c-4.81,0-8.6-1.51-11.6-4.6-7.14-7.38-8.28-22.27-8.11-27.61V93.18h-132.79l-3.63.03-1.88,3.09c-.8,1.32-20.34,32.36-72.9,32.36H4.74v197.09c0,53.33,42.51,56.94,42.94,56.96l350.7.02h.21c10.14,0,30.69-7.08,37.23-33.87l59.46-220h-108.32ZM48.39,369.85c-2.84-.26-30.77-3.89-30.77-44.1v-184.21h149.9c50.66,0,74.84-26.22,81.79-35.48h116.53v231.34c-.03.87-.57,19.35,8.23,32.44H48.39Z"/>
+    </svg>
+    """
+}
+

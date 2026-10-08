@@ -4513,7 +4513,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
             isDirectory: p.isDirectory,
             isSymlink: p.isSymlink,
             mode: p.posixMode,
-            info: info
+            info: info,
+            pictureBlocked: Self.pictureBlockedReason(p, viewModel: viewModel)
         )
 
         guard let edit = DialogService.shared.showFilePropertiesEditor(input: input) else { return }
@@ -4538,6 +4539,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
             DialogService.shared.showError(
                 title: L("properties.applyErrorTitle"), message: errorMessage)
         }
+    }
+
+    /// Почему папке здесь не назначить картинку; nil — можно (или это не папка).
+    private static func pictureBlockedReason(_ p: FileOperationsService.ItemProperties,
+                                             viewModel: PanelViewModel) -> String? {
+        guard p.isDirectory else { return nil }
+        if p.isSymlink { return L("properties.picture.blocked.symlink") }
+        if viewModel.state.insideTrash { return L("properties.picture.blocked.trash") }
+        if !FileManager.default.isWritableFile(atPath: p.path) { return L("properties.picture.blocked.readOnly") }
+        return nil
     }
 
     /// The read-only info lines for the properties window — everything except the name (it's the

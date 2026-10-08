@@ -73,8 +73,8 @@ final class DialogService {
     /// The editable properties window (info + hidden flag + permission grid). Returns only the
     /// things the user changed, or nil if they cancelled. Blocks like the other FCXL dialogs.
     func showFilePropertiesEditor(input: FilePropertiesInput) -> FilePropertiesEdit? {
-        // Folders show one extra card ("apply to enclosed"); give them a touch more height.
-        let height: CGFloat = input.isDirectory ? 620 : 580
+        // Folders show two extra cards (their picture, "apply to enclosed"); give them more height.
+        let height: CGFloat = input.isDirectory ? 720 : 580
         return FCXLDialog.runModal(size: NSSize(width: 480, height: height)) { session in
             FilePropertiesDialogView(session: session, input: input)
         }

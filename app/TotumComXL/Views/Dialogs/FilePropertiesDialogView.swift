@@ -30,6 +30,8 @@ struct FilePropertiesInput {
     let isSymlink: Bool
     let mode: Int
     let info: FilePropertiesInfo
+    /// Почему папке здесь не назначить картинку (Корзина, только чтение, ссылка); nil — можно.
+    var pictureBlocked: String? = nil
 }
 
 /// What the window hands back — only the things the user actually changed. `nil` means "leave
@@ -54,6 +56,11 @@ struct FilePropertiesDialogView: View {
     /// filter's help: reading must not steal the keyboard or float away.
     @State private var unfoldedHelp: Set<String> = []
     @State private var applyRecursive = false
+    /// Картинка папки, если она есть, — меняется сразу, как в Finder, без «ОК».
+    @State private var picture: NSImage?
+    /// Что сказать под кнопками: что включили показ, или что не вышло.
+    @State private var pictureNote: (text: String, isError: Bool)?
+    @State private var pictureDropTargeted = false
 
     private let originalMode: Int
 
@@ -63,6 +70,7 @@ struct FilePropertiesDialogView: View {
         _info = ObservedObject(wrappedValue: input.info)
         _perms = State(initialValue: PosixPermissions(mode: input.mode))
         _xattrs = State(initialValue: XattrInspector.list(path: input.path))
+        _picture = State(initialValue: input.isDirectory ? FolderPicture.picture(of: input.path) : nil)
         originalMode = input.mode
     }
 
@@ -73,6 +81,9 @@ struct FilePropertiesDialogView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     infoCard
+                    if input.isDirectory {
+                        pictureCard
+                    }
                     permissionsCard
                     xattrCard
                 }
@@ -103,6 +114,114 @@ struct FilePropertiesDialogView: View {
                         .textSelection(.enabled)
                 }
             }
+        }
+    }
+
+    // MARK: - Folder picture
+
+    /// Картинка папки — как «Свойства ▸ вставить изображение» в Finder: выбрать файл, вставить
+    /// из буфера, перетащить на значок, убрать. Применяется сразу, без «ОК».
+    private var pictureCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionLabel(L("properties.picture.section"))
+            FCXLFormCard {
+                HStack(alignment: .center, spacing: 14) {
+                    picturePreview
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Button(L("properties.picture.choose")) { choosePicture() }
+                            Button(L("properties.picture.paste")) { pastePicture() }
+                            Button(L("properties.picture.remove")) { removePicture() }
+                                .disabled(picture == nil)
+                        }
+                        .buttonStyle(FCXLChipButtonStyle(compact: true))
+                        .disabled(input.pictureBlocked != nil)
+                        Text(pictureNote?.text ?? input.pictureBlocked ?? L("properties.picture.hint"))
+                            .font(.system(size: 11))
+                            .foregroundStyle(pictureNote?.isError == true ? Color.red : Color.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+            }
+        }
+    }
+
+    /// Как папка выглядит сейчас: её картинка или стиль из настроек. Сюда же бросают картинку.
+    private var picturePreview: some View {
+        let shown = picture ?? FolderIconRenderer.image(
+            style: FolderIconStyle(rawValue: UserDefaults.standard.string(forKey: FolderIconStyle.storageKey) ?? "")
+                ?? .macos,
+            size: 56,
+            tintColor: PanelAppearanceSettings.optionalNSColor(
+                from: UserDefaults.standard.string(forKey: PanelAppearanceSettings.folderIconColorHexKey) ?? ""))
+        return Image(nsImage: shown)
+            .resizable()
+            .scaledToFit()
+            .frame(width: 56, height: 56)
+            .padding(4)
+            .overlay(RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+                .foregroundStyle(Color.accentColor)
+                .opacity(pictureDropTargeted ? 1 : 0))
+            .onDrop(of: [.fileURL, .image], isTargeted: $pictureDropTargeted) { providers in
+                guard input.pictureBlocked == nil, let provider = providers.first else { return false }
+                if provider.canLoadObject(ofClass: NSURL.self) {
+                    _ = provider.loadObject(ofClass: NSURL.self) { url, _ in
+                        let image = (url as? URL).flatMap { NSImage(contentsOf: $0) }
+                        DispatchQueue.main.async { setPicture(image) }
+                    }
+                } else {
+                    _ = provider.loadObject(ofClass: NSImage.self) { image, _ in
+                        let image = image as? NSImage
+                        DispatchQueue.main.async { setPicture(image) }
+                    }
+                }
+                return true
+            }
+    }
+
+    private func choosePicture() {
+        let panel = NSOpenPanel()
+        panel.title = L("properties.picture.chooseTitle", input.name)
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        setPicture(NSImage(contentsOf: url))
+    }
+
+    private func pastePicture() {
+        guard let image = FolderPicture.image(from: .general) else {
+            pictureNote = (L("properties.picture.noImage"), true)
+            return
+        }
+        setPicture(image)
+    }
+
+    private func setPicture(_ image: NSImage?) {
+        guard let image, image.isValid else {
+            pictureNote = (L("properties.picture.unreadable"), true)
+            return
+        }
+        do {
+            let turnedOn = try FolderPicture.assign(image, to: input.path)
+            picture = FolderPicture.picture(of: input.path)
+            pictureNote = turnedOn ? (L("properties.picture.turnedOn"), false) : nil
+        } catch {
+            pictureNote = (error.localizedDescription, true)
+        }
+    }
+
+    private func removePicture() {
+        do {
+            try FolderPicture.remove(from: input.path)
+            picture = nil
+            pictureNote = nil
+        } catch {
+            pictureNote = (error.localizedDescription, true)
         }
     }
 

@@ -416,7 +416,7 @@ struct FileListBriefView: NSViewRepresentable {
         let beauty = UserDefaults.standard.bool(forKey: PanelAppearanceSettings.beautyModeEnabledKey) ? 1 : 0
         let stripes = PanelAppearanceSettings.resolvedAlternateRowColor()
             .map { PanelAppearanceSettings.hexString(from: $0) } ?? "off"
-        return "\(Int(iconSize.rounded()))-\(folderIconStyle.rawValue)-\(folderTintCacheToken())-us\(Int((upIconScale * 100).rounded()))-uw\(Int(upIconWeight.rounded()))-sym\(upIconSymbol)-\(PanelAppearanceSettings.hexString(from: folderNameColor))-\(PanelAppearanceSettings.hexString(from: fileNameColor))-\(PanelAppearanceSettings.hexString(from: cursorNameColor))-\(cursorBg)-gap\(gap)-beauty\(beauty)-zoom\(Int(CursorIconZoom.effectiveScale * 100))s\(PanelAppearanceSettings.resolvedCursorIconZoomSpread)-\(PanelAppearanceSettings.listFontToken)-in\(Int(PanelAppearanceSettings.resolvedIconEdgeInset))-custom\(CustomFolderIconService.isEnabled)-alt\(stripes)-cg\(colorGeneration)"
+        return "\(Int(iconSize.rounded()))-\(folderIconStyle.cacheToken)-\(folderTintCacheToken())-us\(Int((upIconScale * 100).rounded()))-uw\(Int(upIconWeight.rounded()))-sym\(upIconSymbol)-\(PanelAppearanceSettings.hexString(from: folderNameColor))-\(PanelAppearanceSettings.hexString(from: fileNameColor))-\(PanelAppearanceSettings.hexString(from: cursorNameColor))-\(cursorBg)-gap\(gap)-beauty\(beauty)-zoom\(Int(CursorIconZoom.effectiveScale * 100))s\(PanelAppearanceSettings.resolvedCursorIconZoomSpread)-\(PanelAppearanceSettings.listFontToken)-in\(Int(PanelAppearanceSettings.resolvedIconEdgeInset))-custom\(CustomFolderIconService.cacheToken)-alt\(stripes)-cg\(colorGeneration)"
     }
 
     @MainActor

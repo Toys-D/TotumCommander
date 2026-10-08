@@ -802,7 +802,7 @@ private final class ThumbnailProvider {
         // up-arrow was served to the actual TEMP folder sitting in the parent listing. The
         // isParent flag keeps the two apart.
         let isParent = item.name == ".."
-        let cacheKey = "\(item.path)|parent\(isParent ? 1 : 0)|\(Int(previewSize.rounded()))|\(useQuickLookPreviews)|\(folderIconStyle.rawValue)|\(folderIconCacheToken(folderIconTintColor))|custom\(CustomFolderIconService.isEnabled)|us\(Int((upIconScale * 100).rounded()))|sym\(upIconSymbol)"
+        let cacheKey = "\(item.path)|parent\(isParent ? 1 : 0)|\(Int(previewSize.rounded()))|\(useQuickLookPreviews)|\(folderIconStyle.cacheToken)|\(folderIconCacheToken(folderIconTintColor))|custom\(CustomFolderIconService.cacheToken)|us\(Int((upIconScale * 100).rounded()))|sym\(upIconSymbol)"
         if let cached = cache[cacheKey] {
             return cached
         }

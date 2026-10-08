@@ -37,6 +37,29 @@ final class InlineRenameLookTests: XCTestCase {
         }
     }
 
+    /// Под полем «красивый» курсор — свечение остаётся под строкой и на время правки: на тёмном
+    /// буквы белые, на светлом — чёрные. Без него под полем фон панели, в том числе свой, тёмный.
+    func test_буквыЧитаемыНаТом_чтоПодПолем() {
+        let d = UserDefaults.standard
+        let keys = [PanelAppearanceSettings.beautyModeEnabledKey, PanelAppearanceSettings.cursorUsesCustomColorKey,
+                    PanelAppearanceSettings.cursorBackgroundColorHexKey,
+                    PanelAppearanceSettings.panelBackgroundKey(dark: false)]
+        let saved = keys.map { d.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, saved) { d.set(value, forKey: key) } }
+        d.set(true, forKey: PanelAppearanceSettings.cursorUsesCustomColorKey)
+
+        d.set(true, forKey: PanelAppearanceSettings.beautyModeEnabledKey)
+        for (cursor, expected) in [("#59676FFF", NSColor.white), ("#3A3F44FF", .white), ("#FFE680FF", .black)] {
+            d.set(cursor, forKey: PanelAppearanceSettings.cursorBackgroundColorHexKey)
+            XCTAssertEqual(resolved(InlineRenameLook.ink, in: .aqua), resolved(expected, in: .aqua),
+                           "свечение курсора \(cursor)")
+        }
+        d.set(false, forKey: PanelAppearanceSettings.beautyModeEnabledKey)
+        d.set("#2B2F33FF", forKey: PanelAppearanceSettings.panelBackgroundKey(dark: false))
+        XCTAssertEqual(resolved(InlineRenameLook.ink, in: .aqua), resolved(.white, in: .aqua),
+                       "свой тёмный фон панели в светлой теме — буквы белые")
+    }
+
     func test_выделениеАкцентомСЧитаемымиБуквами() {
         let key = PanelAppearanceSettings.accentColorHexKey
         let saved = UserDefaults.standard.string(forKey: key)
