@@ -65,9 +65,19 @@ final class FolderPictureTests: XCTestCase {
 
     func test_показКартинокВключаетсяСам() throws {
         UserDefaults.standard.set(false, forKey: CustomFolderIconService.enabledKey)
-        XCTAssertTrue(try FolderPicture.assign(picture(), to: folder), "иначе назначенное не появилось бы")
+        XCTAssertEqual(try FolderPicture.assign(picture(), to: folder), .init(turnedOn: true),
+                       "иначе назначенное не появилось бы")
         XCTAssertTrue(CustomFolderIconService.isEnabled)
-        XCTAssertFalse(try FolderPicture.assign(picture(color: .systemBlue), to: folder), "уже включён")
+        XCTAssertEqual(try FolderPicture.assign(picture(color: .systemBlue), to: folder), .init(), "уже включён")
+    }
+
+    /// Метка не повесилась — об этом говорится, а не молчится: на диске без расширенных
+    /// атрибутов картинка, похожая на папку, пропадала бы из панели без объяснений.
+    func test_непринятаяМеткаНеМолчит() throws {
+        XCTAssertTrue(FolderPicture.mark(folder))
+        XCTAssertTrue(FolderPicture.isAssignedHere(folder))
+        XCTAssertFalse(FolderPicture.mark(folder + "/нет такой папки"), "диск не принял — ложь")
+        XCTAssertEqual(try FolderPicture.assign(picture(), to: folder), .init(), "на обычном диске метка принята")
     }
 
     func test_убрать() throws {

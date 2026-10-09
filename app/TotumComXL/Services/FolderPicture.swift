@@ -18,6 +18,15 @@ enum FolderPicture {
         let errorDescription: String?
     }
 
+    /// Что сказать человеку после назначения — картинка при этом записана.
+    struct Outcome: Equatable {
+        /// Показ картинок на папках был выключен и включён: иначе назначенное не появилось бы.
+        var turnedOn = false
+        /// Диск не принял метку «назначили здесь» — нет расширенных атрибутов. Картинку,
+        /// похожую на обычную папку, панель тогда не покажет, хотя Finder покажет.
+        var unmarked = false
+    }
+
     static func hasPicture(_ path: String) -> Bool {
         FileManager.default.fileExists(atPath: (path as NSString).appendingPathComponent("Icon\r"))
     }
@@ -31,21 +40,27 @@ enum FolderPicture {
         hasPicture(path) ? NSWorkspace.shared.icon(forFile: path) : nil
     }
 
-    /// Назначить: вписать в квадрат без искажения и записать, как Finder. Возвращает true, если
-    /// пришлось включить показ картинок на папках — иначе назначенное в панелях не появилось бы.
+    /// Назначить: вписать в квадрат без искажения и записать, как Finder. В ответе — что
+    /// сказать: включился ли показ картинок, принял ли диск метку.
     @discardableResult
-    static func assign(_ image: NSImage, to path: String) throws -> Bool {
+    static func assign(_ image: NSImage, to path: String) throws -> Outcome {
         guard let square = fitted(image) else {
             throw Failure(errorDescription: L("properties.picture.unreadable"))
         }
         guard NSWorkspace.shared.setIcon(square, forFile: path, options: []) else {
             throw Failure(errorDescription: L("properties.picture.failed", path))
         }
-        _ = "1".withCString { setxattr(path, markerAttribute, $0, 1, 0, XATTR_NOFOLLOW) }
-        let turnedOn = !CustomFolderIconService.isEnabled
-        if turnedOn { UserDefaults.standard.set(true, forKey: CustomFolderIconService.enabledKey) }
+        var outcome = Outcome(unmarked: !mark(path))
+        outcome.turnedOn = !CustomFolderIconService.isEnabled
+        if outcome.turnedOn { UserDefaults.standard.set(true, forKey: CustomFolderIconService.enabledKey) }
         CustomFolderIconService.pictureChanged()
-        return turnedOn
+        return outcome
+    }
+
+    /// Повесить метку «назначили здесь». Ложь — диск её не принял (или папки нет): метка молча
+    /// пропадала, и картинка, похожая на папку, пропадала из панели без объяснений.
+    static func mark(_ path: String) -> Bool {
+        "1".withCString { setxattr(path, markerAttribute, $0, 1, 0, XATTR_NOFOLLOW) } == 0
     }
 
     static func remove(from path: String) throws {

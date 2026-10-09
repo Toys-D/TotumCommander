@@ -1177,6 +1177,7 @@
 "properties.picture.hint" = "Как в Finder: картинку видят и другие программы. Можно перетащить её на значок.";
 "properties.picture.chooseTitle" = "Картинка для папки «%@»";
 "properties.picture.turnedOn" = "Показ картинок на папках включён — «Настройки ▸ Папки и иконки».";
+"properties.picture.unmarked" = "Картинка записана, но этот диск не принял метку программы: если она похожа на обычную папку, в панели её не будет, хотя Finder её покажет.";
 "properties.picture.noImage" = "В буфере нет картинки.";
 "properties.picture.unreadable" = "Это не картинка.";
 "properties.picture.failed" = "Не удалось записать картинку: %@";

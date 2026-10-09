@@ -204,9 +204,11 @@ struct FilePropertiesDialogView: View {
             return
         }
         do {
-            let turnedOn = try FolderPicture.assign(image, to: input.path)
+            let outcome = try FolderPicture.assign(image, to: input.path)
             picture = FolderPicture.picture(of: input.path)
-            pictureNote = turnedOn ? (L("properties.picture.turnedOn"), false) : nil
+            // Непринятая метка важнее включённого показа: без неё картинка может и не появиться.
+            pictureNote = outcome.unmarked ? (L("properties.picture.unmarked"), true)
+                : outcome.turnedOn ? (L("properties.picture.turnedOn"), false) : nil
         } catch {
             pictureNote = (error.localizedDescription, true)
         }

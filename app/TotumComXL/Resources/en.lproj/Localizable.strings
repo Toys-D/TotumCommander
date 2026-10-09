@@ -1050,6 +1050,7 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "properties.picture.hint" = "As in Finder: other apps see the picture too. You can also drop one onto the icon.";
 "properties.picture.chooseTitle" = "Picture for the folder “%@”";
 "properties.picture.turnedOn" = "Pictures on folders are now shown — Settings ▸ Folders & Icons.";
+"properties.picture.unmarked" = "The picture is saved, but this disk refused the app’s marker: if it looks like a plain folder, the panel won’t show it, though Finder will.";
 "properties.picture.noImage" = "There’s no picture on the clipboard.";
 "properties.picture.unreadable" = "That’s not a picture.";
 "properties.picture.failed" = "Couldn’t write the picture: %@";
