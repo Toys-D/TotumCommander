@@ -209,6 +209,19 @@ final class FolderStylesTests: XCTestCase {
         XCTAssertEqual(d.string(forKey: FolderIconStyle.storageKey), "totum", "на экране был другой — не тронут")
     }
 
+    /// Список не записался (диск полон, папка недоступна) — стиль не добавлен и копии-сироты
+    /// не остаётся, а не «добавлен» до первого перезапуска.
+    func test_списокНеЗаписался_стильНеДобавленИКопииНет() throws {
+        let library = folder.appendingPathComponent("library")
+        // На месте списка — папка: записать файл туда нельзя.
+        try FileManager.default.createDirectory(at: library.appendingPathComponent("styles.json"),
+                                                withIntermediateDirectories: true)
+        XCTAssertThrowsError(try FolderStyleLibrary.add(contentsOf: file("p.png", png(width: 512, height: 512))))
+        XCTAssertEqual(FolderStyleLibrary.entries, [])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: library.path), ["styles.json"],
+                       "копии нет")
+    }
+
     // MARK: - Своя картинка на каждую тему
 
     private func themeDefaults() -> (UserDefaults, String) {

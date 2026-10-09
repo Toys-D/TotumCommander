@@ -1507,8 +1507,9 @@ final class FileOperationsService {
                     userInfo: [NSLocalizedDescriptionKey: L("rename.exists")]
                 )
             }
-            // Как «Заменить» при копировании: прежний удаляется насовсем, не в Корзину.
-            try FileManager.default.removeItem(atPath: occupied)
+            // Как «Заменить» при копировании: прежний пропадает насовсем, не в Корзину. Убирает
+            // его сам rename(2) — атомарно, файл на файл. Удалять заранее нельзя: сорвись rename
+            // следом (источник исчез, нет прав, ошибка диска), прежний был бы уже потерян.
         }
 
         // rename() is O(1) — instant metadata update, no data movement.

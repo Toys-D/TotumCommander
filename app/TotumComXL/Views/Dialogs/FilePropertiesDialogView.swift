@@ -184,13 +184,10 @@ struct FilePropertiesDialogView: View {
     }
 
     private func choosePicture() {
-        let panel = NSOpenPanel()
-        panel.title = L("properties.picture.chooseTitle", input.name)
-        panel.allowedContentTypes = [.image]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        setPicture(NSImage(contentsOf: url))
+        guard let path = DialogService.shared.showFilePicker(
+            title: L("properties.picture.chooseTitle", input.name), defaultPath: nil, allowedTypes: [.image])
+        else { return }
+        setPicture(NSImage(contentsOf: URL(fileURLWithPath: path)))
     }
 
     private func pastePicture() {

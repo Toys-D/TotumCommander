@@ -170,14 +170,11 @@ extension SettingsFoldersView {
     }
 
     private func addCustomStyle() {
-        let panel = NSOpenPanel()
-        panel.title = L("folderStyles.add.title")
-        panel.allowedContentTypes = [.svg, .png]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let path = DialogService.shared.showFilePicker(title: L("folderStyles.add.title"),
+                                                            defaultPath: nil, allowedTypes: [.svg, .png])
+        else { return }
         do {
-            let entry = try FolderStyleLibrary.add(contentsOf: url)
+            let entry = try FolderStyleLibrary.add(contentsOf: URL(fileURLWithPath: path))
             FolderIconStyle.choose(.custom(entry.id), dark: isDark)
         } catch let rejection as FolderStyleRejection {
             DialogService.shared.showError(
@@ -191,12 +188,12 @@ extension SettingsFoldersView {
 
     /// Образец SVG — туда, куда человек скажет.
     private func saveSample() {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "Totum-folder-sample.svg"
-        panel.allowedContentTypes = [.svg]
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let path = DialogService.shared.showSavePanel(title: L("folderStyles.sample.title"),
+                                                           defaultName: "Totum-folder-sample.svg",
+                                                           allowedTypes: ["svg"])
+        else { return }
         do {
-            try FolderStyleLibrary.sampleSVG.write(to: url, atomically: true, encoding: .utf8)
+            try FolderStyleLibrary.sampleSVG.write(to: URL(fileURLWithPath: path), atomically: true, encoding: .utf8)
         } catch {
             DialogService.shared.showError(title: L("folderStyles.sample.failed"),
                                            message: error.localizedDescription)

@@ -1250,6 +1250,7 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "folderStyles.recolor" = "Recolour to the folder colour";
 "folderStyles.hint" = "A style of your own — SVG or PNG. SVG recolours like the built-in ones: square canvas, filled shapes only, colours #FF00FF — folder colour, #B000B0 — darker, #FFFFFF — white, #000000 — shadow; no text, images, links, scripts or hidden layers, styles only as plain classes the way Illustrator writes them; up to 200 KB. PNG: a square of 512 to 2048 px, transparent background, up to 2 MB. To remove one of yours — the cross on hover or a right-click.";
 "folderStyles.sample" = "Sample SVG…";
+"folderStyles.sample.title" = "Sample of your own folder icon — SVG";
 "folderStyles.sample.failed" = "Couldn’t save the sample";
 "folderStyles.rejected.title" = "This picture can’t be used";
 "folderStyles.problem.format" = "Only SVG and PNG will do.";

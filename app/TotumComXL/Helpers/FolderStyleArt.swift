@@ -56,13 +56,19 @@ enum FolderStyleArt {
                                green: rgb.greenComponent * (1 - darkening),
                                blue: rgb.blueComponent * (1 - darkening), alpha: 1))
         var result = text
-        for (pattern, color) in [("#(?:FF00FF|F0F)(?![0-9A-Fa-f])", folder), ("#B000B0(?![0-9A-Fa-f])", dark)] {
-            guard let expression = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
+        for case let (expression?, color) in [(folderRole, folder), (darkRole, dark)] {
             result = expression.stringByReplacingMatches(
                 in: result, range: NSRange(result.startIndex..., in: result), withTemplate: color)
         }
         return result
     }
+
+    /// Цвета-роли в тексте SVG. Выражения одни на все вызовы: собирать их при каждой перекраске
+    /// незачем. Шаблоны постоянные — не собраться могут только из-за опечатки в коде.
+    private static let folderRole = try? NSRegularExpression(pattern: "#(?:FF00FF|F0F)(?![0-9A-Fa-f])",
+                                                             options: .caseInsensitive)
+    private static let darkRole = try? NSRegularExpression(pattern: "#B000B0(?![0-9A-Fa-f])",
+                                                           options: .caseInsensitive)
 
     private static func hex(_ color: NSColor) -> String {
         let rgb = color.usingColorSpace(.sRGB) ?? color

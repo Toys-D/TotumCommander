@@ -222,6 +222,19 @@ final class FileOperationsServiceTests: XCTestCase {
         XCTAssertEqual(read(src), "новое")
     }
 
+    /// Замена — самим rename, файл на файл: сорвётся он — прежний цел. Раньше прежний удалялся
+    /// заранее, и неудавшийся следом rename оставлял человека без обоих файлов.
+    func test_renameItem_заменаНеТеряетПрежнийЕслиRenameСорвался() throws {
+        let src = makeFile("figure.svg", "новое")
+        let occupied = makeFile("hair.svg", "старое")
+        // Неизменяемый источник: rename(2) отказывает (EPERM), хотя заменять им можно.
+        try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: src)
+        defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: src) }
+        XCTAssertThrowsError(try ops.renameItem(try item(at: src), to: "hair.svg", replacing: true))
+        XCTAssertEqual(read(occupied), "старое", "прежний цел")
+        XCTAssertEqual(read(src), "новое")
+    }
+
     func test_renameItem_sameNameIsNoop() throws {
         let src = makeFile("keep.txt", "v")
         XCTAssertNoThrow(try ops.renameItem(try item(at: src), to: "keep.txt"))

@@ -113,7 +113,13 @@ enum FolderStyleLibrary {
                           recolor: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: url, to: fileURL(of: entry))
-        save(entries + [entry])
+        do {
+            try save(entries + [entry])
+        } catch {
+            // Список не записался — копия без строки в списке осталась бы сиротой навсегда.
+            try? FileManager.default.removeItem(at: fileURL(of: entry))
+            throw error
+        }
         return entry
     }
 
@@ -127,21 +133,21 @@ enum FolderStyleLibrary {
         where defaults.string(forKey: key) == removed {
             defaults.set(FolderIconStyle.macos.rawValue, forKey: key)
         }
-        save(entries.filter { $0.id != id })
+        // Не записалось — в списке останется имя без файла; папки в нём рисуются как macOS.
+        try? save(entries.filter { $0.id != id })
     }
 
     static func setRecolor(_ recolor: Bool, for id: String) {
         var list = entries
         guard let index = list.firstIndex(where: { $0.id == id }), list[index].recolor != recolor else { return }
         list[index].recolor = recolor
-        save(list)
+        try? save(list)
     }
 
-    private static func save(_ list: [Entry]) {
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(list) {
-            try? data.write(to: indexURL, options: .atomic)
-        }
+    /// Записать список. Не вышло — на диске прежний список, и кэши остаются при нём.
+    private static func save(_ list: [Entry]) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONEncoder().encode(list).write(to: indexURL, options: .atomic)
         forgetCachedEntries()
         FolderStyleArt.forget(keeping: Set(list.map(\.id)))
         FolderIconRenderer.clearCache()
