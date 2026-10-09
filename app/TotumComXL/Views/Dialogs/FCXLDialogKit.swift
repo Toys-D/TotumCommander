@@ -365,14 +365,18 @@ struct FCXLDialogMenuPicker<Item: Hashable>: View {
 /// visibly the same family of control — one style, not a coincidence of similar values.
 struct FCXLChipButtonStyle: ButtonStyle {
     var compact: Bool = false
+    /// Залитая плашка — для кнопки, которая ждёт, чтобы её нажали («Обновить до …» красная).
+    /// Буквы на ней белые: так у всех красных кнопок программы, это правило, а не расчёт.
+    var fill: Color? = nil
 
     func makeBody(configuration: Configuration) -> some View {
-        Chip(configuration: configuration, compact: compact)
+        Chip(configuration: configuration, compact: compact, fill: fill)
     }
 
     private struct Chip: View {
         let configuration: Configuration
         let compact: Bool
+        let fill: Color?
         @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
         @Environment(\.isEnabled) private var isEnabled
         @State private var isHovered = false
@@ -381,15 +385,29 @@ struct FCXLChipButtonStyle: ButtonStyle {
             PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple)
         }
 
+        private var background: Color {
+            if let fill {
+                return fill.opacity(configuration.isPressed ? 0.82 : isHovered && isEnabled ? 0.9 : 1)
+            }
+            return configuration.isPressed ? accent.opacity(0.30)
+                : isHovered && isEnabled ? accent.opacity(0.18)
+                : Color.secondary.opacity(0.10)
+        }
+
+        @ViewBuilder private var label: some View {
+            if fill != nil {
+                configuration.label.foregroundStyle(.white)
+            } else {
+                configuration.label
+            }
+        }
+
         var body: some View {
-            configuration.label
+            label
                 .font(compact ? .system(size: 11) : .body)
                 .padding(.horizontal, compact ? 7 : 10)
                 .padding(.vertical, compact ? 3 : 5)
-                .background(RoundedRectangle(cornerRadius: 6)
-                    .fill(configuration.isPressed ? accent.opacity(0.30)
-                          : isHovered && isEnabled ? accent.opacity(0.18)
-                          : Color.secondary.opacity(0.10)))
+                .background(RoundedRectangle(cornerRadius: 6).fill(background))
                 // Нажать нельзя — видно сразу, а не после щелчка, который ничего не сделал.
                 .opacity(isEnabled ? 1 : 0.4)
                 .contentShape(Rectangle())

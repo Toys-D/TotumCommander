@@ -3,7 +3,7 @@ import XCTest
 
 @testable import TotumComXLApp
 
-/// Проверка обновлений: сравнение версий, разбор ответа GitHub, раз в три дня, и только слово о
+/// Проверка обновлений: сравнение версий, разбор ответа GitHub, при запуске и раз в три дня, и только слово о
 /// новой версии — без сети в тестах и без настоящих настроек.
 @MainActor
 final class UpdateCheckerTests: XCTestCase {
@@ -139,6 +139,30 @@ final class UpdateCheckerTests: XCTestCase {
         XCTAssertFalse(UpdateChecker.needsQuestion(defaults))
     }
 
+    /// При запуске — сразу, даже если трёх дней с прошлой проверки не прошло: новая версия
+    /// видна в день выхода. Пока программа открыта — по-прежнему раз в три дня.
+    func test_приЗапускеПроверяетСразу() async {
+        defaults.set(true, forKey: UpdateChecker.enabledKey)
+        defaults.set("1.0", forKey: UpdateChecker.pretendVersionKey)
+        defaults.set(Date(), forKey: UpdateChecker.lastCheckKey)
+        var fetched = 0
+        let checker = UpdateChecker(defaults: defaults) { [self] in fetched += 1; return answer(tag: "v9.0") }
+        await checker.checkIfDue()
+        XCTAssertEqual(fetched, 0, "не при запуске — рано, три дня не прошли")
+        await checker.checkIfDue(atLaunch: true)
+        XCTAssertEqual(fetched, 1, "при запуске — сразу")
+        XCTAssertEqual(checker.available?.version, "9.0")
+    }
+
+    func test_выключеноВНастройкахНеПроверяетИПриЗапуске() async {
+        defaults.set(false, forKey: UpdateChecker.enabledKey)
+        var fetched = 0
+        let checker = UpdateChecker(defaults: defaults) { [self] in fetched += 1; return answer(tag: "v9.0") }
+        checker.askPermission = { XCTFail("решено в настройках — вопрос лишний"); return false }
+        await checker.checkIfDue(atLaunch: true)
+        XCTAssertEqual(fetched, 0)
+    }
+
     func test_выключеноВНастройкахНеСпрашивает() async {
         defaults.set(false, forKey: UpdateChecker.enabledKey)
         var asked = 0
@@ -154,5 +178,25 @@ final class UpdateCheckerTests: XCTestCase {
         XCTAssertTrue(plain.isTemplate, "без обновления — обычный системный значок")
         XCTAssertFalse(dotted.isTemplate, "с точкой — свой цвет, не перекрашивается панелью")
         XCTAssertGreaterThan(dotted.size.width, plain.size.width, "точка выступает за угол")
+    }
+
+    /// Точка на шестерёнке — красная, как кнопка «Обновить до …», в обеих темах.
+    func test_точкаОбновленияКраснаяВОбеихТемах() throws {
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            let image = MainWindowController.settingsSymbol(updateAvailable: true,
+                                                            appearance: NSAppearance(named: name))
+            let rep = try XCTUnwrap(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+            // Середина точки: 3,5 pt от правого и верхнего краёв (у картинки ось y — сверху).
+            let x = Int(CGFloat(rep.pixelsWide) * (1 - 3.5 / image.size.width))
+            let y = Int(CGFloat(rep.pixelsHigh) * 3.5 / image.size.height)
+            let dot = try XCTUnwrap(rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB))
+            XCTAssertGreaterThan(dot.redComponent, 0.85, "\(name.rawValue)")
+            XCTAssertLessThan(dot.greenComponent, 0.4, "\(name.rawValue)")
+            XCTAssertLessThan(dot.blueComponent, 0.4, "\(name.rawValue)")
+            if let dir = ProcessInfo.processInfo.environment["FCXL_LOOK_DIR"],
+               let png = rep.representation(using: .png, properties: [:]) {
+                try png.write(to: URL(fileURLWithPath: dir + "/шестерёнка-\(name.rawValue).png"))
+            }
+        }
     }
 }

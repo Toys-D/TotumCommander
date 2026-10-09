@@ -1448,8 +1448,8 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "about.updates.never" = "Not checked yet";
 "about.updates.checkNow" = "Check now";
 "settings.section.updates" = "Updates";
-"settings.updates.check" = "Check for updates every three days";
-"settings.updates.hint" = "The app asks GitHub for the latest release number: one request every three days, with nothing about you. When a newer version is out, About shows an Update button and the Settings button gets a dot. The image is downloaded from GitHub, checked against its checksum and installed over the previous version.";
+"settings.updates.check" = "Check for updates at launch and every three days";
+"settings.updates.hint" = "The app asks GitHub for the latest release number: one request at every launch and every three days while it stays open, with nothing about you. When a newer version is out, About shows an Update button and the Settings button gets a dot. The image is downloaded from GitHub, checked against its checksum and installed over the previous version.";
 "settings.updates.badgeTip" = "Settings — version %@ is available";
 /* One-click update */
 "about.updates.install" = "Update to %@";

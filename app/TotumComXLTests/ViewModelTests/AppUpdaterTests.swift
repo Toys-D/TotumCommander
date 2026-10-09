@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import XCTest
 @testable import TotumComXLApp
 
@@ -146,5 +147,42 @@ final class AppUpdaterTests: XCTestCase {
         XCTAssertNotNil(info["CFBundleShortVersionString"])
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: old.appendingPathComponent("Contents/MacOS/TotumComXL").path))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: apps.path), ["Totum Commander.app"])
+    }
+
+    // MARK: - Как выглядит кнопка
+
+    /// «Обновить до …» — красная плашка с белыми буквами в обеих темах. Картинки — в
+    /// FCXL_LOOK_DIR, посмотреть глазами.
+    @MainActor
+    func test_кнопкаОбновленияКраснаяСБелымиБуквами() throws {
+        for (name, scheme) in [("обновить-светлая", ColorScheme.light), ("обновить-тёмная", .dark)] {
+            let view = Button("Обновить до 1.8.3") {}
+                .buttonStyle(FCXLChipButtonStyle(compact: true, fill: .red))
+                .padding(8)
+                .background(scheme == .dark ? Color(white: 0.16) : Color(white: 0.96))
+                .environment(\.colorScheme, scheme)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 2
+            let image = try XCTUnwrap(renderer.nsImage, name)
+            let rep = try XCTUnwrap(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+            // Поле плашки левее букв: 8 pt отступа вокруг, ещё 3 pt внутрь.
+            let fill = try XCTUnwrap(rep.colorAt(x: 22, y: rep.pixelsHigh / 2)?.usingColorSpace(.sRGB))
+            XCTAssertGreaterThan(fill.redComponent, 0.85, name)
+            XCTAssertLessThan(fill.greenComponent, 0.4, name)
+            XCTAssertLessThan(fill.blueComponent, 0.4, name)
+            // Белое — только внутри плашки, где кроме красного одни буквы.
+            var white = 0
+            for x in 16..<(rep.pixelsWide - 16) {
+                for y in 16..<(rep.pixelsHigh - 16) {
+                    guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
+                    if c.redComponent > 0.95, c.greenComponent > 0.95, c.blueComponent > 0.95 { white += 1 }
+                }
+            }
+            XCTAssertGreaterThan(white, 20, "белые буквы на красном — \(name)")
+            if let dir = ProcessInfo.processInfo.environment["FCXL_LOOK_DIR"],
+               let png = rep.representation(using: .png, properties: [:]) {
+                try png.write(to: URL(fileURLWithPath: dir + "/\(name).png"))
+            }
+        }
     }
 }

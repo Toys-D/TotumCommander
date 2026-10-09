@@ -811,8 +811,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         return result
     }
 
-    /// The Settings gear — with a dot at its corner while a newer release is known, the same
-    /// accent the shelf's counter wears. A dot, not a number: there is nothing to count.
+    /// The Settings gear — with a red dot at its corner while a newer release is known, the same
+    /// red as the "Update to …" button in About. A dot, not a number: there is nothing to count.
     static func settingsSymbol(updateAvailable: Bool, appearance: NSAppearance? = nil) -> NSImage {
         let gear = NSImage(systemSymbolName: "gear", accessibilityDescription: nil)!
         guard updateAvailable else { return gear }
@@ -826,7 +826,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
             gear.draw(in: gearRect, from: .zero, operation: .sourceOver, fraction: 1)
             NSColor.secondaryLabelColor.set()
             gearRect.fill(using: .sourceIn)
-            PanelAppearanceSettings.accentNSColor.setFill()
+            NSColor.systemRed.setFill()
             NSBezierPath(ovalIn: NSRect(x: canvas.width - dot, y: canvas.height - dot,
                                         width: dot, height: dot)).fill()
             image.unlockFocus()

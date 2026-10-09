@@ -7,10 +7,10 @@ extension Notification.Name {
     static let fcxlUpdateAvailabilityChanged = Notification.Name("com.fcxl.updateAvailabilityChanged")
 }
 
-/// A look at GitHub for a newer release every three days — and a word about it, nothing more.
+/// A look at GitHub for a newer release at every launch and every three days while the program
+/// stays open — and a word about it, nothing more.
 ///
-/// No Sparkle, no keys, no server: GitHub's releases API is open, one anonymous request every
-/// three days
+/// No Sparkle, no keys, no server: GitHub's releases API is open, one anonymous request
 /// compares the latest tag with the running version, and the answer shows as a line in About
 /// and a dot on the toolbar's Settings button. Downloading and installing stay with the
 /// person, exactly as the first launch did.
@@ -142,17 +142,19 @@ final class UpdateChecker: ObservableObject {
         return now.timeIntervalSince(last) >= interval
     }
 
-    /// Start the rhythm: a check when due, re-asked every hour so a Mac that never sleeps
-    /// still checks on time, and one that was asleep checks on waking.
+    /// Start the rhythm: a check at once — a new version is seen the day it comes out, not up
+    /// to three days later — then a check when due, re-asked every hour so a Mac that never
+    /// sleeps still checks on time, and one that was asleep checks on waking.
     func start() {
-        Task { await checkIfDue() }
+        Task { await checkIfDue(atLaunch: true) }
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in await self?.checkIfDue() }
         }
     }
 
-    func checkIfDue() async {
+    /// Проверить, если пора. При запуске пора всегда; пока программа открыта — раз в три дня.
+    func checkIfDue(atLaunch: Bool = false) async {
         // При первом запуске программа не лезет к GitHub молча — один раз спрашивает. Ответ
         // ложится в ту же настройку из «Основных», и дальше всё как обычно. Так ни один
         // файрвол не спросит о соединении, которого человек не разрешал.
@@ -161,7 +163,7 @@ final class UpdateChecker: ObservableObject {
             defaults.set(true, forKey: Self.askedKey)
             defaults.set(allowed, forKey: Self.enabledKey)
         }
-        guard Self.isEnabled(defaults), Self.isDue(now: Date(), last: lastChecked) else { return }
+        guard Self.isEnabled(defaults), atLaunch || Self.isDue(now: Date(), last: lastChecked) else { return }
         _ = await checkNow()
     }
 

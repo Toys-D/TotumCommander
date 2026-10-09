@@ -15,10 +15,11 @@ struct SettingsAboutView: View {
         switch updater.stage {
         case .idle:
             HStack(spacing: 10) {
+                // Красная: вышла новая версия — кнопка должна бросаться в глаза.
                 Button(String(format: L("about.updates.install"), release.version)) {
                     Task { await updater.update(to: release) }
                 }
-                .buttonStyle(FCXLChipButtonStyle(compact: true))
+                .buttonStyle(FCXLChipButtonStyle(compact: true, fill: .red))
                 releasePageLink(release)
             }
         case .downloading(let fraction):
