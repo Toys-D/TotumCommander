@@ -608,6 +608,7 @@ enum PanelAppearanceSettings {
             if remembered.isEmpty { d.removeObject(forKey: c.effective) }
             else { d.set(remembered, forKey: c.effective) }
         }
+        FolderIconStyle.mirror(dark: dark, in: d)
         var maskChanged = false
         for b in themedBoolKeys {
             let remembered = effectiveThemedFlag(d.bool(forKey: dark ? b.dark : b.light),

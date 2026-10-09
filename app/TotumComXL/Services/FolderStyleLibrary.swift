@@ -120,9 +120,12 @@ enum FolderStyleLibrary {
     static func remove(_ id: String) {
         guard let entry = entry(id) else { return }
         try? FileManager.default.removeItem(at: fileURL(of: entry))
-        // Убран выбранный — папки снова в стиле macOS, а не в стиле, которого нет.
-        if defaults.string(forKey: FolderIconStyle.storageKey) == FolderIconStyle.custom(id).rawValue {
-            defaults.set(FolderIconStyle.macos.rawValue, forKey: FolderIconStyle.storageKey)
+        // Убран выбранный — папки снова в стиле macOS, а не в стиле, которого нет: и на экране,
+        // и в той теме, что его помнит.
+        let removed = FolderIconStyle.custom(id).rawValue
+        for key in [FolderIconStyle.storageKey, FolderIconStyle.lightKey, FolderIconStyle.darkKey]
+        where defaults.string(forKey: key) == removed {
+            defaults.set(FolderIconStyle.macos.rawValue, forKey: key)
         }
         save(entries.filter { $0.id != id })
     }

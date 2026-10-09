@@ -196,6 +196,85 @@ final class FolderStylesTests: XCTestCase {
         XCTAssertEqual(FolderStyleLibrary.defaults.string(forKey: FolderIconStyle.storageKey), "macos")
     }
 
+    /// Убранный стиль забывается и в той теме, что его помнила; другая тема остаётся со своим.
+    func test_удалениеСтиляЗабываетсяИВТеме() throws {
+        let entry = try FolderStyleLibrary.add(contentsOf: file("p.png", png(width: 512, height: 512)))
+        let d = FolderStyleLibrary.defaults
+        d.set(FolderIconStyle.custom(entry.id).rawValue, forKey: FolderIconStyle.lightKey)
+        d.set("totum", forKey: FolderIconStyle.darkKey)
+        d.set("totum", forKey: FolderIconStyle.storageKey)
+        FolderStyleLibrary.remove(entry.id)
+        XCTAssertEqual(d.string(forKey: FolderIconStyle.lightKey), "macos")
+        XCTAssertEqual(d.string(forKey: FolderIconStyle.darkKey), "totum")
+        XCTAssertEqual(d.string(forKey: FolderIconStyle.storageKey), "totum", "на экране был другой — не тронут")
+    }
+
+    // MARK: - Своя картинка на каждую тему
+
+    private func themeDefaults() -> (UserDefaults, String) {
+        let suite = "fcxl.folder.styles.theme.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        return (defaults, suite)
+    }
+
+    /// Выбор в одной теме другую не трогает: тема, своей ещё не помнившая, остаётся с той
+    /// картинкой, что показывала.
+    func test_картинкаПапокПомнитсяНаКаждуюТему() {
+        let (d, _) = themeDefaults()
+        d.set("catalogV4", forKey: FolderIconStyle.storageKey)
+
+        FolderIconStyle.choose(.totum, dark: true, in: d)
+        XCTAssertEqual(d.string(forKey: FolderIconStyle.storageKey), "totum", "на экране — выбранная")
+        XCTAssertEqual(d.string(forKey: FolderIconStyle.darkKey), "totum")
+        XCTAssertEqual(d.string(forKey: FolderIconStyle.lightKey), "catalogV4", "светлая — та, что была")
+
+        FolderIconStyle.mirror(dark: false, in: d)
+        XCTAssertEqual(d.string(forKey: FolderIconStyle.storageKey), "catalogV4")
+        FolderIconStyle.choose(.catalogV9, dark: false, in: d)
+        FolderIconStyle.mirror(dark: true, in: d)
+        XCTAssertEqual(d.string(forKey: FolderIconStyle.storageKey), "totum", "тёмная помнит своё")
+        FolderIconStyle.mirror(dark: false, in: d)
+        XCTAssertEqual(d.string(forKey: FolderIconStyle.storageKey), "catalogV9", "светлая — своё")
+    }
+
+    /// Тема, для которой ничего не запомнено, картинку на экране не меняет.
+    func test_темаБезСвоейКартинкиПоказываетПрежнюю() {
+        let (d, _) = themeDefaults()
+        d.set("catalogV6", forKey: FolderIconStyle.storageKey)
+        FolderIconStyle.mirror(dark: true, in: d)
+        XCTAssertEqual(d.string(forKey: FolderIconStyle.storageKey), "catalogV6")
+    }
+
+    /// Выбор, сделанный до того, как картинка стала помниться по темам, остаётся в обеих; уже
+    /// помнящие по темам настройки не трогаются.
+    func test_прежнийВыборПереходитВОбеТемы() {
+        let (d, suite) = themeDefaults()
+        d.set("catalogV6", forKey: FolderIconStyle.storageKey)
+        FolderIconStyle.migratePerThemeIfNeeded(d, domain: suite)
+        XCTAssertEqual(d.string(forKey: FolderIconStyle.lightKey), "catalogV6")
+        XCTAssertEqual(d.string(forKey: FolderIconStyle.darkKey), "catalogV6")
+
+        d.set("totum", forKey: FolderIconStyle.darkKey)
+        d.set("catalogV3", forKey: FolderIconStyle.storageKey)
+        FolderIconStyle.migratePerThemeIfNeeded(d, domain: suite)
+        XCTAssertEqual(d.string(forKey: FolderIconStyle.darkKey), "totum")
+        XCTAssertEqual(d.string(forKey: FolderIconStyle.lightKey), "catalogV6")
+    }
+
+    /// Набор по умолчанию только зарегистрирован — это не выбор человека, и в его файл
+    /// настроек переносить нечего.
+    func test_наборПоУмолчаниюНеСчитаетсяВыбором() {
+        // Домен регистрации у процесса один на все UserDefaults — вернуть после себя.
+        let saved = UserDefaults.standard.volatileDomain(forName: UserDefaults.registrationDomain)
+        defer { UserDefaults.standard.setVolatileDomain(saved, forName: UserDefaults.registrationDomain) }
+        let (d, suite) = themeDefaults()
+        d.register(defaults: [FolderIconStyle.storageKey: "catalogV4"])
+        FolderIconStyle.migratePerThemeIfNeeded(d, domain: suite)
+        XCTAssertNil(d.persistentDomain(forName: suite)?[FolderIconStyle.lightKey])
+        XCTAssertNil(d.persistentDomain(forName: suite)?[FolderIconStyle.darkKey])
+    }
+
     func test_стильВСтрокуИОбратно() {
         XCTAssertEqual(FolderIconStyle.custom("A1").rawValue, "custom:A1")
         XCTAssertEqual(FolderIconStyle(rawValue: "custom:A1"), .custom("A1"))

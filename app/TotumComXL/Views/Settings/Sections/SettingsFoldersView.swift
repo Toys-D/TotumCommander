@@ -11,6 +11,10 @@ struct SettingsFoldersView: View {
     @AppStorage(CustomFolderIconService.enabledKey) private var showCustomFolderIcons: Bool = false
     @AppStorage(FolderStyleLibrary.generationKey) private var libraryGeneration: Int = 0
     @State private var hoveredCustom: String?
+    /// Тема меняется — страница перерисовывается и показывает картинку этой темы.
+    @Environment(\.colorScheme) private var colorScheme
+    /// Чью картинку правит страница — как у цветов: по теме AppKit, а не по окружению SwiftUI.
+    private var isDark: Bool { PanelAppearanceSettings.isDarkAppearance }
     private var accent: Color { PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple) }
     private var folderTint: NSColor {
         PanelAppearanceSettings.optionalNSColor(from: folderIconColorHex) ?? FolderIconStyle.defaultTint
@@ -20,7 +24,9 @@ struct SettingsFoldersView: View {
         Form {
             Section(L("design.section.folderIcons")) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(L("design.folderIconStyle")).settingAnchor("design.folderIconStyle")
+                    Text(L("design.folderIconStyle") + " — "
+                         + L(isDark ? "settings.appearance.dark" : "settings.appearance.light"))
+                        .settingAnchor("design.folderIconStyle")
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 4), spacing: 12) {
                         ForEach(FolderIconStyle.allCases) { style in
                             styleTile(style) {
@@ -113,10 +119,7 @@ extension SettingsFoldersView {
         .background(RoundedRectangle(cornerRadius: 6).fill(selected ? accent.opacity(0.2) : Color.clear))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? accent : Color.clear, lineWidth: 1))
         .contentShape(Rectangle())
-        .onTapGesture {
-            folderIconStyleRaw = style.rawValue
-            FolderIconRenderer.clearCache()
-        }
+        .onTapGesture { FolderIconStyle.choose(style, dark: isDark) }
     }
 
     /// Свой стиль: как встроенный, плюс «удалить» — крестиком при наведении и в правом меню.
@@ -175,8 +178,7 @@ extension SettingsFoldersView {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let entry = try FolderStyleLibrary.add(contentsOf: url)
-            folderIconStyleRaw = FolderIconStyle.custom(entry.id).rawValue
-            FolderIconRenderer.clearCache()
+            FolderIconStyle.choose(.custom(entry.id), dark: isDark)
         } catch let rejection as FolderStyleRejection {
             DialogService.shared.showError(
                 title: L("folderStyles.rejected.title"),

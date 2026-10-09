@@ -76,8 +76,54 @@ enum FolderIconStyle: Hashable, Identifiable, RawRepresentable, CaseIterable {
 
     static let storageKey = "folderIconStyle"
 
+    /// Картинка папок помнится на каждую тему, как цвета: у светлой своя, у тёмной своя.
+    /// `storageKey` — рабочий ключ, который читают панели, — зеркало той, что на экране.
+    static let lightKey = "folderIconStyleLight"
+    static let darkKey = "folderIconStyleDark"
+
+    static func themeKey(dark: Bool) -> String { dark ? darkKey : lightKey }
+
     /// Цвет папки, пока в настройках он не выбран, — один на все стили, встроенные и свои.
     static let defaultTint = NSColor(srgbRed: 0.42, green: 0.73, blue: 0.95, alpha: 1)
+}
+
+// MARK: - Своя картинка на каждую тему
+
+extension FolderIconStyle {
+
+    /// Выбрать картинку для темы на экране. Другая тема, своей ещё не помнившая, запоминает
+    /// ту, что показывала до сих пор: выбор в одной теме другую не трогает.
+    static func choose(_ style: FolderIconStyle, dark: Bool, in defaults: UserDefaults = .standard) {
+        let other = themeKey(dark: !dark)
+        if defaults.string(forKey: other) == nil {
+            defaults.set(defaults.string(forKey: storageKey) ?? FolderIconStyle.macos.rawValue, forKey: other)
+        }
+        defaults.set(style.rawValue, forKey: themeKey(dark: dark))
+        defaults.set(style.rawValue, forKey: storageKey)
+        FolderIconRenderer.clearCache()
+    }
+
+    /// Тема сменилась — запомненную для неё картинку на экран; не запомнено — остаётся та, что
+    /// была. Зовётся из `PanelAppearanceSettings.syncThemedColorsToEffective()` вместе с цветами.
+    static func mirror(dark: Bool, in defaults: UserDefaults = .standard) {
+        guard let remembered = defaults.string(forKey: themeKey(dark: dark)),
+              remembered != defaults.string(forKey: storageKey) else { return }
+        defaults.set(remembered, forKey: storageKey)
+    }
+
+    /// Картинка, выбранная до того, как она стала помниться по темам, остаётся в обеих.
+    ///
+    /// Смотрим только в файл настроек человека: набор по умолчанию (DefaultStyle) лишь
+    /// регистрирует свои значения, и выбором человека они не считаются. Иначе, когда в наборе
+    /// появятся картинки по темам, они перекрыли бы то, что человек выбрал сам.
+    static func migratePerThemeIfNeeded(_ defaults: UserDefaults = .standard,
+                                        domain: String? = Bundle.main.bundleIdentifier) {
+        guard let domain, let own = defaults.persistentDomain(forName: domain),
+              let chosen = own[storageKey] as? String,
+              own[lightKey] == nil, own[darkKey] == nil else { return }
+        defaults.set(chosen, forKey: lightKey)
+        defaults.set(chosen, forKey: darkKey)
+    }
 }
 
 // MARK: - FolderIconRenderer (Canvas → NSImage + cache)

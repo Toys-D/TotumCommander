@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PanelAppearanceSettings.migratePanelBackgroundPerThemeIfNeeded()
         PanelAppearanceSettings.migrateColorsPerThemeIfNeeded()
         PanelAppearanceSettings.migrateThemedBoolsIfNeeded()
+        FolderIconStyle.migratePerThemeIfNeeded()
         // Наследство отменённого выбора «быстро или с текстом» для тяжёлых PDF: теперь способ
         // один, и запомненные ответы никому не нужны.
         UserDefaults.standard.removeObject(forKey: "fcxl.pdfFastPaths")
