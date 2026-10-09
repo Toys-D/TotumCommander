@@ -209,6 +209,25 @@ final class FolderNewsTests: XCTestCase {
         XCTAssertLessThan(digits.greenComponent, 0.3)
     }
 
+    /// Цифры плашки — тонкие (light), на пункт меньше имени; ширина для раскладки считается
+    /// тем же шрифтом, что и картинка. На миниатюре — обычные.
+    func test_цифрыПлашкиТонкие() throws {
+        let base = NSFont.systemFont(ofSize: 13)
+        let font = FolderNewsChip.listFont(for: base)
+        let traits = font.fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any]
+        let weight = try XCTUnwrap(traits?[.weight] as? CGFloat)
+        XCTAssertEqual(weight, NSFont.Weight.light.rawValue, accuracy: 0.01)
+        XCTAssertEqual(font.pointSize, 12)
+        let chip = try XCTUnwrap(FolderNewsChip.image(count: 409, mark: FolderNews.Mark(color: .systemBlue, strength: 1),
+                                                      font: base, nameColor: .black))
+        XCTAssertEqual(chip.size.width, FolderNewsChip.width(count: 409, font: base), accuracy: 0.5)
+
+        // На миниатюре — обычные: белые тонкие на светлом акценте пропадали бы.
+        let plaque = FolderNewsChip.plaqueFont(for: .systemFont(ofSize: 11))
+        let plaqueTraits = plaque.fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any]
+        XCTAssertEqual(try XCTUnwrap(plaqueTraits?[.weight] as? CGFloat), NSFont.Weight.regular.rawValue, accuracy: 0.01)
+    }
+
     /// Строка с плашкой — на фоне панели и на тёмном и светлом курсоре, с именем того цвета, что
     /// у него там, — в папку FCXL_LOOK_DIR, посмотреть глазами.
     func test_плашкаНаКурсорахДляПросмотра() throws {

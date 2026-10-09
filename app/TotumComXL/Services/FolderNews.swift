@@ -150,7 +150,7 @@ enum FolderNewsChip {
     static func image(count: Int, mark: FolderNews.Mark, font base: NSFont,
                       nameColor: NSColor) -> NSImage? {
         guard count > 0 else { return nil }
-        let font = NSFont.systemFont(ofSize: max(9, base.pointSize - 1), weight: .medium)
+        let font = listFont(for: base)
         let ink = nameColor.withAlphaComponent(mark.opacity)
         let plate = nameColor.withAlphaComponent(0.16 * mark.opacity)
         return capsule(text(count: count), font: font, ink: ink, plate: plate, leading: leading)
@@ -187,17 +187,26 @@ enum FolderNewsChip {
 
     static func width(count: Int, font base: NSFont) -> CGFloat {
         guard count > 0 else { return 0 }
-        let font = NSFont.systemFont(ofSize: max(9, base.pointSize - 1), weight: .medium)
-        return capsuleSize(text(count: count), font: font).width + leading
+        return capsuleSize(text(count: count), font: listFont(for: base)).width + leading
+    }
+
+    /// Цифры плашки в строке — тонкие, на пункт меньше имени: плотные спорили с именем рядом.
+    static func listFont(for base: NSFont) -> NSFont {
+        NSFont.systemFont(ofSize: max(9, base.pointSize - 1), weight: .light)
     }
 
     /// Плашка на картинке миниатюры: сплошной акцент и белые цифры — читается поверх любой
     /// картинки, как плашка git там же.
     static func plaqueImage(count: Int, mark: FolderNews.Mark, font base: NSFont) -> NSImage? {
         guard count > 0 else { return nil }
-        let font = NSFont.systemFont(ofSize: base.pointSize, weight: .semibold)
-        return capsule(text(count: count), font: font, ink: .white,
+        return capsule(text(count: count), font: plaqueFont(for: base), ink: .white,
                        plate: mark.color.withAlphaComponent(0.5 + 0.5 * mark.opacity), leading: 0)
+    }
+
+    /// Цифры на плашке миниатюры — обычные, не жирные. Тоньше, как в строке, нельзя: белые
+    /// тонкие на светлом акценте (зелёный тёмной темы) пропадают.
+    static func plaqueFont(for base: NSFont) -> NSFont {
+        NSFont.systemFont(ofSize: base.pointSize, weight: .regular)
     }
 
     private static func capsuleSize(_ text: String, font: NSFont) -> NSSize {
