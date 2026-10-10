@@ -10,9 +10,10 @@ final class PanelTabTests: XCTestCase {
     // MARK: - Вкладка сетевого тома, ушедшая на обычный диск
 
     func test_networkTab_becomesOrdinaryWhenItLeavesTheMount() {
-        // Была «SERVER_SO: E», человек переключился на диск C — вкладка обязана стать
-        // обычной. Иначе она оранжевая и с чужим именем поверх файлов диска C, а щелчок
-        // по тому заводит рядом вторую такую же.
+        // Была «SERVER_SO: E», человек ушёл на диск C не через полосу томов (вверх из корня,
+        // по избранному) — вкладка обязана стать обычной. Иначе она оранжевая и с чужим
+        // именем поверх файлов диска C. Щелчок по диску в полосе сюда не ведёт: он открывает
+        // диск в соседней местной вкладке (TabsNearestLocalTests).
         XCTAssertEqual(PanelTabsViewModel.kindAfterNavigation(current: .networkMount,
                                                               isMount: false,
                                                               isNetworkBrowser: false),

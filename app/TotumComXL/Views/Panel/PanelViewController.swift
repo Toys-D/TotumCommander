@@ -2342,11 +2342,12 @@ final class PanelViewController: NSViewController,
         }
     }
 
-    /// Щелчок по местному диску. Из вкладки хранилища он не отключает хранилище (для этого есть
-    /// извлечение): хранилище остаётся в своей вкладке, как при переходе на другую вкладку, а
+    /// Щелчок по местному диску. Из вкладки хранилища или сетевого тома он их не отключает (для
+    /// этого есть извлечение): вкладка остаётся жить, как при переходе на другую вкладку, а
     /// диск открывается в ближайшей местной вкладке — или в новой, если местных нет.
     func openLocalVolume(at path: String) {
-        guard viewModel.insideRemote else {
+        guard PanelTabsViewModel.localVolumeOpensElsewhere(from: tabsVM.activeTab,
+                                                           insideRemote: viewModel.insideRemote) else {
             viewModel.navigateToLocal(path)
             return
         }
