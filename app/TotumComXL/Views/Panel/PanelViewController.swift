@@ -1344,15 +1344,19 @@ final class PanelViewController: NSViewController,
             }
             reloadAppearanceSettings()
         } else if let keyPath, Self.cursorBeautyKeys.contains(keyPath) {
-            // Live cursor-beauty tweak: repaint just the detailed-mode glow (+ mark rows so
-            // the solid-fill suppression re-evaluates when the master toggle flips). No reload.
+            // Live cursor-beauty tweak: repaint just the detailed-mode glow. No reload.
             updateDetailedCursorGlow()
             // The glow lives in the table's BACKGROUND, and updateDetailedCursorGlow only marks
             // it when a property CHANGES value. A mask edit changes the baked image behind the
             // same property values — the row/colour/blur are all identical — so nothing here
             // repainted and the live preview looked dead. The background must be told directly.
             tableView?.needsDisplay = true
-            tableView?.enumerateAvailableRowViews { rowView, _ in rowView.needsDisplay = true }
+            // Строки сами рисуют только сплошную полосу курсора, и только без «красоты»:
+            // перерисовывать их нужно лишь при щелчке главного выключателя, а не на каждый тик
+            // ползунка — те рисуют одно и то же, впустую.
+            if keyPath == PanelAppearanceSettings.beautyModeEnabledKey {
+                tableView?.enumerateAvailableRowViews { rowView, _ in rowView.needsDisplay = true }
+            }
             // Brief/thumbnails draw the same feather — refresh their hosting so a slider drag
             // is visible there too, the same way the icon-zoom keys already do.
             if alternateHosting != nil { updateAlternateHosting() }

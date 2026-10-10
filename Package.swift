@@ -531,6 +531,7 @@ let package = Package(
                 "ViewModelTests/UpdateCheckerTests.swift",
                 "ViewModelTests/AppUpdaterTests.swift",
                 "ViewModelTests/DefaultStyleTests.swift",
+                "ViewModelTests/FeatheredCursorTests.swift",
                 "ViewModelTests/ImageEditingTests.swift",
                 "ViewModelTests/LocalNetworkPermissionTests.swift",
                 "ViewModelTests/QueueIconStateTests.swift",

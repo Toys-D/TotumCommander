@@ -20,9 +20,14 @@ enum FeatheredCursor {
     /// spread (and spill onto neighbours). Kept in sync between bake and draw.
     static func padding(for blur: CGFloat) -> CGFloat { blur * 2.5 + 4 }
 
+    /// Шаг размытия: ползунок непрерывный, а печётся картинка на каждое значение. Полпункта
+    /// хватает, чтобы рост под ползунком выглядел плавным, и не печь на каждый его тик.
+    static func quantized(_ blur: CGFloat) -> CGFloat { (blur * 2).rounded() / 2 }
+
     /// A cached feathered cursor. The returned image is `barSize` grown by
     /// `padding(for: blur)` on each side, with the bar centred and its edges blurred.
-    static func image(barSize: NSSize, color: NSColor, blur: CGFloat, corner: CGFloat) -> NSImage {
+    static func image(barSize: NSSize, color: NSColor, blur rawBlur: CGFloat, corner: CGFloat) -> NSImage {
+        let blur = quantized(rawBlur)
         let w = max(1, Int(barSize.width.rounded()))
         let h = max(1, Int(barSize.height.rounded()))
         // The hand-drawn mask replaces the SHAPE only; colour and blur remain live on top.
@@ -37,7 +42,7 @@ enum FeatheredCursor {
         let outlineToken = outline.map {
             "o\(Int($0.width * 10))\(PanelAppearanceSettings.hexString(from: $0.colour) ?? "")"
         } ?? "o-"
-        let key = "\(w)x\(h)-\(PanelAppearanceSettings.hexString(from: color))-b\(Int(blur.rounded()))-c\(Int(corner.rounded()))-\(maskToken)-\(outlineToken)"
+        let key = "\(w)x\(h)-\(PanelAppearanceSettings.hexString(from: color))-b\(Int(blur * 10))-c\(Int(corner.rounded()))-\(maskToken)-\(outlineToken)"
         if let cached = cache[key] { return cached }
         let baked = bake(barSize: NSSize(width: w, height: h), color: color, blur: blur, corner: corner,
                          mask: mask, outline: outline)
@@ -60,12 +65,17 @@ enum FeatheredCursor {
         let barH = max(6, frame.height * heightFraction)
         let img = image(barSize: NSSize(width: barW, height: barH),
                         color: color, blur: blur, corner: corner)
-        let pad = padding(for: blur)
+        // Картинка рисуется в СВОЁМ размере, а не в прямоугольнике, пересчитанном от текущего
+        // размытия: печётся она с шагом, а прямоугольник рос с каждым тиком ползунка — между
+        // выпечками картинку растягивало в него на несколько процентов, на следующем шаге она
+        // разом сжималась, и при движении ползунка курсор дышал: толстел и худел.
+        let padX = (img.size.width - barW) / 2
+        let padY = (img.size.height - barH) / 2
         // Anchor (0…1 in the cell) is the origin of scaling; offset then nudges the bar.
         let barMinX = frame.minX + anchorX * (frame.width - barW) + offsetX
         let barMinY = frame.minY + anchorY * (frame.height - barH) + offsetY
-        let drawRect = NSRect(x: barMinX - pad, y: barMinY - pad,
-                              width: barW + pad * 2, height: barH + pad * 2)
+        let drawRect = NSRect(x: barMinX - padX, y: barMinY - padY,
+                              width: img.size.width, height: img.size.height)
         // respectFlipped is load-bearing: the table and the collection views are FLIPPED, and
         // the short draw(in:) variant ignores that — it rendered the image upside down. The
         // symmetric bar hid it for ever; the first hand-drawn mask made it visible.
