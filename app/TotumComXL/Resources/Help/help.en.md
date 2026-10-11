@@ -154,7 +154,7 @@ Each panel has its own tabs. The "File ▸ Tabs" menu and the right button on a 
 | Remember / forget view mode | The tab remembers detailed/brief/thumbnails. |
 | Reorder | By dragging. |
 
-Tabs come in four kinds: a folder, a **terminal** (section 10), a **remote connection** — a server or a cloud (section 11) — and a **network volume** mounted through macOS (section 11.3, orange icon). Clicking a local disk from a server or network-volume tab does not turn it into an ordinary one: the disk opens in the nearest local tab (or a new one), the server stays connected, and clicking it in the volume bar returns to its tab. The look of tabs (height, width, rounding, font, opacity and title colour of the active tab) — in the "Tabs" settings.
+Tabs come in four kinds: a folder, a **terminal** (section 10), a **remote connection** — a server or a cloud (section 11) — and a **network volume** mounted through macOS (section 11.3, orange icon). Clicking a local disk from a server or network-volume tab does not turn it into an ordinary one: the disk opens in the nearest local tab (or a new one), the server stays connected, and clicking it in the volume bar returns to its tab. The active tab stands above the others, so you can see at once which one is open. The look of tabs (height, width, rounding, font, lift, opacity and title colour of the active tab) — in the "Tabs" settings.
 
 ---
 
@@ -490,6 +490,7 @@ The shape, blur and mask of the cursor live in "Design", in the "Effects" group.
 
 ### Tabs
 - Tab font, rounding, tab height, width and minimum width, tab bar height, spacing between tabs.
+- **Active tab lift** — how many points the active tab stands above the others (0 keeps them level). If the raised tab does not fit, the tab bar grows.
 - **Active tab** — fill opacity and title colour. The fill is the app accent from "Design".
 
 ### Center Divider

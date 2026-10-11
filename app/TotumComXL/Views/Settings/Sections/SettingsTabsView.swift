@@ -8,6 +8,7 @@ struct SettingsTabsView: View {
     @AppStorage("tabMinWidth") private var tabMinWidth: Double = 80
     @AppStorage("tabBarHeight") private var tabBarHeight: Double = 32
     @AppStorage("tabBarSpacing") private var tabBarSpacing: Double = 10
+    @AppStorage(TabLook.activeLiftKey) private var tabActiveLift: Double = TabLook.defaultActiveLift
     /// Follows the app appearance, NOT SwiftUI's colorScheme — the renderer uses the same source,
     /// and when the two disagree the settings page reads and writes the other theme's keys.
     private var isDark: Bool { PanelAppearanceSettings.isDarkAppearance }
@@ -29,6 +30,11 @@ struct SettingsTabsView: View {
                 slider(L("design.tabMinWidth"), value: $tabMinWidth, in: 40...200, step: 10, unit: "px")
                 slider(L("design.tabBarHeight"), value: $tabBarHeight, in: 24...48, step: 2, unit: "pt")
                 slider(L("design.tabBarSpacing"), value: $tabBarSpacing, in: 0...16, step: 1, unit: "pt")
+                slider(L("design.tabActiveLift"), value: $tabActiveLift, in: TabLook.activeLiftRange,
+                       step: 1, unit: "pt")
+                    .settingAnchor("design.tabActiveLift")
+                Text(L("design.tabActiveLift.hint"))
+                    .font(.caption).foregroundColor(.secondary)
                 // Percent on screen, 0…1 in storage — a slider from 0.2 to 1.0 reads as nothing.
                 slider(L("design.tabActiveOpacity"),
                        value: Binding(get: { tabActiveOpacity * 100 },

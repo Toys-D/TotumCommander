@@ -31,6 +31,8 @@ struct TabChipView: View {
     @AppStorage(PanelAppearanceSettings.tabActiveTitleColorHexKey)
     private var activeTitleHex: String = ""
     @AppStorage("tabChipHeight") private var tabChipHeight: Double = 28
+    /// На сколько активная вкладка выше остальных (TabLook).
+    @AppStorage(TabLook.activeLiftKey) private var tabActiveLift: Double = TabLook.defaultActiveLift
     @AppStorage("fcxl.saveViewModePerTab") private var saveViewModePerTab: Bool = true
 
     @State private var isRenaming = false
@@ -47,6 +49,12 @@ struct TabChipView: View {
             return color
         }
         return globalAccentColor
+    }
+
+    /// Активная вкладка выше остальных на подъём: полоса выравнивает вкладки по низу, и
+    /// активная встаёт над соседями.
+    private var chipHeight: CGFloat {
+        TabLook.chipHeight(chip: tabChipHeight, lift: tabActiveLift, isActive: isActive)
     }
 
     private var backgroundColor: Color {
@@ -104,7 +112,7 @@ struct TabChipView: View {
                 )
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 28)
-                .frame(height: tabChipHeight)
+                .frame(height: chipHeight)
             } else {
                 Text(tab.title)
                     .font(.system(size: tabFontSize, weight: .semibold))
@@ -113,7 +121,7 @@ struct TabChipView: View {
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.horizontal, 28)
-                    .frame(height: tabChipHeight)
+                    .frame(height: chipHeight)
             }
         }
         .overlay(alignment: .leading) {
@@ -173,6 +181,9 @@ struct TabChipView: View {
             tabShape.strokeBorder(borderColor, lineWidth: isDragTarget ? 2 : 1)
         }
         .contentShape(tabShape)
+        // Вкладка поднимается и опускается плавно, когда включена «Плавная анимация», —
+        // как растёт строка под курсором; без неё встаёт на место сразу.
+        .animation(CursorLift.isEnabled ? .easeOut(duration: CursorLift.duration) : nil, value: isActive)
         .onTapGesture(perform: onSelect)
         .onDrag {
             onDragStart()

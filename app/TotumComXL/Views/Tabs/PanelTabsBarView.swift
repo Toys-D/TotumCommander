@@ -13,6 +13,8 @@ struct PanelTabsBarView: View {
     var onNewTerminal: (() -> Void)? = nil
 
     @AppStorage("tabBarHeight") private var tabBarHeight: Double = 32
+    @AppStorage("tabChipHeight") private var tabChipHeight: Double = 28
+    @AppStorage(TabLook.activeLiftKey) private var tabActiveLift: Double = TabLook.defaultActiveLift
     @AppStorage("tabBarSpacing") private var tabBarSpacing: Double = 10
     @AppStorage("tabMaxWidth") private var tabMaxWidth: Double = 200
     @AppStorage("tabMinWidth") private var tabMinWidth: Double = 80
@@ -30,6 +32,11 @@ struct PanelTabsBarView: View {
     @StateObject private var dragEnd = TabDragEndWatcher()
 
     private let plusButtonWidth: CGFloat = 38
+
+    /// Высота полосы: из настройки, но не ниже поднятой активной вкладки — её верх не срезается.
+    private var barHeight: CGFloat {
+        TabLook.barHeight(bar: tabBarHeight, chip: tabChipHeight, lift: tabActiveLift)
+    }
     @State private var isOverflowing: Bool = false
 
     private func tabWidth(availableWidth: CGFloat) -> CGFloat {
@@ -101,7 +108,7 @@ struct PanelTabsBarView: View {
 
             if isOverflowing {
                 TabOverflowMenuButton(tabsVM: tabsVM, onSelectTab: onSelectTab)
-                    .frame(height: tabBarHeight)
+                    .frame(height: barHeight)
             }
 
             // The hotlist at the hand's other resting place: the same menu Cmd+D opens, from
@@ -117,7 +124,7 @@ struct PanelTabsBarView: View {
             }
             .buttonStyle(.plain)
             .onHover { hoveringStar = $0 }
-            .frame(width: 26, height: tabBarHeight)
+            .frame(width: 26, height: barHeight)
             .help(L("menu.favorites"))
 
             Button {
@@ -139,9 +146,9 @@ struct PanelTabsBarView: View {
                     })
                 }
             }
-            .frame(width: plusButtonWidth, height: tabBarHeight)
+            .frame(width: plusButtonWidth, height: barHeight)
         }
-        .frame(height: tabBarHeight)
+        .frame(height: barHeight)
         // Same background as the breadcrumb (path) bar above so the path + tabs
         // read as one unified area — no separate tab-bar color, no divider.
         .interfaceBackground()

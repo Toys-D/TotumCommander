@@ -163,6 +163,7 @@ enum SettingsSearchIndex {
             ("design.tabMinWidth", "design.section.tabs"),
             ("design.tabBarHeight", "design.section.tabs"),
             ("design.tabBarSpacing", "design.section.tabs"),
+            ("design.tabActiveLift", "design.section.tabs"),
             ("design.tabActiveOpacity", "design.section.tabs"),
             ("design.tabActiveTitleColor", "design.section.tabs"),
         ],

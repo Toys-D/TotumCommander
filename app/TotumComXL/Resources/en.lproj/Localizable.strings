@@ -1635,6 +1635,8 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "compare.help.paths.body" = "The two paths sit right above the list, with a green dot for the left side and a blue dot for the right. The same colours are used by the arrows, so a green → always means “towards the blue folder”.";
 "design.tabActiveTitleColor" = "Active tab text";
 "design.tabActiveTitleColor.hint" = "Colour of the name and icons on the current tab. Stored separately for the light and dark themes; leave it unset to keep the ordinary text colour.";
+"design.tabActiveLift" = "Active tab lift";
+"design.tabActiveLift.hint" = "The active tab stands this many points above the others, so you can see at once which one is open. 0 keeps all tabs level. If the raised tab does not fit, the tab bar grows to make room.";
 "menu.tools.split" = "Split file…";
 "menu.tools.join" = "Join parts…";
 "split.title" = "Split file";
