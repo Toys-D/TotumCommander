@@ -26,13 +26,22 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
 
     private var pendingContent: (String, String)?  // (text, language)
     private var isReady = false
+    /// Поиск и замена — своей полосой с подписанными кнопками (EditorFindBar). У каждой
+    /// страницы редактора свой; встроенная панель заводит его заранее, чтобы показать полосу.
+    let findModel: EditorFindModel
 
-    override init() {
+    init(findModel: EditorFindModel? = nil) {
+        self.findModel = findModel ?? EditorFindModel()
         let config = WKWebViewConfiguration()
         #if DEBUG
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
         #endif
         let userController = WKUserContentController()
+        // Язык подписей Monaco — язык программы из её настройки, не системный: страница читает
+        // его до загрузки редактора (monaco-editor.html, initLoader).
+        userController.addUserScript(WKUserScript(
+            source: "window.fcxlLanguage = '\(Self.monacoLanguage(for: AppLanguage.current.resolvedCode))';",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController = userController
 
         webView = WKWebView(frame: .zero, configuration: config)
@@ -44,6 +53,14 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
         userController.add(WeakScriptMessageProxy(self), name: "editorEvent")
         webView.navigationDelegate = self
 
+        self.findModel.run = { [weak self] script in self?.webView.evaluateJavaScript(script) }
+        self.findModel.window = { [weak self] in self?.webView.window }
+        self.findModel.onClose = { [weak self] in
+            guard let self else { return }
+            self.webView.window?.makeFirstResponder(self.webView)
+            self.focusEditor()
+        }
+
         // Load Monaco HTML with file:// access to local Monaco bundle
         let bundle = AppResources.bundle
         if let htmlURL = bundle.url(forResource: "monaco-editor", withExtension: "html") {
@@ -52,6 +69,12 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
             let htmlURL = URL(fileURLWithPath: htmlPath)
             webView.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())
         }
+    }
+
+    /// Язык подписей Monaco для языка программы. Перевод в бандле только русский (из пакета
+    /// monaco-editor той же версии); всё остальное — встроенный английский.
+    nonisolated static func monacoLanguage(for code: String) -> String {
+        code == "ru" ? "ru" : "en"
     }
 
     // MARK: - JS Escape Utility
@@ -83,7 +106,7 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
     ]
 
     static let editorLanguages: [(name: String, id: String)] = [
-        ("Text", "plaintext"),
+        (L("editor.language.plainText"), "plaintext"),
         ("C", "c"), ("C++", "cpp"), ("C#", "csharp"), ("CSS", "css"),
         ("Dart", "dart"), ("Dockerfile", "dockerfile"),
         ("Go", "go"), ("GraphQL", "graphql"),
@@ -100,7 +123,7 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
     ]
 
     static func languageName(for id: String) -> String {
-        editorLanguages.first(where: { $0.id == id })?.name ?? "Text"
+        editorLanguages.first(where: { $0.id == id })?.name ?? L("editor.language.plainText")
     }
 
     static func languageID(for name: String) -> String {
@@ -149,6 +172,16 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
         webView.evaluateJavaScript("setLanguage('\(escaped)')")
     }
 
+    func setFontFamily(_ name: String) {
+        let escaped = Self.escapeForJSString(name)
+        webView.evaluateJavaScript("editor.updateOptions({ fontFamily: '\(escaped)' })")
+    }
+
+    func setLineHighlight(_ mode: String) {
+        let escaped = Self.escapeForJSString(mode)
+        webView.evaluateJavaScript("toggleLineHighlight('\(escaped)')")
+    }
+
     func setFontSize(_ size: Int) {
         webView.evaluateJavaScript("setFontSize(\(size))")
     }
@@ -179,12 +212,14 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
         webView.evaluateJavaScript("goToLine(\(line))")
     }
 
+    /// ⌘F, ⌘R, кнопки «Найти» и «Заменить» — одна дорога: страница отдаёт выделенное, и
+    /// полоса поиска открывается в `findModel.opened`.
     func showFind() {
-        webView.evaluateJavaScript("findText()")
+        findModel.requestOpen(replace: false)
     }
 
     func showReplace() {
-        webView.evaluateJavaScript("replaceText()")
+        findModel.requestOpen(replace: true)
     }
 
     func isDirty(completion: @escaping (Bool) -> Void) {
@@ -223,6 +258,15 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
 
             case "save":
                 onSaveRequested?()
+
+            case "findOpen":
+                findModel.opened(replace: body["replace"] as? Bool ?? false,
+                                 seed: body["seed"] as? String ?? "")
+
+            case "findState":
+                findModel.pageState(revealed: body["revealed"] as? Bool ?? false,
+                                    count: body["count"] as? Int ?? 0,
+                                    position: body["position"] as? Int ?? 0)
 
             default:
                 break

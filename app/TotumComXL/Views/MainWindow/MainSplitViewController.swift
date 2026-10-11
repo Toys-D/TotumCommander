@@ -237,6 +237,9 @@ final class MainSplitViewController: NSViewController {
             guard let self, event.keyCode == 53 else { return event }
             guard let window = self.view.window, event.window === window else { return event }
 
+            // В редакторе открыт поиск — Esc закрывает его, а не редактор.
+            if EditorFindModel.closeVisible(in: window) { return nil }
+
             // Close embedded editor first (has save dialog)
             if self.isEditorEmbedded {
                 NotificationCenter.default.post(name: .fcxlRequestEditorClose, object: nil)

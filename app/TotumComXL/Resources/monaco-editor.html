@@ -6,6 +6,9 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #1e1e1e; }
     #container { width: 100%; height: 100%; }
+    /* Поиск и замена — полосой программы с подписанными кнопками (EditorFindBar.swift). Окошко
+       Monaco со значками вместо слов не показывается; ищет и заменяет по-прежнему он сам. */
+    .monaco-editor .find-widget { display: none !important; }
     #loading {
         color: #888; font-family: -apple-system, sans-serif; font-size: 13px;
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -22,7 +25,12 @@
     var loaderScript = document.createElement('script');
 
     function initLoader() {
-        require.config({ paths: { vs: monacoBase }});
+        // Подписи редактора — поиск, подсказки кнопок, «6 из 8» — на языке программы. Его кладёт
+        // сюда Swift (window.fcxlLanguage) до загрузки страницы; ?lang=ru — для проверки страницы
+        // в браузере. Русский перевод лежит рядом (vs/nls.messages.ru.js), английский встроен.
+        var language = window.fcxlLanguage || new URLSearchParams(location.search).get('lang');
+        var nls = language === 'ru' ? { availableLanguages: { '*': 'ru' } } : {};
+        require.config({ paths: { vs: monacoBase }, 'vs/nls': nls });
         initEditor();
     }
 
@@ -107,6 +115,25 @@
                 window.webkit.messageHandlers.editorEvent.postMessage({ type: 'save' });
             });
 
+            // Поиск: ⌘F — найти, ⌘R и ⌥⌘F (как в Monaco на Mac) — найти и заменить. Обе дороги
+            // открывают полосу программы, как и её кнопки «Найти» и «Заменить».
+            editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, function () { fcxlFind.open(false); });
+            editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyR, function () { fcxlFind.open(true); });
+            editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
+                              function () { fcxlFind.open(true); });
+
+            // Сколько нашлось и которое текущее — полосе; поиск закрыли в самом тексте (Esc) —
+            // полоса закрывается тоже.
+            var findState = editor.getContribution('editor.contrib.findController').getState();
+            findState.onFindReplaceStateChange(function () {
+                window.webkit.messageHandlers.editorEvent.postMessage({
+                    type: 'findState',
+                    revealed: findState.isRevealed,
+                    count: findState.matchesCount,
+                    position: findState.matchesPosition
+                });
+            });
+
             window.webkit.messageHandlers.editorEvent.postMessage({ type: 'ready' });
         });
     }
@@ -153,8 +180,68 @@
         }
     }
 
-    function findText() { if (editor) editor.getAction('actions.find').run(); }
-    function replaceText() { if (editor) editor.getAction('editor.action.startFindReplaceAction').run(); }
+    // Поиск и замена для полосы программы (EditorFindBar.swift). Ищет сам Monaco — его
+    // контроллер поиска: подсветка всех совпадений, ⌘G и ⇧⌘G, «Заменить все» одним шагом отмены,
+    // $1 в регулярных выражениях. Полоса только говорит, что искать, и показывает счёт.
+    var fcxlFind = {
+        controller: function () {
+            return editor ? editor.getContribution('editor.contrib.findController') : null;
+        },
+        // Поиск включается его запуском; окошко при этом создаётся, но спрятано стилем выше.
+        started: function () {
+            var fc = this.controller();
+            if (fc && !fc.getState().isRevealed) {
+                // Поиск идёт от курсора. Выделенное слово — искомое: курсор ставится в его
+                // начало (выделение то же), и дописанный в поле запрос остаётся на нём, а не
+                // уходит на следующее совпадение.
+                var sel = editor.getSelection();
+                if (sel && !sel.isEmpty() && sel.startLineNumber === sel.endLineNumber) {
+                    editor.setSelection(new monaco.Selection(sel.endLineNumber, sel.endColumn,
+                                                             sel.startLineNumber, sel.startColumn));
+                }
+                fc.start({
+                    forceRevealReplace: false, seedSearchStringFromSelection: 'none',
+                    seedSearchStringFromNonEmptySelection: false,
+                    seedSearchStringFromGlobalClipboard: false,
+                    shouldFocus: 0, shouldAnimate: false, updateSearchScope: false, loop: true
+                });
+            }
+            return fc;
+        },
+        // Открыть полосу: выделенное одной строкой — уже искомое. Полоса откроется в Swift и
+        // пришлёт, что искать, через set().
+        open: function (replace) {
+            if (!editor) return;
+            var model = editor.getModel(), selection = editor.getSelection(), seed = '';
+            if (model && selection && !selection.isEmpty()
+                && selection.startLineNumber === selection.endLineNumber) {
+                seed = model.getValueInRange(selection);
+            }
+            window.webkit.messageHandlers.editorEvent.postMessage({ type: 'findOpen', replace: !!replace, seed: seed });
+        },
+        // moveCursor: false — только при открытии: выделенное слово остаётся текущим совпадением
+        // («1 из 3»), а не перескакивает на следующее. Набор в поле ведёт курсор к найденному.
+        set: function (s, moveCursor) {
+            var fc = this.started();
+            if (!fc) return;
+            fc.getState().change({
+                searchString: s.query, replaceString: s.replacement,
+                matchCase: s.matchCase, wholeWord: s.wholeWord, isRegex: s.isRegex
+            }, moveCursor !== false);
+        },
+        next: function () { var fc = this.started(); if (fc) fc.moveToNextMatch(); },
+        previous: function () { var fc = this.started(); if (fc) fc.moveToPrevMatch(); },
+        replace: function () { var fc = this.started(); if (fc) fc.replace(); },
+        replaceAll: function () { var fc = this.started(); if (fc) fc.replaceAll(); },
+        close: function () {
+            var fc = this.controller();
+            if (fc) fc.closeFindWidget();
+            if (editor) editor.focus();
+        }
+    };
+
+    function findText() { fcxlFind.open(false); }
+    function replaceText() { fcxlFind.open(true); }
     function getIsDirty() { return isDirty; }
 </script>
 </body>

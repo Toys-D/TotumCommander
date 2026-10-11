@@ -20,22 +20,6 @@ struct EmbeddedEditorPanel: View {
     @State private var statusText = L("editor.status.initial")
     @StateObject private var controller = EmbeddedMonacoState()
 
-    @State private var wordWrap = true
-    @State private var minimapOn = true
-    @State private var whitespaceMode = 0
-    @State private var lineHighlightMode = 0
-    @State private var fontSize = 13
-    @State private var selectedFont = "SF Mono"
-    // Keyed by the Monaco theme ID, never by the display name: the names are localized now,
-    // so a name-based selection would match nothing as soon as the UI language changes.
-    @State private var selectedTheme = "vs-dark"
-    @State private var selectedLang = "Text"
-
-    // Use shared lists from MonacoEditorController
-    private static var fonts: [String] { MonacoEditorController.editorFonts }
-    private static var themes: [(name: String, id: String)] { MonacoEditorController.editorThemes }
-    private static var languages: [(name: String, id: String)] { MonacoEditorController.editorLanguages }
-
     var body: some View {
         VStack(spacing: 0) {
             // Tab bar: filename + save + close
@@ -48,101 +32,34 @@ struct EmbeddedEditorPanel: View {
                     Text("•").foregroundColor(.orange)
                 }
                 Spacer()
-                Button {
+                // Словами, как и вся полоса: значки дискеты и крестика приходилось угадывать.
+                Button(L("button.save")) {
                     controller.save(to: filePath) { saved in
                         if saved { isDirty = false }
                     }
-                } label: {
-                    Image(systemName: "square.and.arrow.down")
                 }
-                .buttonStyle(.borderless).controlSize(.small)
+                .buttonStyle(FCXLChipButtonStyle(compact: true))
                 .disabled(!isDirty).help(L("editor.save.tooltip"))
 
-                Button {
+                Button(L("common.close")) {
                     handleClose()
-                } label: {
-                    Image(systemName: "xmark")
                 }
-                .buttonStyle(.borderless).controlSize(.small).help(L("common.close"))
+                .buttonStyle(FCXLChipButtonStyle(compact: true))
             }
             .padding(.horizontal, 8)
             .frame(height: 28)
 
             Divider()
 
-            // Toolbar
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    // Font
-                    FCXLDialogMenuPicker(items: Self.fonts, selection: $selectedFont,
-                                         title: { $0 }, compact: true, chipWidth: 78)
-                    .onChange(of: selectedFont) { name in
-                        let escaped = MonacoEditorController.escapeForJSString(name)
-                        controller.monaco?.webView.evaluateJavaScript("editor.updateOptions({ fontFamily: '\(escaped)' })")
-                    }
-
-                    // Font size
-                    Text("\(fontSize)")
-                        .font(.system(size: 11).monospacedDigit())
-                        .frame(width: 22)
-                    Button { fontSize = max(8, fontSize - 1); controller.monaco?.setFontSize(fontSize) } label: {
-                        Image(systemName: "minus")
-                    }.buttonStyle(.borderless).controlSize(.mini)
-                    Button { fontSize = min(72, fontSize + 1); controller.monaco?.setFontSize(fontSize) } label: {
-                        Image(systemName: "plus")
-                    }.buttonStyle(.borderless).controlSize(.mini)
-
-                    Divider().frame(height: 16)
-
-                    // Theme
-                    FCXLDialogMenuPicker(items: Self.themes.map(\.id), selection: $selectedTheme,
-                                         title: { id in Self.themes.first { $0.id == id }?.name ?? id },
-                                         compact: true, chipWidth: 68)
-                    .onChange(of: selectedTheme) { id in
-                        controller.monaco?.setTheme(id)
-                    }
-
-                    Divider().frame(height: 16)
-
-                    // Action buttons
-                    toolbarButton("magnifyingglass", tip: L("editor.toolbar.find")) { controller.monaco?.showFind() }
-                    toolbarButton("arrow.2.squarepath", tip: L("editor.toolbar.replace")) { controller.monaco?.showReplace() }
-
-                    Divider().frame(height: 16)
-
-                    // Toggle buttons
-                    toolbarToggle("text.word.spacing", tip: L("editor.toolbar.wordWrap"), isOn: wordWrap) {
-                        wordWrap.toggle(); controller.monaco?.toggleWordWrap(wordWrap)
-                    }
-                    toolbarToggle("paragraphsign", tip: L("editor.toolbar.whitespace"), isOn: whitespaceMode > 0) {
-                        whitespaceMode = (whitespaceMode + 1) % 3
-                        controller.monaco?.toggleWhitespace(["none", "boundary", "all"][whitespaceMode])
-                    }
-                    toolbarToggle("sidebar.right", tip: L("editor.toolbar.minimap"), isOn: minimapOn) {
-                        minimapOn.toggle(); controller.monaco?.toggleMinimap(minimapOn)
-                    }
-                    toolbarToggle("line.3.horizontal", tip: L("editor.toolbar.lineHighlight"), isOn: lineHighlightMode > 0) {
-                        lineHighlightMode = (lineHighlightMode + 1) % 4
-                        controller.monaco?.webView.evaluateJavaScript(
-                            "toggleLineHighlight('\(["none","gutter","line","all"][lineHighlightMode])')")
-                    }
-
-                    Divider().frame(height: 16)
-
-                    // Language
-                    FCXLDialogMenuPicker(items: Self.languages.map(\.name), selection: $selectedLang,
-                                         title: { $0 }, compact: true, chipWidth: 72)
-                    .onChange(of: selectedLang) { name in
-                        if let l = Self.languages.first(where: { $0.name == name }) {
-                            controller.monaco?.setLanguage(l.id)
-                        }
-                    }
-                }
-                .padding(.horizontal, 6)
-            }
-            .frame(height: 30)
+            // Toolbar — общая с окном F4: каждая кнопка подписана словами.
+            EditorToolbar(options: controller.options,
+                          onFind: { controller.monaco?.showFind() },
+                          onReplace: { controller.monaco?.showReplace() })
 
             Divider()
+
+            // Поиск и замена — полосой с подписанными кнопками, пока она открыта.
+            EditorFindBarHost(model: controller.findModel)
 
             // Monaco WebView
             EmbeddedMonacoWebView(
@@ -164,10 +81,7 @@ struct EmbeddedEditorPanel: View {
         }
         .onAppear {
             controller.source = source
-            let lang = MonacoEditorController.detectLanguage(for: filePath)
-            if let match = Self.languages.first(where: { $0.id == lang }) {
-                selectedLang = match.name
-            }
+            controller.options.language = MonacoEditorController.detectLanguage(for: filePath)
         }
         .onChange(of: isDirty) { newDirty in onDirtyChange?(newDirty) }
         .onReceive(NotificationCenter.default.publisher(for: .fcxlRequestEditorClose)) { _ in
@@ -233,29 +147,6 @@ struct EmbeddedEditorPanel: View {
             }
         }
     }
-
-    @ViewBuilder
-    private func toolbarButton(_ symbol: String, tip: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-        }
-        .buttonStyle(.borderless).controlSize(.small).help(tip)
-    }
-
-    @ViewBuilder
-    private func toolbarToggle(_ symbol: String, tip: String, isOn: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 12))
-                .foregroundColor(isOn ? .white : .secondary)
-                .frame(width: 24, height: 20)
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(isOn ? accent : Color.clear)
-                )
-        }
-        .buttonStyle(.borderless).controlSize(.small).help(tip)
-    }
 }
 
 // MARK: - State
@@ -263,6 +154,10 @@ struct EmbeddedEditorPanel: View {
 @MainActor
 final class EmbeddedMonacoState: ObservableObject {
     var monaco: MonacoEditorController?
+    /// Вид текста — общая полоса редактора (EditorToolbar) — и поиск. Заводятся с панелью,
+    /// до страницы редактора: полосы показываются сразу, а выбор уходит в редактор, как он готов.
+    let options = EditorViewOptions()
+    let findModel = EditorFindModel()
     /// Encoding the file was decoded with — a save writes it back in the same encoding.
     var encoding: String.Encoding = .utf8
     /// True when the bytes couldn't be decoded; saving is blocked so the placeholder never
@@ -324,8 +219,9 @@ struct EmbeddedMonacoWebView: NSViewRepresentable {
     @Binding var statusText: String
 
     func makeNSView(context: Context) -> WKWebView {
-        let monaco = MonacoEditorController()
+        let monaco = MonacoEditorController(findModel: controller.findModel)
         controller.monaco = monaco
+        controller.options.editor = monaco
 
         monaco.onDirtyChanged = { dirty in
             DispatchQueue.main.async { self.isDirty = dirty }
@@ -358,8 +254,8 @@ struct EmbeddedMonacoWebView: NSViewRepresentable {
             controller?.encoding = decoded.encoding
             controller?.isReadOnly = !decoded.decodable
             monaco.setContent(decoded.text, language: lang)
-            // Word wrap ON by default
-            monaco.toggleWordWrap(true)
+            // Всё выбранное на полосе — шрифт, перенос строк (он включён сразу), миникарта…
+            controller?.options.apply(to: monaco)
             // Focus the editor so typing works right after F4 (no click needed).
             monaco.webView.window?.makeFirstResponder(monaco.webView)
             monaco.focusEditor()

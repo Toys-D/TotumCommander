@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import WebKit
 
 /// NSView subclass that forces arrow cursor instead of text cursor.
@@ -18,6 +19,8 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
     private let onClose: (UUID) -> Void
     private let operations: FileOperationsService
     private var monaco: MonacoEditorController!
+    /// Вид текста — общая полоса редактора (EditorToolbar), одна на все вкладки окна.
+    private let viewOptions = EditorViewOptions()
     private var statusLabel: NSTextField?
     private var isDirty = false
     private var bypassCloseValidation = false
@@ -83,6 +86,12 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
 
         // Monaco controller
         monaco = MonacoEditorController()
+        viewOptions.editor = monaco
+        // Язык, выбранный на полосе, помнит вкладка: вернувшись к ней, человек видит его же.
+        viewOptions.onLanguageChange = { [weak self] language in
+            guard let self, self.activeTabIndex < self.tabs.count else { return }
+            self.tabs[self.activeTabIndex].language = language
+        }
 
         // Layout: tab bar (accessory) + webView + status bar
         let contentSize = window.contentLayoutRect.size
@@ -98,10 +107,26 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
         self.statusLabel = statusBar
         container.addSubview(statusBar)
 
+        // Полоса поиска над текстом — пока открыта; закрытая не занимает места.
+        let findBar = NSHostingView(rootView: EditorFindBarHost(model: monaco.findModel))
+        findBar.sizingOptions = [.intrinsicContentSize]
+        findBar.translatesAutoresizingMaskIntoConstraints = false
+        // Ширину задаёт окно, а не длина подписей: узкое окно полосу прокручивает.
+        findBar.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        container.addSubview(findBar)
+
         // WebView
-        monaco.webView.frame = NSRect(x: 0, y: statusH, width: contentSize.width, height: contentSize.height - statusH)
-        monaco.webView.autoresizingMask = [.width, .height]
+        monaco.webView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(monaco.webView)
+        NSLayoutConstraint.activate([
+            findBar.topAnchor.constraint(equalTo: container.topAnchor),
+            findBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            findBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            monaco.webView.topAnchor.constraint(equalTo: findBar.bottomAnchor),
+            monaco.webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            monaco.webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            monaco.webView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -statusH),
+        ])
 
         window.contentView = container
 
@@ -192,7 +217,8 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
             tabs[activeTabIndex].encoding = decoded.encoding
             tabs[activeTabIndex].isReadOnly = !decoded.decodable
             monaco.setContent(decoded.text, language: tab.language)
-            if wordWrapEnabled { monaco.toggleWordWrap(true) }
+            viewOptions.language = tab.language
+            viewOptions.apply(to: monaco)
         } catch {
             tabs[activeTabIndex].isReadOnly = true
             monaco.setContent("// Error loading file: \(error.localizedDescription)", language: "plaintext")
@@ -241,6 +267,7 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
                 self.loadFileContent()
             } else {
                 self.monaco.setContent(tab.content, language: tab.language)
+                self.viewOptions.language = tab.language
             }
             self.window?.makeFirstResponder(self.monaco.webView)
             self.monaco.focusEditor()
@@ -355,196 +382,15 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
 
     // MARK: - Toolbar
 
-    private var currentFontSize: Int = 13
-
+    /// Полоса над текстом — общая с панелью напротив (EditorToolbar): слова, а не значки.
     private func buildToolbar() -> NSView {
-        let h: CGFloat = 30
-        let panel = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: h))
-        panel.wantsLayer = true
-        // Полоса собрана точными кадрами: тридцать точек высоты и штатные контролы по
-        // двадцать два. В macOS 26 системные контролы стали выше и шире прежних, и такая
-        // раскладка на них расползается — контролы наезжают друг на друга. Этот ключ Apple
-        // и дала для плотных полос: он просит у контролов прежние, тесные размеры, и
-        // раскладка остаётся той же, что здесь посчитана.
-        if #available(macOS 26.0, *) { panel.prefersCompactControlSizeMetrics = true }
-        let isDark = (window?.effectiveAppearance ?? NSApp.effectiveAppearance)
-            .bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        panel.layer?.backgroundColor = (isDark ? NSColor(white: 0.2, alpha: 1) : NSColor(white: 0.92, alpha: 1)).cgColor
-
-        var x: CGFloat = 6
-        let y: CGFloat = (h - 22) / 2
-
-        // Font picker
-        let fontPopup = NSPopUpButton(frame: NSRect(x: x, y: y, width: 120, height: 22), pullsDown: false)
-        fontPopup.focusRingType = .none
-        fontPopup.font = .systemFont(ofSize: 11)
-        fontPopup.controlSize = .small
-        for name in MonacoEditorController.editorFonts {
-            fontPopup.addItem(withTitle: name)
-        }
-        fontPopup.selectItem(withTitle: "SF Mono")
-        fontPopup.target = self
-        fontPopup.action = #selector(fontChanged(_:))
-        panel.addSubview(fontPopup)
-        x += 124
-
-        // Font size
-        let sizeField = NSTextField(frame: NSRect(x: x, y: y + 1, width: 34, height: 20))
-        sizeField.font = .systemFont(ofSize: 11)
-        sizeField.stringValue = "\(currentFontSize)"
-        sizeField.alignment = .center
-        sizeField.tag = 100  // identifier
-        panel.addSubview(sizeField)
-        x += 36
-
-        let sizeDown = NSButton(frame: NSRect(x: x, y: y, width: 20, height: 22))
-        sizeDown.title = "−"; sizeDown.bezelStyle = .smallSquare
-        sizeDown.target = self; sizeDown.action = #selector(fontSizeDown(_:))
-        panel.addSubview(sizeDown)
-        x += 21
-
-        let sizeUp = NSButton(frame: NSRect(x: x, y: y, width: 20, height: 22))
-        sizeUp.title = "+"; sizeUp.bezelStyle = .smallSquare
-        sizeUp.target = self; sizeUp.action = #selector(fontSizeUp(_:))
-        panel.addSubview(sizeUp)
-        x += 25
-
-        // Separator
-        let sep1 = NSBox(frame: NSRect(x: x, y: y + 2, width: 1, height: 18))
-        sep1.boxType = .separator; panel.addSubview(sep1); x += 5
-
-        // Theme
-        let themePopup = NSPopUpButton(frame: NSRect(x: x, y: y, width: 110, height: 22), pullsDown: false)
-        themePopup.focusRingType = .none
-        themePopup.font = .systemFont(ofSize: 11)
-        themePopup.controlSize = .small
-        for (i, theme) in MonacoEditorController.editorThemes.enumerated() {
-            themePopup.addItem(withTitle: theme.name); themePopup.lastItem?.tag = i
-        }
-        themePopup.selectItem(withTitle: MonacoEditorController.editorThemes[0].name)
-        themePopup.target = self
-        themePopup.action = #selector(themeChanged(_:))
-        panel.addSubview(themePopup)
-        x += 114
-
-        // Separator
-        let sep2 = NSBox(frame: NSRect(x: x, y: y + 2, width: 1, height: 18))
-        sep2.boxType = .separator; panel.addSubview(sep2); x += 5
-
-        // Toggle buttons with SF Symbols
-        func addImgToggle(_ symbol: String, tooltip: String, action: Selector, on: Bool = false) {
-            let btn = NSButton(frame: NSRect(x: x, y: y, width: 28, height: 22))
-            let tintColor: NSColor = on ? .controlAccentColor : .secondaryLabelColor
-            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
-            btn.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)?
-                .withSymbolConfiguration(config)
-            btn.isBordered = false
-            btn.setButtonType(.momentaryPushIn)
-            btn.imageScaling = .scaleProportionallyDown
-            btn.toolTip = tooltip
-            btn.target = self; btn.action = action
-            btn.contentTintColor = tintColor
-            panel.addSubview(btn)
-            x += 30
-        }
-
-        addImgToggle("text.word.spacing", tooltip: L("editor.toolbar.wordWrap"), action: #selector(wrapToggled(_:)), on: true)
-        addImgToggle("paragraphsign", tooltip: L("editor.toolbar.invisibles"), action: #selector(whitespaceToggled(_:)))
-        addImgToggle("sidebar.right", tooltip: L("editor.toolbar.minimap"), action: #selector(minimapToggled(_:)), on: true)
-        addImgToggle("line.3.horizontal", tooltip: L("editor.toolbar.lineHighlight"), action: #selector(lineHighlightToggled(_:)))
-
-        // Separator
-        let sep3 = NSBox(frame: NSRect(x: x, y: y + 2, width: 1, height: 18))
-        sep3.boxType = .separator; panel.addSubview(sep3); x += 5
-
-        // Language
-        let langPopup = NSPopUpButton(frame: NSRect(x: x, y: y, width: 110, height: 22), pullsDown: false)
-        langPopup.focusRingType = .none
-        langPopup.font = .systemFont(ofSize: 11)
-        langPopup.controlSize = .small
-        for lang in MonacoEditorController.editorLanguages {
-            langPopup.addItem(withTitle: lang.name)
-        }
-        let detectedLang = MonacoEditorController.detectLanguage(for: currentPath)
-        langPopup.selectItem(withTitle: MonacoEditorController.languageName(for: detectedLang))
-        langPopup.target = self
-        langPopup.action = #selector(langChanged(_:))
-        panel.addSubview(langPopup)
-
-        return panel
-    }
-
-    // MARK: - Toolbar Actions
-
-    @objc private func fontChanged(_ sender: NSPopUpButton) {
-        guard let name = sender.selectedItem?.title else { return }
-        let escaped = MonacoEditorController.escapeForJSString(name)
-        monaco.webView.evaluateJavaScript("editor.updateOptions({ fontFamily: '\(escaped)' })")
-    }
-
-    @objc private func fontSizeDown(_ sender: Any) {
-        currentFontSize = max(8, currentFontSize - 1)
-        monaco.setFontSize(currentFontSize)
-        updateSizeField()
-    }
-
-    @objc private func fontSizeUp(_ sender: Any) {
-        currentFontSize = min(72, currentFontSize + 1)
-        monaco.setFontSize(currentFontSize)
-        updateSizeField()
-    }
-
-    private func updateSizeField() {
-        // Find size field by tag in toolbar accessory
-        if let toolbar = window?.titlebarAccessoryViewControllers.last?.view {
-            if let field = toolbar.subviews.first(where: { $0.tag == 100 }) as? NSTextField {
-                field.stringValue = "\(currentFontSize)"
-            }
-        }
-    }
-
-    @objc private func themeChanged(_ sender: NSPopUpButton) {
-        let tag = sender.selectedItem?.tag ?? 0
-        guard tag < MonacoEditorController.editorThemes.count else { return }
-        monaco.setTheme(MonacoEditorController.editorThemes[tag].id)
-    }
-
-    @objc private func wrapToggled(_ sender: NSButton) {
-        wordWrapEnabled.toggle()
-        monaco.toggleWordWrap(wordWrapEnabled)
-        sender.state = wordWrapEnabled ? .on : .off
-        sender.contentTintColor = wordWrapEnabled ? .controlAccentColor : .secondaryLabelColor
-    }
-
-    @objc private func whitespaceToggled(_ sender: NSButton) {
-        whitespaceMode = (whitespaceMode + 1) % 3
-        let modes = ["none", "boundary", "all"]
-        monaco.toggleWhitespace(modes[whitespaceMode])
-        let isOn = whitespaceMode > 0
-        sender.state = isOn ? .on : .off
-        sender.contentTintColor = isOn ? .controlAccentColor : .secondaryLabelColor
-    }
-
-    @objc private func minimapToggled(_ sender: NSButton) {
-        minimapEnabled.toggle()
-        monaco.toggleMinimap(minimapEnabled)
-        sender.state = minimapEnabled ? .on : .off
-        sender.contentTintColor = minimapEnabled ? .controlAccentColor : .secondaryLabelColor
-    }
-
-    private var lineHighlightMode = 0  // 0=none, 1=gutter, 2=line, 3=all
-    @objc private func lineHighlightToggled(_ sender: NSButton) {
-        lineHighlightMode = (lineHighlightMode + 1) % 4
-        let modes = ["none", "gutter", "line", "all"]
-        monaco.webView.evaluateJavaScript("toggleLineHighlight('\(modes[lineHighlightMode])')")
-        let isOn = lineHighlightMode > 0
-        sender.state = isOn ? .on : .off
-        sender.contentTintColor = isOn ? .controlAccentColor : .secondaryLabelColor
-    }
-
-    @objc private func langChanged(_ sender: NSPopUpButton) {
-        guard let name = sender.selectedItem?.title else { return }
-        monaco.setLanguage(MonacoEditorController.languageID(for: name))
+        let host = NSHostingView(rootView: EditorToolbar(
+            options: viewOptions,
+            onFind: { [weak self] in self?.monaco.showFind() },
+            onReplace: { [weak self] in self?.monaco.showReplace() }))
+        host.frame = NSRect(x: 0, y: 0, width: 900, height: 30)
+        host.autoresizingMask = [.width]
+        return host
     }
 
     // MARK: - Save
@@ -660,7 +506,11 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             let kc = event.keyCode
 
-            if kc == 53 { self.requestClose(); return nil }                    // Esc
+            // Esc: открыт поиск — закрывается он, а не всё окно.
+            if kc == 53 {                                                       // Esc
+                if !EditorFindModel.closeVisible(in: window) { self.requestClose() }
+                return nil
+            }
 
             if mods == [.command] {
                 switch kc {
@@ -742,23 +592,17 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
         }
     }
 
-    private var minimapEnabled = true
+    // Клавиши окна меняют тот же выбор, что и полоса: она показывает, что в тексте на самом деле.
     private func toggleMonacoMinimap() {
-        minimapEnabled.toggle()
-        monaco.toggleMinimap(minimapEnabled)
+        viewOptions.minimap.toggle()
     }
 
-    private var wordWrapEnabled = true
     private func toggleMonacoWordWrap() {
-        wordWrapEnabled.toggle()
-        monaco.toggleWordWrap(wordWrapEnabled)
+        viewOptions.wordWrap.toggle()
     }
 
-    private var whitespaceMode = 0  // 0=none, 1=boundary, 2=all
     private func toggleMonacoWhitespace() {
-        whitespaceMode = (whitespaceMode + 1) % 3
-        let modes = ["none", "boundary", "all"]
-        monaco.toggleWhitespace(modes[whitespaceMode])
+        viewOptions.whitespace = (viewOptions.whitespace + 1) % EditorViewOptions.whitespaceModes.count
     }
 
     // MARK: - Window Delegate

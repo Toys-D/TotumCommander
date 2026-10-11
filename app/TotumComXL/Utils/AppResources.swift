@@ -158,6 +158,10 @@ enum AppResources {
         let names = ["ru.lproj/Localizable.strings", "en.lproj/Localizable.strings",
                      "DefaultStyle.plist", "help.ru.md", "help.en.md",
                      "monaco-editor.html", "monaco/loader.min.js",
+                     // Без шрифта значков кнопки редактора — пустые квадраты, без перевода —
+                     // английские подписи: редактор при этом работает, молча.
+                     "monaco/vs/base/browser/ui/codicons/codicon/codicon.ttf",
+                     "monaco/vs/nls.messages.ru.js",
                      "DefaultCursorMask.png", "cloud-box.png"]
         print("набор ресурсов: \(bundle.bundleURL.path)")
         guard found else {
