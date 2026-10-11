@@ -2481,7 +2481,7 @@ A frequent culprit is Parallels Desktop (usually F6): open its Settings ▸ Shor
 /* Цвета по типам файлов */
 "settings.section.fileColors" = "File colours";
 "colors.rules.section" = "Name colour by file type";
-"colors.rules.hint" = "The first matching rule paints, so keep the specific ones above the general — drag to reorder. Mask: *.dmg, several separated by semicolons. A rule with an age limit paints only what appeared recently.";
+"colors.rules.hint" = "The first matching rule paints, so keep the specific ones above the general — drag to reorder. Mask: *.dmg, several separated by semicolons. A rule with an age limit paints only what recently appeared or was overwritten. In system folders (/System, /Library, /usr and the other system roots), in ~/Library, in cache folders and in hidden ones nothing is marked new: programs rewrite their files there all the time.";
 "colors.rules.empty" = "No rules — names in the ordinary colour";
 "colors.rules.add" = "Add a rule";
 "colors.rules.reset" = "Restore the default set";
@@ -2499,7 +2499,7 @@ A frequent culprit is Parallels Desktop (usually F6): open its Settings ▸ Shor
 "colors.rules.column.colorDark" = "colour (dark)";
 "colors.rules.hint.themes" = "The colour is remembered separately for the light and the dark theme: you are editing the one in use right now.";
 "colors.folderNews" = "Mark folders with something new inside";
-"colors.folderNews.hint" = "After the name of a folder where files appeared within the period of the “any name” rule — at any depth — a counter in the accent colour shows how many: “+12” new files inside; towards the end of the period it fades. A dropped file shows up at once — one brought in through Finder too: the app learns of it from the disk’s change log, and of older ones from Spotlight; the disk is not walked. Network and hidden folders get no counter.";
+"colors.folderNews.hint" = "After the name of a folder where files appeared or were overwritten within the period of the “any name” rule — at any depth — a counter in the colour of its name shows how many: “+12” new things inside; towards the end of the period it fades. In system folders, in ~/Library, in cache folders (Caches) and in hidden ones nothing is marked new: programs rewrite their files there all the time. A dropped file shows up at once — one brought in through Finder too: the app learns of it from the disk’s change log, and of older ones from Spotlight; the disk is not walked. Network folders get no counter.";
 "folderNews.tooltip" = "New files inside: %d";
 "network.field.accessKey" = "Access key";
 "network.field.secretKey" = "Secret key";

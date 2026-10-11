@@ -56,7 +56,7 @@ final class FolderNewsArrivals: @unchecked Sendable {
     }
 
     private func look(at path: String, now: Date) -> Found {
-        guard !path.contains("/.") else { return .other }
+        guard !path.contains("/."), !FileNewness.isExcluded(path) else { return .other }
         var info = stat()
         guard lstat(path, &info) == 0 else { return errno == ENOENT || errno == ENOTDIR ? .gone : .other }
         guard info.st_flags & UInt32(UF_HIDDEN) == 0 else { return .other }
@@ -65,12 +65,16 @@ final class FolderNewsArrivals: @unchecked Sendable {
         case S_IFDIR: guard isPackage(path) else { return .other }
         default: return .other
         }
-        guard !insidePackage(path),
-              let added = (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.addedToDirectoryDateKey]))?
-                .addedToDirectoryDate,
-              now.timeIntervalSince(added) < Self.keep
+        guard !insidePackage(path) else { return .other }
+        let values = try? URL(fileURLWithPath: path)
+            .resourceValues(forKeys: [.addedToDirectoryDateKey, .contentModificationDateKey])
+        // Появился или перезаписан (FileNewness); пакет — как папка: только появление.
+        guard let date = FileNewness.date(added: values?.addedToDirectoryDate,
+                                          modified: values?.contentModificationDate,
+                                          isFolder: info.st_mode & S_IFMT == S_IFDIR),
+              now.timeIntervalSince(date) < Self.keep
         else { return .other }
-        return .fresh(added)
+        return .fresh(date)
     }
 
     /// Внутри пакета — части одного целого, а не отдельные новые файлы. У пакетов всегда есть
@@ -149,12 +153,15 @@ final class FolderNewsArrivals: @unchecked Sendable {
 
 /// Слежка за деревом папки по журналу FSEvents: с истории за срок новизны — и дальше вживую, в
 /// том числе пока программа в фоне (слежка панели тогда спит, а файлы бросают через Finder).
-/// Что пришло, ушло или переименовано — в FolderNewsArrivals; правка содержимого — не новость.
+/// Что пришло, ушло, переименовано или перезаписано — в FolderNewsArrivals. Системные папки,
+/// ~/Library и кэши (FileNewness) отсеиваются сразу, побайтно: в домашней папке это почти весь
+/// журнал, и превращать каждый их путь в строку было бы зря.
 final class FolderNewsStream {
     /// Журнал глубже суток не читается: сутки в домашней папке — это ~800 тысяч событий и
     /// секунды работы. Что старше — знает Spotlight.
     static let historyLimit: TimeInterval = 24 * 3600
-    static let latency: CFTimeInterval = 0.5
+    /// Брошенный файл виден в счётчике быстро: журнал отдаёт пачки через четверть секунды.
+    static let latency: CFTimeInterval = 0.25
 
     let folder: String
     private let stream: FSEventStreamRef
@@ -200,17 +207,35 @@ final class FolderNewsStream {
     private static let arrivalFlags = FSEventStreamEventFlags(
         kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRemoved
             | kFSEventStreamEventFlagItemRenamed | kFSEventStreamEventFlagItemCloned)
+    /// Перезаписан на месте: журнал помечает это только так.
+    private static let rewriteFlag = FSEventStreamEventFlags(kFSEventStreamEventFlagItemModified)
 
     private static let callback: FSEventStreamCallback = { _, _, count, rawPaths, flags, _ in
         let paths = rawPaths.assumingMemoryBound(to: UnsafePointer<CChar>.self)
         var batch = Set<String>()
-        for index in 0..<count where flags[index] & FolderNewsStream.arrivalFlags != 0 {
+        let wanted = FolderNewsStream.arrivalFlags | FolderNewsStream.rewriteFlag
+        let quick = FileNewness.excludedOverride == nil
+        for index in 0..<count where flags[index] & wanted != 0 {
             // Скрытое по имени (.git, .build) — мимо, не превращая в строку: при сборке таких
             // событий тысячи.
             guard strstr(paths[index], "/.") == nil else { continue }
-            batch.insert(String(cString: paths[index]))
+            if quick, FolderNewsStream.underExcludedRoot(paths[index]) { continue }
+            let path = String(cString: paths[index])
+            guard !FileNewness.isExcluded(path) else { continue }
+            batch.insert(path)
         }
         if !batch.isEmpty { FolderNewsArrivals.shared.note(Array(batch)) }
+    }
+
+    /// Исключённые корни байтами, с косой чертой на конце.
+    private static let excludedPrefixes: [[UInt8]] = FileNewness.excludedRoots.map { Array(($0 + "/").utf8) }
+
+    /// Путь журнала лежит в системной папке или ~/Library — без строки, сравнением байтов.
+    static func underExcludedRoot(_ path: UnsafePointer<CChar>) -> Bool {
+        let length = strlen(path)
+        return excludedPrefixes.contains { prefix in
+            prefix.count <= length && prefix.withUnsafeBufferPointer { memcmp(path, $0.baseAddress, prefix.count) == 0 }
+        }
     }
 
     /// Остановить и запомнить, докуда журнал прочитан. Остановка — на очереди слежки: там

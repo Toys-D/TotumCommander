@@ -94,6 +94,31 @@ final class FileColorRulesTests: XCTestCase {
     /// Скопированный файл приносит с собой старые даты создания и изменения — а в ЭТОЙ
     /// папке он новый. Иначе только что перенесённая фотография с прошлогодней камеры
     /// красилась бы как картинка, а не как новинка.
+    /// Пересохранённый другой программой файл хранит прежние даты создания и появления, а нов у
+    /// него только день изменения, — он тоже свежий. Кроме системных папок, ~/Library, кэшей и
+    /// самих папок.
+    func testAnOverwrittenFileIsNew_exceptInSystemFoldersAndForFolders() {
+        let store = emptyStore()
+        store.add(FileColorRule(mask: "", colorHex: "#FFFFFF", freshMinutes: 24 * 60))
+        func item(_ path: String, folder: Bool = false) -> FileItem {
+            let old = Date().addingTimeInterval(-3600 * 24 * 30), now = Date().addingTimeInterval(-60)
+            return FileItem(path: path, name: (path as NSString).lastPathComponent,
+                            fileExtension: (path as NSString).pathExtension, size: 1, isDirectory: folder,
+                            isHidden: false, isSymlink: false, isAlias: false, symlinkTarget: nil,
+                            hardlinkCount: 1, permissions: "rw-r--r--", dateModified: now, dateCreated: old,
+                            dateAdded: old, owner: "dimas", entryCount: 0)
+        }
+        let home = NSHomeDirectory()
+        XCTAssertNotNil(store.color(for: item(home + "/Documents/отчёт.docx"), base: .labelColor),
+                        "перезаписан минуту назад — свежий")
+        XCTAssertNil(store.color(for: item(home + "/Library/Preferences/x.plist"), base: .labelColor),
+                     "в ~/Library недавних не бывает")
+        XCTAssertNil(store.color(for: item(home + "/Documents/Проект/Caches/x.png"), base: .labelColor),
+                     "и в папке кэша")
+        XCTAssertNil(store.color(for: item(home + "/Documents/Проект", folder: true), base: .labelColor),
+                     "у папки дата меняется от любой правки внутри — не красит")
+    }
+
     func testAFileCopiedInIsNewHereEvenIfItsContentsAreOld() {
         let store = emptyStore()
         store.add(FileColorRule(mask: "", colorHex: "#FFFFFF", freshMinutes: 24 * 60))

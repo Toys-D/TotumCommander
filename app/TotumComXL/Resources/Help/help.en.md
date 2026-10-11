@@ -127,7 +127,7 @@ Bubble buttons: **Select** what is shown, **Deselect**, **Invert**, **Delete** w
 - **Colours by file type** — names are coloured by the rules in "Settings ▸ File colours": a mask (`*.dmg;*.pkg`), a colour for the light and the dark theme, "Recent files only" with gradual fading.
 - **Pictures on folders** — icons assigned to folders in Finder (setting "Show custom folder pictures").
 - **Folder icon styles** — "Catalog V3…V9" and "Totum" (the app's own folder: the body takes the folder colour, the outline and the white "TC" stay) in the "Folders & icons" settings, and your own: the "Custom…" tile takes an SVG or a PNG. The style is remembered separately for the light and the dark theme.
-- **New-items counter** — "+12" after the name of a folder with new files inside; in thumbnails, a plaque in the corner of the picture. Enabled in the "File colours" settings (section 14).
+- **New-items counter** — "+12" after the name of a folder where files appeared or were overwritten; in thumbnails, a plaque in the corner of the picture. Enabled in the "File colours" settings (section 14).
 
 ### 2.7. Volume bar
 
@@ -468,8 +468,8 @@ The colours of the interface, cursor and tabs, the file-colour rules and the fol
 - **Custom cursor (mask)** — the "Draw…" button: white is the body of the cursor, black is transparency. Brush, pen, eraser, "Invert", "Clear"; presets — horizontal and vertical gradients, edges, bar, capsule, ellipse, slant, arrow; a picture of your own — "Load…" or dragged straight onto the canvas.
 
 ### File colours
-- **Rules** — names are coloured by masks (`*.dmg;*.pkg`): a colour for the light and for the dark theme, "Recent files only" with gradual fading. The order of the rules — by dragging.
-- **Mark folders with something new inside** — after the name of a folder where files appeared within the period of the "any name" rule, at any depth, stands a counter, "+12": that many new files inside. It takes the colour of the folder's name — under the cursor, of the name under the cursor — and fades towards the end of the period. In thumbnails the counter is a plaque in the corner of the picture. A dropped file shows up at once, even one brought in through Finder while the app was in the background: what is new comes from the disk's change log, older things from Spotlight; the disk is not walked. Network and hidden folders get no counter.
+- **Rules** — names are coloured by masks (`*.dmg;*.pkg`): a colour for the light and for the dark theme, "Recent files only" with gradual fading. The order of the rules — by dragging. Recent means it appeared in the folder or was overwritten within the rule's period. In system folders (/System, /Library, /usr and the other system roots), in ~/Library, in cache folders and in hidden ones nothing is marked new at all — neither by colour nor by the counter: programs rewrite their files there all the time.
+- **Mark folders with something new inside** — after the name of a folder where files appeared or were overwritten within the period of the "any name" rule, at any depth, stands a counter, "+12": that many new files inside. It takes the colour of the folder's name — under the cursor, of the name under the cursor — and fades towards the end of the period. In thumbnails the counter is a plaque in the corner of the picture. A dropped file shows up at once, even one brought in through Finder while the app was in the background: what is new comes from the disk's change log, older things from Spotlight; the disk is not walked. Network and hidden folders get no counter.
 
 ### Cursor
 - **Custom cursor color** — the cursor background and the colour of the text under it. Off — the cursor takes the app accent, and the name under it is picked to contrast.

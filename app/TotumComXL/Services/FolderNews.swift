@@ -1,7 +1,51 @@
 import AppKit
 import QuartzCore
 
-/// Новое внутри папки: в ней, на любой глубине, появились файлы за срок новизны.
+/// Когда файл стал «новым» и где новое не отмечается вовсе — одно правило для цвета недавних и
+/// для счётчика «+N».
+///
+/// Новый — появился в папке за срок (дата добавления: старый снимок, только что скопированный
+/// сюда, здесь новый) или перезаписан за срок. Пересохранённый другой программой файл хранит и
+/// дату создания, и дату добавления прежними — меняется только дата изменения. Перезапись не в
+/// счёт у папок: их дата меняется от любой правки внутри.
+///
+/// Не отмечается новое — ни счётчиком, ни цветом — в системных папках, в ~/Library (настройки,
+/// кэши и данные программ), в папках кэша и в скрытых: программы переписывают там свои файлы
+/// постоянно. Горело бы всё, а подсчёт в домашней папке перебирал их десятки тысяч — первый
+/// ответ приходил через полминуты, и до того счётчиков не было вовсе.
+enum FileNewness {
+    /// Корни системного диска: лежит там не человеческое, а системы и программ.
+    static let systemRoots = ["/System", "/Library", "/private", "/usr", "/bin", "/sbin",
+                              "/opt", "/cores", "/dev", "/etc", "/var", "/tmp"]
+    /// Папки кэша — где бы ни лежали.
+    static let cacheFolderNames: Set<String> = ["Caches", "Cache", "caches", "cache"]
+    /// Исключённые целиком: системные корни и ~/Library.
+    static let excludedRoots = systemRoots + [NSHomeDirectory() + "/Library"]
+
+    /// Подмена для проверок: временная папка лежит в /private, а проверять надо обычную.
+    nonisolated(unsafe) static var excludedOverride: ((String) -> Bool)?
+
+    /// Не отмечать здесь новое (см. выше).
+    static func isExcluded(_ path: String) -> Bool {
+        excludedOverride?(path) ?? isExcludedByDefault(path)
+    }
+
+    static func isExcludedByDefault(_ path: String) -> Bool {
+        if excludedRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) { return true }
+        return path.split(separator: "/").contains { $0.hasPrefix(".") || cacheFolderNames.contains(String($0)) }
+    }
+
+    /// Самая поздняя из дат: появления в папке и — у файла, не у папки, — перезаписи. Нет даты
+    /// появления (том её не хранит) — остаётся дата изменения, как и было.
+    static func date(added: Date?, modified: Date?, isFolder: Bool) -> Date? {
+        guard let modified, modified > .distantPast else { return added }
+        guard let added else { return modified }
+        return isFolder ? added : max(added, modified)
+    }
+}
+
+/// Новое внутри папки: в ней, на любой глубине, появились или перезаписаны файлы за срок
+/// новизны (FileNewness).
 ///
 /// Новизна та же, что красит новые файлы: первое включённое правило «любое имя» со сроком в
 /// «Цвета файлов» — его срок и угасание. Узнаётся не обходом — обход всех подпапок нагружал бы
@@ -37,6 +81,8 @@ enum FolderNews {
                 return false
             }
             if path.split(separator: "/").contains(where: { $0.hasPrefix(".") }) { return false }
+            // Системные папки, ~/Library, кэши — новое там не отмечается (FileNewness).
+            if FileNewness.isExcluded(path) { return false }
         }
         return true
     }
@@ -266,8 +312,8 @@ final class FolderNewsQuery {
     private var tally: FolderNewsTally?
     private var recountPending = false
     static let renewInterval: TimeInterval = 600
-    /// Пачки событий складываются: пересчёт не чаще раза в полсекунды.
-    static let recountDelay: TimeInterval = 0.5
+    /// Пачки событий складываются: пересчёт не чаще раза в четверть секунды.
+    static let recountDelay: TimeInterval = 0.25
     /// Папка и новое по её подпапкам. На главном потоке.
     var onUpdate: ((String, [String: FolderNews.Inside]) -> Void)?
 
@@ -296,10 +342,16 @@ final class FolderNewsQuery {
         stopQuery()
         let generation = generation
         let query = NSMetadataQuery()
-        query.predicate = NSPredicate(format: "%K >= %@", "kMDItemDateAdded",
-                                      Date(timeIntervalSinceNow: -period) as NSDate)
-        query.searchScopes = [URL(fileURLWithPath: folder, isDirectory: true)]
+        // Появилось или перезаписано за срок; что из перезаписанного не в счёт — решает FileNewness.
+        let since = Date(timeIntervalSinceNow: -period) as NSDate
+        query.predicate = NSPredicate(format: "%K >= %@ OR %K >= %@", "kMDItemDateAdded", since,
+                                      "kMDItemFSContentChangeDate", since)
+        let scopes = Self.scopes(for: folder)
+        query.searchScopes = scopes
         query.notificationBatchingInterval = 1
+        // Свойства — сразу с ответом. Без этого каждое спрашивалось у Spotlight отдельным запросом:
+        // разбор полутора тысяч находок шёл полторы секунды, и всё это время счётчиков не было.
+        query.valueListAttributes = FolderNewsTally.attributes
         query.operationQueue = queue
         let tally = FolderNewsTally(folder: folder, since: Date(timeIntervalSinceNow: -period),
                                     generation: generation)
@@ -317,7 +369,9 @@ final class FolderNewsQuery {
             },
         ]
         self.query = query
-        if !query.start() {
+        // Подпапок нет — искать негде (пустой список Spotlight понял бы как «везде»); новое в
+        // появившихся потом подпапках принесёт журнал.
+        if scopes.isEmpty || !query.start() {
             // Spotlight здесь не отвечает — считается то, что пришло по журналу.
             stopQuery()
             work.async { [weak self] in self?.adopt(tally) }
@@ -327,6 +381,22 @@ final class FolderNewsQuery {
             guard let self, let folder = self.folder, let period = self.period else { return }
             self.ask(folder, period: period)
         }
+    }
+
+    /// Где спрашивать Spotlight: подпапки — новое внутри папки и есть новое в её подпапках, —
+    /// кроме скрытых и исключённых (FileNewness). В домашней папке так Spotlight не перебирает
+    /// десятки тысяч файлов ~/Library. Подпапок слишком много — спрашивается сама папка, а
+    /// исключённое отсеивается в ответе.
+    static func scopes(for folder: String, limit: Int = 300) -> [URL] {
+        let url = URL(fileURLWithPath: folder, isDirectory: true)
+        guard let children = try? FileManager.default.contentsOfDirectory(
+            at: url, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
+        else { return [url] }
+        let folders = children.filter {
+            (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+                && !FileNewness.isExcluded($0.path)
+        }
+        return folders.count > limit ? [url] : folders
     }
 
     /// Собранный запрос становится текущим. До того в силе прежний — переход к новому сроку
@@ -420,10 +490,17 @@ final class FolderNewsTally {
     /// Первый сбор — целиком.
     func gathered(from query: NSMetadataQuery) {
         query.disableUpdates()
-        let items = (0..<query.resultCount).compactMap { query.result(at: $0) as? NSMetadataItem }
+        // Свойства берутся из того, что пришло с ответом (valueListAttributes), а не новыми
+        // запросами к каждой находке. Путь в этот список не попадает — его знает сама находка,
+        // и спросить её быстро.
+        let found = Self.files(count: query.resultCount) { index, attribute in
+            attribute == NSMetadataItemPathKey
+                ? (query.result(at: index) as? NSMetadataItem)?.value(forAttribute: attribute)
+                : query.value(ofAttribute: attribute, forResultAt: index)
+        }
         query.enableUpdates()
         spotlight = [:]
-        take(Self.files(in: items))
+        take(found)
     }
 
     /// Обновление: добавленное и изменённое — поверх; если что-то удалили — сбор заново.
@@ -435,7 +512,7 @@ final class FolderNewsTally {
         }
         let fresh = ((info[NSMetadataQueryUpdateAddedItemsKey] as? [NSMetadataItem]) ?? [])
             + ((info[NSMetadataQueryUpdateChangedItemsKey] as? [NSMetadataItem]) ?? [])
-        take(Self.files(in: fresh))
+        take(Self.files(count: fresh.count) { fresh[$0].value(forAttribute: $1) })
     }
 
     /// Находки Spotlight — только то, что лежит на месте: о переносе он узнаёт с опозданием и
@@ -477,14 +554,26 @@ final class FolderNewsTally {
         return bases[1] + path.dropFirst(bases[0].count)
     }
 
-    /// Файлы — не папки: новая пустая папка внутри ещё не «новые файлы».
-    private static func files(in items: [NSMetadataItem]) -> [(String, Date)] {
-        items.compactMap { item in
-            guard let path = item.value(forAttribute: NSMetadataItemPathKey) as? String,
-                  let added = item.value(forAttribute: "kMDItemDateAdded") as? Date,
-                  (item.value(forAttribute: NSMetadataItemContentTypeKey) as? String) != "public.folder"
+    /// Что спрашивается у Spotlight о каждой находке — одним ответом (valueListAttributes).
+    static let attributes = [NSMetadataItemPathKey, NSMetadataItemContentTypeKey, "kMDItemContentTypeTree",
+                             "kMDItemDateAdded", "kMDItemFSContentChangeDate"]
+
+    /// Файлы — не папки: новая пустая папка внутри ещё не «новые файлы». Пакет (.pages,
+    /// программа) — как папка: новость — его появление, а не правка внутри. `value` — свойство
+    /// находки по номеру.
+    static func files(count: Int, value: (Int, String) -> Any?) -> [(String, Date)] {
+        (0..<count).compactMap { index in
+            guard let path = value(index, NSMetadataItemPathKey) as? String,
+                  !FileNewness.isExcluded(path),
+                  (value(index, NSMetadataItemContentTypeKey) as? String) != "public.folder"
             else { return nil }
-            return (path, added)
+            let types = value(index, "kMDItemContentTypeTree") as? [String] ?? []
+            guard let date = FileNewness.date(
+                added: value(index, "kMDItemDateAdded") as? Date,
+                modified: value(index, "kMDItemFSContentChangeDate") as? Date,
+                isFolder: types.contains("com.apple.package"))
+            else { return nil }
+            return (path, date)
         }
     }
 }

@@ -234,12 +234,17 @@ final class FileColorRulesStore: ObservableObject {
         for rule in rules where rule.isEnabled {
             guard let color = rule.color(dark: dark),
                   rule.matches(fileName: item.name) else { continue }
-            // Возраст — по тому, когда файл ПОЯВИЛСЯ В ЭТОЙ ПАПКЕ, а не когда его создали.
-            // Скопированный сюда файл приносит с собой старые даты создания и изменения:
-            // снимок с прошлогодней камеры, только что положенный в папку, — новый здесь,
-            // и покрасить его надо как новый. Дату добавления ведёт сама macOS
-            // (addedToDirectoryDate); если том её не хранит, остаются обычные даты.
-            let appeared = item.dateAdded ?? item.dateCreated ?? item.dateModified
+            // В системных папках, ~/Library и кэшах «недавних» не бывает (FileNewness).
+            if rule.isFreshness, FileNewness.isExcluded(item.path) { continue }
+            // Возраст — по тому, когда файл ПОЯВИЛСЯ В ЭТОЙ ПАПКЕ или был перезаписан, а не
+            // когда его создали. Скопированный сюда файл приносит с собой старые даты создания
+            // и изменения: снимок с прошлогодней камеры, только что положенный в папку, — новый
+            // здесь. Пересохранённый другой программой файл хранит прежние даты создания и
+            // добавления — нов у него только день изменения. Дату добавления ведёт сама macOS
+            // (addedToDirectoryDate); перезапись у папок не в счёт (FileNewness).
+            let appeared = FileNewness.date(added: item.dateAdded ?? item.dateCreated,
+                                            modified: item.dateModified, isFolder: item.isDirectory)
+                ?? item.dateModified
             let age = now.timeIntervalSince(appeared)
             let strength = rule.strength(age: age)
             guard strength > 0 else { continue }

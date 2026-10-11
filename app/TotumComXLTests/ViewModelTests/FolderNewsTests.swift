@@ -437,6 +437,15 @@ final class FolderNewsTests: XCTestCase {
     private var root: URL!
 
     override func setUpWithError() throws {
+        // Временная папка лежит в /private — для правила «где новое не отмечается» она как
+        // обычная папка человека; кэши и скрытое внутри неё исключаются как везде.
+        let temporary = [FolderNews.realPath(NSTemporaryDirectory()), NSTemporaryDirectory()]
+        FileNewness.excludedOverride = { path in
+            for prefix in temporary where path.hasPrefix(prefix) {
+                return FileNewness.isExcludedByDefault("/Users/тест/" + path.dropFirst(prefix.count))
+            }
+            return FileNewness.isExcludedByDefault(path)
+        }
         root = FileManager.default.temporaryDirectory.appendingPathComponent("fcxl-news-\(UUID().uuidString)")
         for sub in ["Проект/src", "Фото"] {
             try FileManager.default.createDirectory(at: root.appendingPathComponent(sub),
@@ -446,6 +455,7 @@ final class FolderNewsTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        FileNewness.excludedOverride = nil
         try? FileManager.default.removeItem(at: root)
     }
 
@@ -497,5 +507,123 @@ final class FolderNewsTests: XCTestCase {
         XCTAssertEqual(item.withSize(1024).newestInside, ago(1))
         XCTAssertEqual(item.withSize(1024).newInsideCount, 7)
         XCTAssertEqual(item.withSize(1024).size, 1024)
+    }
+
+    // MARK: - Перезаписанное — тоже новое; где новое не отмечается вовсе
+
+    func test_гдеНовоеНеОтмечается_системныеПапкиБиблиотекаКэшиСкрытое() {
+        let home = NSHomeDirectory()
+        for path in ["/System/Library/CoreServices/Finder.app", "/Library/Preferences/com.apple.x.plist",
+                     home + "/Library/Caches/что-то", home + "/Library/Application Support/Программа/база",
+                     "/private/var/folders/xx", "/usr/local/bin/tool", "/opt/homebrew/bin/x",
+                     home + "/Documents/Проект/Caches/картинка.png", home + "/toys/.git/objects/ab",
+                     home + "/Library"] {
+            XCTAssertTrue(FileNewness.isExcludedByDefault(path), path)
+        }
+        for path in [home + "/toys/16.1_5_new.png", home + "/Documents/отчёт.docx", home + "/Downloads/a.zip",
+                     "/Applications/Заметки.app", "/Libraryish/файл", "/Volumes/Диск/Library/файл",
+                     home + "/Documents/Кэш-заметки/a.txt"] {
+            XCTAssertFalse(FileNewness.isExcludedByDefault(path), path)
+        }
+    }
+
+    func test_новизна_появлениеИлиПерезапись() {
+        let earlier = Date(timeIntervalSince1970: 1_000), later = Date(timeIntervalSince1970: 5_000)
+        XCTAssertEqual(FileNewness.date(added: earlier, modified: later, isFolder: false), later,
+                       "перезаписан другой программой — новый по дню перезаписи")
+        XCTAssertEqual(FileNewness.date(added: later, modified: earlier, isFolder: false), later,
+                       "старый снимок, только что скопированный сюда, — новый по появлению, как и было")
+        XCTAssertEqual(FileNewness.date(added: earlier, modified: later, isFolder: true), earlier,
+                       "у папки дата меняется от любой правки внутри — не в счёт")
+        XCTAssertEqual(FileNewness.date(added: nil, modified: later, isFolder: false), later,
+                       "том без даты появления — дата изменения, как было")
+        XCTAssertEqual(FileNewness.date(added: earlier, modified: .distantPast, isFolder: false), earlier,
+                       "изменение не измерено")
+    }
+
+    func test_вСистемныхПапкахИБиблиотеке_новоеНеИщется() {
+        XCTAssertFalse(FolderNews.canWatch(NSHomeDirectory() + "/Library/Application Support"))
+        XCTAssertFalse(FolderNews.canWatch("/System/Library"))
+        XCTAssertTrue(FolderNews.canWatch(NSHomeDirectory() + "/toys"))
+    }
+
+    /// Spotlight спрашивается о подпапках, а не о всей папке: в домашней так не перебираются
+    /// десятки тысяч файлов ~/Library.
+    func test_SpotlightСпрашиваетсяОПодпапках_безКэшейИСкрытых() throws {
+        let (top, inner) = try freshTree()
+        defer { try? FileManager.default.removeItem(at: top) }
+        for name in ["Caches", ".скрытая", "Фото"] {
+            try FileManager.default.createDirectory(at: top.appendingPathComponent(name), withIntermediateDirectories: true)
+        }
+        XCTAssertEqual(Set(FolderNewsQuery.scopes(for: top.path).map(\.lastPathComponent)),
+                       [inner.lastPathComponent, "Фото"])
+        XCTAssertTrue(FolderNewsQuery.scopes(for: inner.appendingPathComponent("глубже").path).isEmpty,
+                      "подпапок нет — Spotlight не спрашивается (пустой список он понял бы как «везде»)")
+    }
+
+    func test_перезаписанныйФайл_вЖурналеСДнёмПерезаписи_аВКэшеНет() throws {
+        let arrivals = FolderNewsArrivals()
+        let (top, inner) = try freshTree()
+        defer { try? FileManager.default.removeItem(at: top) }
+        let report = inner.appendingPathComponent("отчёт.docx").path
+        let cache = inner.appendingPathComponent("Caches")
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        let cached = cache.appendingPathComponent("миниатюра.png").path
+        try Data("кэш".utf8).write(to: URL(fileURLWithPath: cached))
+        // Перезапись «через час»: так видно, что счёт идёт по ней, а не по появлению.
+        for path in [report, cached] {
+            try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(3600)], ofItemAtPath: path)
+        }
+        arrivals.note([report, cached])
+        XCTAssertEqual(arrivals.entries(under: top.path, since: Date().addingTimeInterval(1800)).map(\.path), [report],
+                       "перезаписанный — новость, в папке кэша — нет")
+    }
+
+    /// Файл лежит давно — за сроком новизны; его перезаписали на месте (запись в тот же файл,
+    /// как сохраняют многие программы), — и папка снова с новым.
+    func test_перезаписьНаМесте_папкаСноваСНовым() throws {
+        FolderNewsArrivals.shared.forgetAll()
+        defer { FolderNewsArrivals.shared.forgetAll() }
+        let (top, inner) = try freshTree()
+        defer { try? FileManager.default.removeItem(at: top) }
+        Thread.sleep(forTimeInterval: 3)   // всё в папке старше срока в две секунды
+
+        let query = FolderNewsQuery()
+        defer { query.stop() }
+        var answer: [String: FolderNews.Inside] = [:]
+        query.onUpdate = { _, news in answer = news }
+        query.follow(top.path, period: 2)
+        wait(3) { false }
+        XCTAssertNil(answer[inner.path], "пока ничего не трогали — нового нет")
+
+        let handle = try FileHandle(forWritingTo: inner.appendingPathComponent("отчёт.docx"))
+        try handle.write(contentsOf: Data("правка поверх".utf8))
+        try handle.close()
+        wait { answer[inner.path]?.count == 1 }
+        XCTAssertEqual(answer[inner.path]?.count, 1, "перезаписанный файл — новость")
+    }
+
+    /// Находки Spotlight разбираются из свойств, пришедших вместе с ответом; спрашивать каждую
+    /// находку отдельно стоило полторы секунды на полторы тысячи файлов.
+    func test_находкиSpotlight_разбираютсяИзГотовыхСвойств() {
+        let now = Date(), old = Date(timeIntervalSinceNow: -86400 * 30)
+        let rows: [[String: Any]] = [
+            [NSMetadataItemPathKey: "/Users/x/Документы/Проект/a.txt", NSMetadataItemContentTypeKey: "public.plain-text",
+             "kMDItemDateAdded": old, "kMDItemFSContentChangeDate": now],
+            [NSMetadataItemPathKey: "/Users/x/Документы/Проект/Caches/b.png", NSMetadataItemContentTypeKey: "public.png",
+             "kMDItemDateAdded": now],
+            [NSMetadataItemPathKey: "/Users/x/Документы/Папка", NSMetadataItemContentTypeKey: "public.folder",
+             "kMDItemDateAdded": now],
+            [NSMetadataItemPathKey: "/Users/x/Документы/Отчёт.pages", NSMetadataItemContentTypeKey: "com.apple.iwork.pages.sffpages",
+             "kMDItemContentTypeTree": ["com.apple.package"], "kMDItemDateAdded": old, "kMDItemFSContentChangeDate": now],
+        ]
+        let found = FolderNewsTally.files(count: rows.count) { rows[$0][$1] }
+        XCTAssertEqual(found.map(\.0), ["/Users/x/Документы/Проект/a.txt", "/Users/x/Документы/Отчёт.pages"],
+                       "папка кэша и сама папка — не новость")
+        XCTAssertEqual(found.first?.1, now, "перезаписанный — по дню перезаписи")
+        XCTAssertEqual(found.last?.1, old, "пакет — по дню появления")
+        for key in ["kMDItemDateAdded", "kMDItemFSContentChangeDate", "kMDItemContentTypeTree"] {
+            XCTAssertTrue(FolderNewsTally.attributes.contains(key), "\(key) приходит с ответом")
+        }
     }
 }
