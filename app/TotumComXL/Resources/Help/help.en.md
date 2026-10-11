@@ -369,7 +369,7 @@ A server opens in a panel tab. Everything works as with a folder: browsing, copy
 - The Google key and rclone are built into the program; nothing needs installing.
 
 ### 11.3. Local network and network drives
-**Local network** — browse computers, choose a share, sign in as a guest or by name with the password remembered in the Keychain. **Connect network drive** — an address `smb://…`, `afp://…`, `nfs://…`, a list of recent ones and examples. The mounted volume opens in its own tab with an orange icon and stays there while you walk the local disks (section 3).
+**Local network** — browse computers, choose a share, sign in as a guest or by name with the password remembered in the Keychain. **Connect network drive** — an address `smb://…`, `afp://…`, `nfs://…`, a list of recent ones and examples. The mounted volume opens in its own tab with an orange icon and stays there while you walk the local disks (section 3). What is put into the open folder on the server itself, the panel shows by itself: macOS passes on the server's notifications, and if the server sends none, the panel checks with it every few seconds.
 
 ### 11.4. Clouds through their own apps
 Google Drive, OneDrive, Dropbox, Box, pCloud and Yandex Disk can be connected without rclone — through the vendors' own apps. A cloud you are signed in to in such an app (the folders macOS keeps in Library/CloudStorage, a pCloud volume, a Yandex Disk folder in your home) takes its place in the volume bar by itself, as an ordinary place: no API quotas and no second sign-in; iCloud Drive works the same way. The eject button on such a cloud only moves it from the bar into the network menu, where one click brings it back.

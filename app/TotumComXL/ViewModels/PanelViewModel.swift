@@ -730,6 +730,8 @@ final class PanelViewModel: ObservableObject {
     private var directoryCaches: [String: DirectoryCache] = [:]
     private var directoryCacheLRU: [String] = []
     private(set) var currentPathIsSlowVolume: Bool = false
+    /// Папка на сетевом томе (SMB, AFP, NFS): за ней следит NetworkFolderWatcher.
+    private(set) var currentPathIsNetworkVolume: Bool = false
 
     // Знак «новое внутри» у папок (см. PanelViewModel+FolderNews).
     /// Запрос к Spotlight. Ставит его панель на экране (watchFolderNews): модель без экрана —
@@ -1013,6 +1015,8 @@ final class PanelViewModel: ObservableObject {
 
     // MARK: - FSEvents Watcher
     private var fsWatcher: FCXLWatcherBridge?
+    /// Слежка за сетевой папкой: о правках на сервере журнал диска молчит.
+    private var networkWatcher: NetworkFolderWatcher?
     private var fsWatcherDebounceTask: Task<Void, Never>?
     private var watchedPath: String?
 
@@ -2718,9 +2722,9 @@ final class PanelViewModel: ObservableObject {
         // A virtual location has no volume behind it, so it is neither fast nor slow. Asked about
         // "/TRASH" the detector finds nothing and answers "slow", which set the whole slow-volume
         // machinery on a place it cannot read.
-        currentPathIsSlowVolume = Self.isVirtualLocation(destination)
-            ? false
-            : Self.isSlowVolume(destination)
+        let volume = Self.isVirtualLocation(destination) ? nil : VolumeInterfaceDetector.detect(forPath: destination)
+        currentPathIsSlowVolume = volume.map { !$0.isFast } ?? false
+        currentPathIsNetworkVolume = volume?.busType == .network
         let previousItems = items
         let previousCursorPath = cursorItem?.path
         let previousSelection = selectedPaths
@@ -2882,12 +2886,28 @@ final class PanelViewModel: ObservableObject {
     // MARK: - FSEvents Watcher
 
     private func restartFSWatcherIfNeeded(for directory: String) {
-        // Don't watch archives or slow volumes
-        guard !insideArchive, !currentPathIsSlowVolume else {
+        switch FolderWatchMode.mode(insideArchive: insideArchive, slowVolume: currentPathIsSlowVolume,
+                                    networkVolume: currentPathIsNetworkVolume) {
+        case .none:
+            // Архив и медленный внешний диск не наблюдаются — экономия.
             stopFSWatcher()
             return
+        case .network:
+            // Сетевая папка: файл, положенный на самом сервере, журнал диска не видит — панель не
+            // знала о нём, пока в папку не войти заново. Своя слежка, а перечитка та же.
+            guard directory != watchedPath || networkWatcher == nil else { return }
+            stopFSWatcher()
+            networkWatcher = NetworkFolderWatcher(path: directory) { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.handleFSEvent()
+                }
+            }
+            watchedPath = directory
+            return
+        case .journal:
+            break
         }
-        guard directory != watchedPath else { return }
+        guard directory != watchedPath || fsWatcher == nil else { return }
         stopFSWatcher()
 
         let watcher = FCXLWatcherBridge()
@@ -2913,6 +2933,8 @@ final class PanelViewModel: ObservableObject {
         fsWatcherDebounceTask = nil
         fsWatcher?.stop()
         fsWatcher = nil
+        networkWatcher?.stop()
+        networkWatcher = nil
         watchedPath = nil
     }
 
@@ -4627,11 +4649,6 @@ final class PanelViewModel: ObservableObject {
     /// Places the panel shows that no filesystem has: the Trash and the network browser.
     static func isVirtualLocation(_ path: String) -> Bool {
         TrashService.isTrashPath(path) || NetworkBrowserService.isNetworkPath(path)
-    }
-
-    private static func isSlowVolume(_ path: String) -> Bool {
-        let info = VolumeInterfaceDetector.detect(forPath: path)
-        return !info.isFast
     }
 
     /// Returns the volume mount point for a given path (e.g., "/Volumes/Toshiba 1T USB" for a subpath).
