@@ -1,5 +1,4 @@
 import AppKit
-import FCXLControlProtocol
 import SwiftUI
 
 struct SettingsGeneralView: View {
@@ -27,7 +26,6 @@ struct SettingsGeneralView: View {
     @AppStorage("fcxl.persistColumnWidths") private var persistColumnWidths: Bool = true
     @AppStorage(DiskImageOpenMode.defaultsKey)
     private var diskImageOpen: String = DiskImageOpenMode.fallback.rawValue
-    @AppStorage(ControlProtocol.enabledKey) private var controlServerEnabled: Bool = false
 
     @AppStorage(AppLanguage.defaultsKey) private var appLanguage: String = AppLanguage.system.rawValue
 
@@ -192,18 +190,6 @@ struct SettingsGeneralView: View {
             }
             Section(L("settings.section.breadcrumbs")) {
                 Toggle(L("settings.breadcrumbSelectAll"), isOn: $breadcrumbSelectAll).settingAnchor("settings.breadcrumbSelectAll")
-            }
-            Section(L("settings.section.control")) {
-                Toggle(L("settings.control.enabled"), isOn: Binding(
-                    get: { controlServerEnabled },
-                    set: {
-                        controlServerEnabled = $0
-                        ControlServer.shared.syncWithSetting()
-                    }))
-                Text(L("settings.control.hint"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
             }
             // The last word in the section: a check that runs by itself, out of the way.
             Section(L("settings.section.updates")) {

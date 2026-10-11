@@ -168,20 +168,16 @@ STRINGS
 # ever worked here because this is a dev box. dylibbundler copies the whole dependency
 # tree into Contents/Frameworks and rewrites the load commands to @executable_path.
 # MUST run BEFORE codesign: it rewrites the binary and would invalidate a prior signature.
-# The MCP bridge, shipped inside the bundle so registering it with Claude is one path and
-# nothing to install. It only talks to the commander's control socket, which stays off until
-# the user turns it on in Settings.
-echo "=== Embedding MCP bridge ==="
-swift build -c "$CONFIG" --product FCXLMCPServer
-mkdir -p "$APP/Contents/Helpers"
-cp "$BIN/FCXLMCPServer" "$APP/Contents/Helpers/fcxl-mcp"
-chmod +x "$APP/Contents/Helpers/fcxl-mcp"
 
 # rclone — им работают облака: Google Drive, Dropbox, OneDrive и ещё десятки. Едет внутри
 # бандла, чтобы человек НИЧЕГО не ставил руками и не открывал Терминал: он выбирает службу
 # в нашем окне, разрешает доступ в браузере — и всё. Лицензия MIT, текст рядом.
 echo "=== Embedding rclone ==="
 "$(dirname "$0")/fetch-rclone.sh"
+# Папка помощников собирается заново: снятый помощник (так было с мостом fcxl-mcp) не должен
+# доживать в бандле от прошлой сборки и уезжать в выпуск — release.sh копирует этот бандл.
+rm -rf "$APP/Contents/Helpers"
+mkdir -p "$APP/Contents/Helpers"
 cp third_party/rclone/rclone "$APP/Contents/Helpers/rclone"
 chmod +x "$APP/Contents/Helpers/rclone"
 cp third_party/rclone/LICENSE-rclone.txt "$APP/Contents/Resources/LICENSE-rclone.txt"

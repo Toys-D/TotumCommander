@@ -56,8 +56,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         let bridgeService = CoreBridgeService()
         let fileOps = FileOperationsService(bridgeService: bridgeService)
         self.operationsService = fileOps
-        // Внешнее управление работает той же службой, а не своей копией.
-        ControlServer.shared.operationsService = fileOps
         let qs = OperationQueueService(fileOps: fileOps)
         self.queueService = qs
         let qvm = OperationQueueViewModel(queueService: qs)
@@ -147,26 +145,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         }
 
         window.contentViewController = containerVC
-
-        // The control socket answers questions about what the panels show; it can only do that
-        // if someone tells it. Off unless the user turned it on — see ControlServer.
-        ControlServer.shared.stateProvider = { [weak splitVC] in
-            guard let splitVC else { return [:] }
-            let left = splitVC.leftPanelVM
-            let right = splitVC.rightPanelVM
-            return [
-                "active panel": splitVC.activePanel == .left ? "left" : "right",
-                "left folder": left.currentPath,
-                "left cursor": left.cursorItem?.name ?? "(none)",
-                "left selected": String(left.selectedPaths.count),
-                "left items": String(left.items.count),
-                "right folder": right.currentPath,
-                "right cursor": right.cursorItem?.name ?? "(none)",
-                "right selected": String(right.selectedPaths.count),
-                "right items": String(right.items.count),
-            ]
-        }
-        ControlServer.shared.syncWithSetting()
 
         // The number on the shelf button follows the shelf itself, wherever it was changed —
         // a context menu in either panel, another window, the shelf listing. One road, so no

@@ -21,7 +21,6 @@ enum SettingsSearchIndex {
             ("settings.confirmPack", "settings.section.dialogs"),
             ("settings.confirmExtract", "settings.section.dialogs"),
             ("settings.breadcrumbSelectAll", "settings.section.breadcrumbs"),
-            ("settings.control.enabled", "settings.section.control"),
             ("settings.updates.check", "settings.section.updates"),
         ],
         .keys: [

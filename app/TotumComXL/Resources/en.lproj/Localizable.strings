@@ -158,15 +158,6 @@
 "settings.remoteDirectToQueue" = "Send remote operations directly to queue";
 "settings.section.breadcrumbs" = "Breadcrumbs";
 "settings.breadcrumbSelectAll" = "Select all text when editing path";
-"settings.section.control" = "Control by Claude";
-"settings.control.enabled" = "Allow Claude to look at the panels";
-"control.ask.title" = "Claude is asking";
-"control.ask.allow" = "Allow";
-"control.ask.copy" = "Copy %@ to %@?";
-"control.ask.move" = "Move %@ to %@?";
-"control.ask.trash" = "Put %@ in the Trash?";
-"control.ask.mkdir" = "Create the folder %@?";
-"settings.control.hint" = "Opens a local socket only this Mac can reach, and only while the program runs. Claude can see what the panels show and list or find files; nothing can be changed, moved or deleted through it. Off until you turn it on.";
 "column.dateAdded" = "Date Added";
 "column.dateDeleted" = "Date Deleted";
 "settings.tab.keys" = "Keys";

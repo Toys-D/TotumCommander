@@ -11,8 +11,7 @@ let package = Package(
     products: [
         .executable(name: "TotumComXLApp", targets: ["TotumComXLApp"]),
         // Standalone DjVu reader bundled inside TotumComXL.app/Contents/Library.
-        .executable(name: "FCXLDjVuViewer", targets: ["FCXLDjVuViewer"]),
-        .executable(name: "FCXLMCPServer", targets: ["FCXLMCPServer"])
+        .executable(name: "FCXLDjVuViewer", targets: ["FCXLDjVuViewer"])
     ],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.0.0")
@@ -177,18 +176,6 @@ let package = Package(
             dependencies: ["FCXLBridgeObjC"],
             path: "djvuui"
         ),
-        // The wire shared by the commander and the MCP bridge — one definition, so the two
-        // can never disagree about what a message looks like.
-        .target(
-            name: "FCXLControlProtocol",
-            path: "controlprotocol"
-        ),
-        // The MCP bridge: speaks JSON-RPC on stdin/stdout, forwards to the commander's socket.
-        .executableTarget(
-            name: "FCXLMCPServer",
-            dependencies: ["FCXLControlProtocol"],
-            path: "mcpserver"
-        ),
         // Small standalone reader — shares the DjVu decoder bridge with the commander,
         // owns only its window. Ships inside the commander's bundle.
         .executableTarget(
@@ -198,7 +185,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "TotumComXLApp",
-            dependencies: ["FCXLBridgeObjC", "FCXLDjVuUI", "SwiftTerm", "FCXLControlProtocol", "FCXLScrypt"],
+            dependencies: ["FCXLBridgeObjC", "FCXLDjVuUI", "SwiftTerm", "FCXLScrypt"],
             path: "app/TotumComXL",
             sources: [
                 "App/AppDelegate.swift",
@@ -215,7 +202,6 @@ let package = Package(
                 "Services/CoreErrorCode.swift",
                 "Services/ExternalTerminalService.swift",
                 "Services/DefaultApplicationService.swift",
-                "Services/ControlServer.swift",
                 "Services/DropStackStore.swift",
                 "Services/AppUninstaller.swift",
                 "Services/AppIconCache.swift",
@@ -643,7 +629,6 @@ let package = Package(
                 "ViewModelTests/NameCellEditingTests.swift",
                 "ViewModelTests/SearchResultCapTests.swift",
                 "ViewModelTests/DefaultApplicationTests.swift",
-                "ViewModelTests/ControlServerTests.swift",
                 "ViewModelTests/DropStackTests.swift",
                 "ViewModelTests/AppUninstallerTests.swift",
                 "ViewModelTests/AppIconCacheTests.swift",

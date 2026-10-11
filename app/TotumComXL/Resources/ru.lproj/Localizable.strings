@@ -154,15 +154,6 @@
 "settings.remoteDirectToQueue" = "Remote-операции сразу в очередь";
 "settings.section.breadcrumbs" = "Хлебные крошки";
 "settings.breadcrumbSelectAll" = "Выделять весь текст при редактировании пути";
-"settings.section.control" = "Управление Клодом";
-"settings.control.enabled" = "Разрешить Клоду смотреть панели";
-"control.ask.title" = "Клод просит разрешения";
-"control.ask.allow" = "Разрешить";
-"control.ask.copy" = "Скопировать %@ в %@?";
-"control.ask.move" = "Переместить %@ в %@?";
-"control.ask.trash" = "Отправить %@ в Корзину?";
-"control.ask.mkdir" = "Создать папку %@?";
-"settings.control.hint" = "Открывает локальный сокет, доступный только этому Маку и только пока программа запущена. Клод сможет видеть, что показывают панели, и смотреть списки файлов; изменить, переместить или удалить через него нельзя. Пока не включите — выключено.";
 "column.dateAdded" = "Дата добавления";
 "column.dateDeleted" = "Дата удаления";
 "settings.tab.keys" = "Клавиши";
