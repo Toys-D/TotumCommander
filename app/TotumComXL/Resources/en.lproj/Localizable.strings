@@ -145,7 +145,7 @@
 "settings.font.cursorZoomSection" = "Font under cursor";
 "settings.font.cursorZoom" = "Enlarge the font under the cursor";
 "settings.font.cursorZoomAmount" = "Zoom amount";
-"settings.font.cursorZoomHint" = "Text on the cursor row will be larger. Neighbouring names grow part of the way — how far it carries is the “Neighbour reach” setting in Folders.";
+"settings.font.cursorZoomHint" = "Text on the cursor row will be larger. Neighbouring names grow part of the way — how far it carries is the “Neighbour reach” setting in Folders & icons.";
 "settings.section.tabsNav" = "Tabs";
 "settings.section.networkNtfs" = "Network & NTFS";
 "settings.section.ntfs" = "NTFS writing";
@@ -1288,11 +1288,11 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "file.copySuffix" = "(copy)";
 "file.copySuffixNumbered" = "(copy %d)";
 "design.cursor.customColor" = "Custom cursor color";
-"design.cursor.accentHint" = "The cursor uses the app accent color (see the Colors section). The name under the cursor is auto-contrasted for readability.";
+"design.cursor.accentHint" = "The cursor uses the app accent color (see the Design section). The name under the cursor is auto-contrasted for readability.";
 "design.section.accent" = "App accent";
 "design.color.accent" = "Accent color";
 "design.color.cursorUnder" = "Colour under cursor";
-"design.tabs.accentHint" = "The active tab uses the app accent color (see the Colors section).";
+"design.tabs.accentHint" = "The active tab uses the app accent color (see the Design section).";
 "breadcrumb.finishEdit" = "Finish editing";
 "context.enterAppBundle" = "Browse .app as a folder";
 "settings.language.restartTitle" = "Language changed";
@@ -1961,7 +1961,7 @@ A frequent culprit is Parallels Desktop (usually F6): open its Settings ▸ Shor
 "git.help.source.title" = "Where the facts come from";
 "git.help.source.body" = "The panel asks the git installed on the machine — the same one you use in the terminal. That is deliberate: a repository is not a file format but a set of rules (ignore files, the index, submodules, worktrees), and the only reader that is right about all of them is git itself.\n\nThe question is asked in the background; the panel never waits on it. The folder's own letters come first, the branch names right after (those are plain file reads, no process), and the “uncommitted” dot last: it costs one query per repository, so they run four at a time, and past forty repositories only the branch name is shown. The last twelve folders are remembered, so coming back shows the marks at once.\n\nThe program only reads. Nothing is saved, sent or changed in your history.";
 "git.help.off.title" = "If it is in the way";
-"git.help.off.body" = "Settings ▸ List ▸ “Show Git marks in the list”. It takes effect at once, no restart. Outside a repository the list looks exactly as it did without the feature: the column takes no width when there is nothing to show. Archives, remote connections, the Trash and the shelf are never asked — there is no working tree there to ask about.";
+"git.help.off.body" = "Settings ▸ List view ▸ “Show Git marks in the list”. It takes effect at once, no restart. Outside a repository the list looks exactly as it did without the feature: the column takes no width when there is nothing to show. Archives, remote connections, the Trash and the shelf are never asked — there is no working tree there to ask about.";
 
 /* Folder rules */
 "menu.tools.rules" = "Rules…";
