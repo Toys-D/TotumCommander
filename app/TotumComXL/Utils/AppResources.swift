@@ -162,6 +162,8 @@ enum AppResources {
                      // английские подписи: редактор при этом работает, молча.
                      "monaco/vs/base/browser/ui/codicons/codicon/codicon.ttf",
                      "monaco/vs/nls.messages.ru.js",
+                     // Без модулей языков весь текст в редакторе одного цвета — тоже молча.
+                     "monaco/vs/basic-languages/python/python.js", "monaco/vs/language/json/jsonMode.js",
                      "DefaultCursorMask.png", "cloud-box.png"]
         print("набор ресурсов: \(bundle.bundleURL.path)")
         guard found else {

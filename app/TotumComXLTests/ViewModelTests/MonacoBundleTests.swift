@@ -25,6 +25,23 @@ final class MonacoBundleTests: XCTestCase {
         }
     }
 
+    /// Подсветка синтаксиса: модуль каждого языка редактор подгружает, когда открыт файл на нём.
+    /// Без модуля текст остаётся одного цвета, а ошибки никто не видит.
+    func test_модулиПодсветкиВсехЯзыков_лежатВБандле() throws {
+        let main = try String(contentsOf: root.appendingPathComponent("monaco/vs/editor/editor.main.js"), encoding: .utf8)
+        let pattern = try NSRegularExpression(pattern: #"vs/basic-languages/([a-z0-9-]+)/([a-z0-9-]+)"#)
+        let modules = Set(pattern.matches(in: main, range: NSRange(main.startIndex..., in: main))
+            .compactMap { Range($0.range, in: main).map { String(main[$0]) } })
+        XCTAssertGreaterThan(modules.count, 50, "редактор знает десятки языков")
+        for module in modules {
+            let file = root.appendingPathComponent("monaco/\(module).js")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: file.path), "нет \(module).js")
+        }
+        // JSON подсвечивает не общий набор, а свой модуль.
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent("monaco/vs/language/json/jsonMode.js").path))
+    }
+
     func test_вПапкеРедактораСкрипты_аНеСтраницыОшибок() throws {
         let folder = root.appendingPathComponent("monaco")
         let scripts = (FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil)?
