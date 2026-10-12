@@ -48,6 +48,8 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
     private var tabs: [Tab] = []
     private var activeTabIndex = 0
     private var tabBar: NSView?
+    /// Подложка под текстом и строкой состояния — цветом темы текста (EditorChrome).
+    private var contentContainer: NSView?
 
     /// Paths of unsaved (dirty) tabs backed by a real file on the given volume. Archive-sourced
     /// tabs live in a temp dir (not the volume), so they're excluded — the eject warning only
@@ -92,11 +94,15 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
             guard let self, self.activeTabIndex < self.tabs.count else { return }
             self.tabs[self.activeTabIndex].language = language
         }
+        // Окно целиком — заголовок, вкладки, полосы, строка состояния — цветом темы текста.
+        viewOptions.onThemeChange = { [weak self] _ in self?.applyChrome() }
 
         // Layout: tab bar (accessory) + webView + status bar
         let contentSize = window.contentLayoutRect.size
         let statusH: CGFloat = 22
         let container = NSView(frame: NSRect(origin: .zero, size: contentSize))
+        container.wantsLayer = true
+        contentContainer = container
 
         // Status bar
         let statusBar = NSTextField(labelWithString: L("editor.status.initial"))
@@ -108,7 +114,7 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
         container.addSubview(statusBar)
 
         // Полоса поиска над текстом — пока открыта; закрытая не занимает места.
-        let findBar = NSHostingView(rootView: EditorFindBarHost(model: monaco.findModel))
+        let findBar = NSHostingView(rootView: EditorFindBarHost(model: monaco.findModel).editorChrome(viewOptions))
         findBar.sizingOptions = [.intrinsicContentSize]
         findBar.translatesAutoresizingMaskIntoConstraints = false
         // Ширину задаёт окно, а не длина подписей: узкое окно полосу прокручивает.
@@ -186,6 +192,15 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
         tabs.append(Tab(path: path, source: source, language: lang))
         activeTabIndex = 0
         updateTitle()
+        applyChrome()
+    }
+
+    /// Окно под тему текста: тёмная тема — тёмное окно со светлыми подписями, светлая — светлое.
+    /// Заголовок и вкладки берут оформление окна, подложка под текстом — ровно цвет текста.
+    private func applyChrome() {
+        let chrome = EditorChrome.forTheme(viewOptions.theme)
+        window?.appearance = chrome.appearance
+        contentContainer?.layer?.backgroundColor = chrome.background.cgColor
         renderTabBar()
     }
 
@@ -387,7 +402,8 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
         let host = NSHostingView(rootView: EditorToolbar(
             options: viewOptions,
             onFind: { [weak self] in self?.monaco.showFind() },
-            onReplace: { [weak self] in self?.monaco.showReplace() }))
+            onReplace: { [weak self] in self?.monaco.showReplace() })
+            .editorChrome(viewOptions))
         host.frame = NSRect(x: 0, y: 0, width: 900, height: 30)
         host.autoresizingMask = [.width]
         return host

@@ -416,6 +416,129 @@ struct FCXLChipButtonStyle: ButtonStyle {
     }
 }
 
+/// Кнопка полосы инструментов: значок и подпись, без подложки в покое. Под мышью и при нажатии —
+/// подложка цвета акцента, как у плашек (FCXLChipButtonStyle). Включённый переключатель
+/// («Перенос» в редакторе, «Регистр» в поиске) стоит на подложке акцента с его обводкой. Полоса
+/// из таких кнопок читается спокойно, а не стеной серых плашек.
+struct FCXLBarButtonStyle: ButtonStyle {
+    var isOn: Bool = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        Face(configuration: configuration, isOn: isOn)
+    }
+
+    private struct Face: View {
+        let configuration: Configuration
+        let isOn: Bool
+        @State private var isHovered = false
+
+        var body: some View {
+            FCXLBarItem(isOn: isOn, isHovered: isHovered, isPressed: configuration.isPressed) {
+                configuration.label
+            }
+            .onHover { isHovered = $0 }
+        }
+    }
+}
+
+/// Вид пункта полосы инструментов — один у кнопки (FCXLBarButtonStyle) и у выбора из списка
+/// (FCXLBarMenu): так они читаются одной семьёй.
+struct FCXLBarItem<Label: View>: View {
+    var isOn: Bool = false
+    var isHovered: Bool = false
+    var isPressed: Bool = false
+    @ViewBuilder let label: () -> Label
+
+    @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
+    @Environment(\.isEnabled) private var isEnabled
+
+    private var accent: Color {
+        PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple)
+    }
+
+    private var fill: Color {
+        if isPressed { return accent.opacity(0.32) }
+        if isOn { return accent.opacity(isHovered && isEnabled ? 0.34 : 0.24) }
+        return isHovered && isEnabled ? accent.opacity(0.18) : .clear
+    }
+
+    var body: some View {
+        label()
+            .font(.system(size: 11))
+            .foregroundStyle(Color.primary.opacity(isOn ? 1 : 0.82))
+            .lineLimit(1)
+            // Подпись целиком: тесно — полоса прокручивается, а не режет «Слово целиком».
+            .fixedSize()
+            .padding(.horizontal, 6)
+            .frame(height: 22)
+            .background(RoundedRectangle(cornerRadius: 5).fill(fill))
+            .overlay(RoundedRectangle(cornerRadius: 5)
+                .strokeBorder(isOn ? accent.opacity(0.75) : .clear, lineWidth: 1))
+            // Нажать нельзя — видно сразу, а не после щелчка, который ничего не сделал.
+            .opacity(isEnabled ? 1 : 0.35)
+            .contentShape(Rectangle())
+    }
+}
+
+/// Значок с подписью — содержимое пункта полосы инструментов.
+struct FCXLBarLabel: View {
+    let title: String
+    let symbol: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: symbol)
+            Text(title)
+        }
+    }
+}
+
+/// Выбор из списка на полосе инструментов — в паре с FCXLBarButtonStyle: значок, подпись и
+/// стрелка вниз. Меню — то же акцентное, что у всех списков программы, с отметкой выбранного.
+struct FCXLBarMenu<Item: Hashable>: View {
+    let items: [Item]
+    @Binding var selection: Item
+    /// Название пункта в меню.
+    let title: (Item) -> String
+    /// Значок на полосе.
+    let symbol: String
+    /// Подпись на полосе; nil — название выбранного пункта.
+    var caption: String? = nil
+    /// Подсветить как включённое: невидимые символы показаны, строка подсвечена.
+    var isOn: Bool = false
+    /// Ширина подписи — чтобы длинное название (шрифт) не растягивало полосу.
+    var captionWidth: CGFloat? = nil
+
+    @State private var isHovered = false
+
+    var body: some View {
+        FCXLMenuAnchor(present: { anchor in
+            let menu = NSMenu()
+            for item in items {
+                menu.addStyledItem(title: title(item), symbolName: item == selection ? "checkmark" : "") {
+                    selection = item
+                }
+            }
+            menu.applyAccentStyle()
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.height + 4), in: anchor)
+        }) {
+            FCXLBarItem(isOn: isOn, isHovered: isHovered) {
+                HStack(spacing: 4) {
+                    Image(systemName: symbol)
+                    Text(caption ?? title(selection))
+                        .truncationMode(.tail)
+                        .frame(width: captionWidth, alignment: .leading)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 7, weight: .bold))
+                        .opacity(0.6)
+                }
+            }
+        }
+        .onHover { isHovered = $0 }
+        .fixedSize()
+    }
+}
+
 /// Bridges "pop an NSMenu from this exact spot" into SwiftUI: the label renders as content, a
 /// click hands the backing NSView to `present`, which is what NSMenu needs to anchor itself.
 /// Internal, not private: the monitor's options menu presents its own styled NSMenu through it.

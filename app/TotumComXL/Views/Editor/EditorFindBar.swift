@@ -152,20 +152,16 @@ struct EditorFindBarHost: View {
 
 struct EditorFindBar: View {
     @ObservedObject var model: EditorFindModel
-    @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
 
-    private var accent: Color { PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple) }
-    /// Подписи полей одной ширины — поля и галочки под ними встают в одну линию.
-    private static let captionWidth: CGFloat = 84
-    private static let fieldWidth: CGFloat = 260
+    private static let fieldWidth: CGFloat = 240
 
     var body: some View {
         // Узкое место (панель в половину окна) не обрезает кнопки: полоса едет вбок.
         ScrollView(.horizontal, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    caption(L("editor.find.label"))
-                    field($model.query, focus: true) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 2) {
+                    field($model.query, symbol: "magnifyingglass", placeholder: L("editor.find.label"),
+                          focus: true) {
                         if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
                             model.previous()
                         } else {
@@ -176,71 +172,94 @@ struct EditorFindBar: View {
                     Text(model.counterText)
                         .font(.system(size: 11).monospacedDigit())
                         .foregroundStyle(model.count == 0 && !model.query.isEmpty ? Color.red : Color.secondary)
-                        .frame(minWidth: 80, alignment: .leading)
-                    Button(L("editor.find.previous")) { model.previous() }
-                        .help(L("editor.find.previous.tip"))
-                        .keyboardShortcut("g", modifiers: [.command, .shift])
-                        .disabled(!model.canStep)
-                    Button(L("editor.find.next")) { model.next() }
-                        .help(L("editor.find.next.tip"))
-                        .keyboardShortcut("g", modifiers: .command)
-                        .disabled(!model.canStep)
-                    if !model.showsReplace {
-                        Button(L("editor.find.showReplace")) { model.showsReplace = true }
+                        .lineLimit(1)
+                        .frame(minWidth: 64, alignment: .leading)
+                        .padding(.horizontal, 4)
+                    Button { model.previous() } label: {
+                        FCXLBarLabel(title: L("editor.find.previous"), symbol: "chevron.up")
                     }
-                    Button(L("common.close")) { model.close() }
-                        .help(L("editor.find.close.tip"))
+                    .help(L("editor.find.previous.tip"))
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+                    .disabled(!model.canStep)
+                    Button { model.next() } label: {
+                        FCXLBarLabel(title: L("editor.find.next"), symbol: "chevron.down")
+                    }
+                    .help(L("editor.find.next.tip"))
+                    .keyboardShortcut("g", modifiers: .command)
+                    .disabled(!model.canStep)
+                    separator
+                    option(L("editor.find.matchCase"), symbol: "textformat.alt", isOn: $model.matchCase)
+                        .help(L("editor.find.matchCase.tip"))
+                    option(L("editor.find.wholeWord"), symbol: "character.textbox", isOn: $model.wholeWord)
+                        .help(L("editor.find.wholeWord.tip"))
+                    option(L("editor.find.regex"), symbol: "asterisk", isOn: $model.isRegex)
+                        .help(L("editor.find.regex.tip"))
+                    separator
+                    if !model.showsReplace {
+                        Button { model.showsReplace = true } label: {
+                            FCXLBarLabel(title: L("editor.find.showReplace"), symbol: "arrow.left.arrow.right")
+                        }
+                        .help(L("editor.toolbar.replace.tip"))
+                    }
+                    Button { model.close() } label: {
+                        FCXLBarLabel(title: L("common.close"), symbol: "xmark")
+                    }
+                    .help(L("editor.find.close.tip"))
                 }
                 if model.showsReplace {
-                    HStack(spacing: 6) {
-                        caption(L("editor.find.replaceLabel"))
-                        field($model.replacement, focus: false) { model.replaceOne() }
-                        Button(L("editor.find.replace")) { model.replaceOne() }
-                            .help(L("editor.find.replace.tip"))
-                            .disabled(!model.canStep)
-                        Button(L("editor.find.replaceAll")) { model.replaceAll() }
-                            .help(L("editor.find.replaceAll.tip"))
-                            .disabled(!model.canStep)
+                    HStack(spacing: 2) {
+                        field($model.replacement, symbol: "arrow.left.arrow.right",
+                              placeholder: L("editor.find.replaceLabel"), focus: false) { model.replaceOne() }
+                        Button { model.replaceOne() } label: {
+                            FCXLBarLabel(title: L("editor.find.replace"), symbol: "arrow.right")
+                        }
+                        .help(L("editor.find.replace.tip"))
+                        .disabled(!model.canStep)
+                        Button { model.replaceAll() } label: {
+                            FCXLBarLabel(title: L("editor.find.replaceAll"), symbol: "arrow.right.to.line")
+                        }
+                        .help(L("editor.find.replaceAll.tip"))
+                        .disabled(!model.canStep)
                     }
                 }
-                HStack(spacing: 6) {
-                    Color.clear.frame(width: Self.captionWidth, height: 1)
-                    option(L("editor.find.matchCase"), isOn: $model.matchCase)
-                    option(L("editor.find.wholeWord"), isOn: $model.wholeWord)
-                    option(L("editor.find.regex"), isOn: $model.isRegex)
-                }
             }
-            .buttonStyle(FCXLChipButtonStyle(compact: true))
+            .buttonStyle(FCXLBarButtonStyle())
             .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.vertical, 5)
         }
     }
 
-    private func caption(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .frame(width: Self.captionWidth, alignment: .trailing)
+    /// Поле со значком вместо подписи слева: лупа — искомое, стрелки — замена. Пустое поле
+    /// говорит своё назначение подсказкой внутри.
+    private func field(_ text: Binding<String>, symbol: String, placeholder: String, focus: Bool,
+                       onSubmit: @escaping () -> Void) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+            FCXLDialogTextField(text: text, placeholder: placeholder, focusOnAppear: focus,
+                                initialSelection: .all, onSubmit: onSubmit, onCancel: { model.close() },
+                                fontSize: 12)
+        }
+        .padding(.horizontal, 7)
+        .frame(width: Self.fieldWidth, height: 24)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.07)))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.16), lineWidth: 0.5))
+        .padding(.trailing, 2)
     }
 
-    private func field(_ text: Binding<String>, focus: Bool, onSubmit: @escaping () -> Void) -> some View {
-        FCXLDialogTextField(text: text, focusOnAppear: focus, initialSelection: .all,
-                            onSubmit: onSubmit, onCancel: { model.close() }, fontSize: 12)
-            .padding(.horizontal, 6)
-            .frame(width: Self.fieldWidth, height: 22)
-            .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.06)))
-            .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.primary.opacity(0.18), lineWidth: 0.5))
-    }
-
-    /// Галочка словами: «Учитывать регистр», а не «Aa».
-    private func option(_ title: String, isOn: Binding<Bool>) -> some View {
+    /// Переключатель поиска: значок и подпись, включённый — на подложке акцента.
+    private func option(_ title: String, symbol: String, isOn: Binding<Bool>) -> some View {
         Button { isOn.wrappedValue.toggle() } label: {
-            HStack(spacing: 4) {
-                Image(systemName: isOn.wrappedValue ? "checkmark.square.fill" : "square")
-                    .foregroundStyle(isOn.wrappedValue ? accent : Color.secondary)
-                Text(title)
-            }
+            FCXLBarLabel(title: title, symbol: symbol)
         }
+        .buttonStyle(FCXLBarButtonStyle(isOn: isOn.wrappedValue))
+    }
+
+    private var separator: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.14))
+            .frame(width: 1, height: 14)
+            .padding(.horizontal, 4)
     }
 }

@@ -32,26 +32,30 @@ struct EmbeddedEditorPanel: View {
                     Text("•").foregroundColor(.orange)
                 }
                 Spacer()
-                // Словами, как и вся полоса: значки дискеты и крестика приходилось угадывать.
-                Button(L("button.save")) {
+                // Значок и подпись, как вся полоса: одни значки дискеты и крестика приходилось угадывать.
+                Button {
                     controller.save(to: filePath) { saved in
                         if saved { isDirty = false }
                     }
+                } label: {
+                    FCXLBarLabel(title: L("button.save"), symbol: "square.and.arrow.down")
                 }
-                .buttonStyle(FCXLChipButtonStyle(compact: true))
+                .buttonStyle(FCXLBarButtonStyle())
                 .disabled(!isDirty).help(L("editor.save.tooltip"))
 
-                Button(L("common.close")) {
+                Button {
                     handleClose()
+                } label: {
+                    FCXLBarLabel(title: L("common.close"), symbol: "xmark")
                 }
-                .buttonStyle(FCXLChipButtonStyle(compact: true))
+                .buttonStyle(FCXLBarButtonStyle())
             }
             .padding(.horizontal, 8)
             .frame(height: 28)
 
             Divider()
 
-            // Toolbar — общая с окном F4: каждая кнопка подписана словами.
+            // Toolbar — общая с окном F4: у каждой кнопки значок и подпись.
             EditorToolbar(options: controller.options,
                           onFind: { controller.monaco?.showFind() },
                           onReplace: { controller.monaco?.showReplace() })
@@ -79,6 +83,9 @@ struct EmbeddedEditorPanel: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
         }
+        // Вся рамка — заголовок, полосы, строка состояния — цветом текста: у тёмной темы тёмная,
+        // а не серая подложка панели с чёрными подписями.
+        .editorChrome(controller.options)
         .onAppear {
             controller.source = source
             controller.options.language = MonacoEditorController.detectLanguage(for: filePath)
