@@ -430,6 +430,7 @@ let package = Package(
                 "Views/Tabs/PanelTabsBarView.swift",
                 "Views/Tabs/TabChipView.swift",
                 "Views/Tabs/TabLook.swift",
+                "Views/MainWindow/TitlebarButton.swift",
                 "Views/Common/OperationQueuePanel.swift",
                 "Views/Common/SharePanelHint.swift",
                 "Views/Common/QueueOperationsBar.swift",

@@ -264,6 +264,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         // Стиль окна — вместе с видом панели: в узкой полосе заголовка подписей не бывает.
         window.toolbarStyle = look.windowStyle
         window.toolbar = toolbar
+        // macOS 26+: кнопки — своим рядом в строке заголовка, панель пустая (ради высоты).
+        if ToolbarLook.usesTitlebarRow {
+            installTitlebarRow(look: look)
+        } else {
+            removeTitlebarRow()
+        }
     }
 
     // MARK: - NSToolbarDelegate
@@ -274,15 +280,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         return item
     }
 
-    /// Кнопка панели: значок и подпись в одну строку, подпись справа — одна большая кнопка,
-    /// а не значок с подписью под ним; без подписей — один значок. Своё вью у пункта всегда,
+    /// Кнопка строки заголовка: значок и подпись в одну строку, подпись справа — одна большая
+    /// кнопка, а не значок с подписью под ним; без подписей — один значок. Без рамки: под мышью
+    /// кнопка приподнимается и берёт акцентный цвет (TitlebarButton). Своё вью у кнопки всегда,
     /// потому что только вью можно перекрасить под тёмный фон заголовка — см. dress.
-    static func toolbarButton(label: String, image: NSImage?, look: ToolbarLook) -> NSButton {
-        let button = NSButton(title: label, target: nil, action: nil)
-        button.bezelStyle = .toolbar
-        // The frame only under the mouse, as a toolbar item draws it — always on, it outlined
-        // every button like a form control.
-        button.showsBorderOnlyWhileMouseInside = true
+    static func toolbarButton(label: String, image: NSImage?, look: ToolbarLook) -> TitlebarButton {
+        let button = TitlebarButton(title: label, target: nil, action: nil)
+        button.isBordered = false
         button.font = .systemFont(ofSize: 12)
         if look.showsIcon, let image {
             button.image = image
@@ -291,17 +295,15 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         } else {
             button.imagePosition = .noImage
         }
-        button.sizeToFit()
+        button.restingTint = .secondaryLabelColor
+        // Рамка — с полями (intrinsicContentSize): панель на Sequoia берёт размер вью по рамке.
+        button.setFrameSize(button.intrinsicContentSize)
         return button
     }
 
     /// Одеть пункт по выбранному виду: пункт получает свою кнопку, она же становится целью
     /// нажатия — и несёт облик, который читается на нынешнем цвете заголовка.
     private func dress(_ item: NSToolbarItem, look: ToolbarLook) {
-        if ToolbarLook.usesPlainItems {
-            dressPlain(item)
-            return
-        }
         // A line between buttons has its view already; it takes the appearance all the same —
         // a dark line on a dark titlebar is no line at all.
         guard item.view == nil else { item.view?.appearance = toolbarAppearance; return }
@@ -310,70 +312,94 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         button.action = item.action
         button.toolTip = item.toolTip
         button.appearance = toolbarAppearance
+        button.titlebarBackground = titlebarBackgroundColor
         item.view = button
     }
 
-    /// Пункт-картинка без рамки (macOS 26+, одни значки): такой система на стекло не кладёт —
-    /// см. ToolbarLook.usesPlainItems. Черта между группами — тоже картинкой: своё вью попало
-    /// бы на стекло отдельным пятном.
-    private func dressPlain(_ item: NSToolbarItem) {
-        item.isBordered = false
-        if item.view != nil {
-            item.view = nil
-            toolbarSourceImages[item.itemIdentifier] = Self.separatorLineImage()
-        } else {
-            toolbarSourceImages[item.itemIdentifier] = item.image
+    // MARK: - Ряд кнопок в строке заголовка (macOS 26+)
+
+    /// Ряд кнопок в строке заголовка — на macOS 26 и новее вместо пунктов панели (см.
+    /// ToolbarLook.usesTitlebarRow): те же кнопки, тот же порядок, те же черты между группами,
+    /// но расстояние и наведение свои, а не системные.
+    private var titlebarRowAccessory: NSTitlebarAccessoryViewController?
+    private var titlebarRow: NSStackView?
+    /// Кнопки ряда по идентификатору пункта: картинку и подсказку меняют по нему.
+    private var titlebarButtons: [NSToolbarItem.Identifier: TitlebarButton] = [:]
+    /// Расстояние между кнопками ряда: сами кнопки с полями, поэтому зазор маленький.
+    static let titlebarRowSpacing: CGFloat = 2
+
+    private func removeTitlebarRow() {
+        if let window, let accessory = titlebarRowAccessory,
+           let index = window.titlebarAccessoryViewControllers.firstIndex(of: accessory) {
+            window.removeTitlebarAccessoryViewController(at: index)
         }
-        applyPlainImage(to: item)
+        titlebarRowAccessory = nil
+        titlebarRow = nil
+        titlebarButtons = [:]
     }
 
-    /// Перекрасить кнопку-картинку под нынешний заголовок: своего облика, как у вью, у неё нет.
-    private func applyPlainImage(to item: NSToolbarItem) {
-        guard let source = toolbarSourceImages[item.itemIdentifier] else {
-            item.image = nil
-            return
+    private func installTitlebarRow(look: ToolbarLook) {
+        guard let window else { return }
+        removeTitlebarRow()
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = Self.titlebarRowSpacing
+        row.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
+        for id in Self.toolbarItemOrder(separators: ToolbarLook.showsSeparators) {
+            if id.rawValue.hasPrefix(Self.separatorPrefix) {
+                row.addArrangedSubview(TitlebarSeparator())
+                continue
+            }
+            // Тот же пункт, что дала бы панель: подпись, картинка, цель, подсказка — из одного места.
+            guard let item = makeToolbarItem(id) else { continue }
+            let button = Self.toolbarButton(label: item.label, image: item.image, look: look)
+            button.target = item.target
+            button.action = item.action
+            button.toolTip = item.toolTip
+            button.titlebarBackground = titlebarBackgroundColor
+            titlebarButtons[id] = button
+            row.addArrangedSubview(button)
         }
-        let isLine = item.itemIdentifier.rawValue.hasPrefix(Self.separatorPrefix)
-        item.image = Self.plainToolbarImage(source, color: isLine ? .separatorColor : .secondaryLabelColor,
-                                            appearance: titlebarIconAppearance)
+        row.appearance = toolbarAppearance
+        row.translatesAutoresizingMaskIntoConstraints = false
+        let holder = NSView()
+        holder.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: holder.trailingAnchor),
+            row.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
+        ])
+        holder.frame = NSRect(x: 0, y: 0, width: row.fittingSize.width, height: 28)
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.layoutAttribute = .trailing
+        accessory.view = holder
+        window.addTitlebarAccessoryViewController(accessory)
+        titlebarRowAccessory = accessory
+        titlebarRow = row
     }
 
-    /// Шаблонный значок — в цвет `color`, каким он выходит в облике `appearance`. Картинка со
-    /// своими цветами (поднос со счётчиком, шестерёнка с точкой) — как есть: она уже испечена
-    /// в этом облике.
-    static func plainToolbarImage(_ image: NSImage, color: NSColor, appearance: NSAppearance?) -> NSImage {
-        guard image.isTemplate else { return image }
-        // Цвет — числами того облика сейчас: картинка рисуется позже, уже в облике панели.
-        var resolved = color.usingColorSpace(.sRGB) ?? color
-        appearance?.performAsCurrentDrawingAppearance {
-            resolved = color.usingColorSpace(.sRGB) ?? color
-        }
-        let tinted = NSImage(size: image.size, flipped: false) { rect in
-            image.draw(in: rect)
-            resolved.set()
-            // sourceIn, как у подноса полки: от значка остаётся только форма, цвет — наш.
-            rect.fill(using: .sourceIn)
-            return true
-        }
-        tinted.isTemplate = false
-        return tinted
-    }
-
-    /// Черта между группами для кнопок-картинок — шаблоном; цвет даёт plainToolbarImage.
-    static func separatorLineImage() -> NSImage {
-        let size = NSSize(width: 11, height: 24)
-        let image = NSImage(size: size, flipped: false) { _ in
-            NSColor.black.setFill()
-            NSRect(x: 5, y: 3, width: 1, height: size.height - 6).fill()
-            return true
-        }
-        image.isTemplate = true
-        return image
+    /// Ширина ряда — по кнопкам: поднос со счётчиком шире пустого.
+    private func fitTitlebarRow() {
+        guard let row = titlebarRow, let holder = row.superview else { return }
+        holder.setFrameSize(NSSize(width: row.fittingSize.width, height: holder.frame.height))
     }
 
     /// Облик кнопок панели под цвет заголовка: на тёмном заголовке — тёмный, чтобы подписи и
     /// значки стали светлыми; nil — цвет не задан, кнопки следуют окну.
     private var toolbarAppearance: NSAppearance?
+
+    /// Цвет строки заголовка — для выделения кнопок под мышью (TitlebarButton.hoverLook).
+    private var titlebarBackgroundColor: NSColor?
+
+    /// Системный фон окна в цифрах нужной темы.
+    static func windowBackground(dark: Bool) -> NSColor {
+        var color = NSColor.windowBackgroundColor
+        NSAppearance(named: dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
+            color = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) ?? NSColor.windowBackgroundColor
+        }
+        return color
+    }
 
     /// Облик, в котором значки панели читаются на нынешнем заголовке: по контрасту с его
     /// цветом, а если цвет не задан — по теме. В нём же пекутся поднос полки и шестерёнка,
@@ -382,21 +408,29 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         toolbarAppearance ?? PanelAppearanceSettings.chromeAppearance(for: window)
     }
 
-    /// Картинки пунктов до перекраски — у кнопок-картинок: при смене цвета заголовка или темы
-    /// они перекрашиваются из них заново.
-    private var toolbarSourceImages: [NSToolbarItem.Identifier: NSImage] = [:]
-
-    /// Картинка пункта — и в самом пункте, и в его кнопке с подписью, если она есть; у
-    /// кнопки-картинки — перекрашенная под заголовок.
-    private func setToolbarImage(_ image: NSImage?, on item: NSToolbarItem) {
-        if ToolbarLook.usesPlainItems {
-            toolbarSourceImages[item.itemIdentifier] = image
-            applyPlainImage(to: item)
+    /// Картинка кнопки — в ряду заголовка или в пункте панели и его кнопке.
+    private func setTitlebarImage(_ image: NSImage?, for id: NSToolbarItem.Identifier) {
+        let showsIcon = ToolbarLook.chosen.showsIcon
+        if let button = titlebarButtons[id] {
+            if showsIcon {
+                button.image = image
+                fitTitlebarRow()
+            }
             return
         }
+        guard let item = window?.toolbar?.items.first(where: { $0.itemIdentifier == id }) else { return }
         item.image = image
-        if let button = item.view as? NSButton, ToolbarLook.chosen.showsIcon {
+        if let button = item.view as? NSButton, showsIcon {
             button.image = image
+        }
+    }
+
+    /// Подсказка кнопки — там же.
+    private func setTitlebarToolTip(_ tip: String, for id: NSToolbarItem.Identifier) {
+        titlebarButtons[id]?.toolTip = tip
+        if let item = window?.toolbar?.items.first(where: { $0.itemIdentifier == id }) {
+            item.toolTip = tip
+            item.view?.toolTip = tip
         }
     }
 
@@ -490,11 +524,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.flexibleSpaceID] + Self.toolbarItemOrder(separators: ToolbarLook.showsSeparators)
+        // macOS 26+: кнопки — в ряду заголовка, панель пустая (держит высоту заголовка).
+        guard !ToolbarLook.usesTitlebarRow else { return [Self.flexibleSpaceID] }
+        return [Self.flexibleSpaceID] + Self.toolbarItemOrder(separators: ToolbarLook.showsSeparators)
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        Self.toolbarItemOrder(separators: true) + [Self.flexibleSpaceID]
+        guard !ToolbarLook.usesTitlebarRow else { return [Self.flexibleSpaceID] }
+        return Self.toolbarItemOrder(separators: true) + [Self.flexibleSpaceID]
     }
 
     /// Кнопки панели: полка, корзина, монитор, диски, тема, скрытые файлы, настройки —
@@ -627,11 +664,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         UserDefaults.standard.set(showHiddenFiles, forKey: "showHiddenFiles")
         splitVC.setShowHiddenFiles(showHiddenFiles)
 
-        if let toolbar = window?.toolbar,
-           let item = toolbar.items.first(where: { $0.itemIdentifier == Self.hiddenFilesItemID }) {
-            setToolbarImage(NSImage(systemSymbolName: showHiddenFiles ? "eye.fill" : "eye.slash",
-                                  accessibilityDescription: nil), on: item)
-        }
+        setTitlebarImage(NSImage(systemSymbolName: showHiddenFiles ? "eye.fill" : "eye.slash",
+                                 accessibilityDescription: nil), for: Self.hiddenFilesItemID)
     }
 
     /// Quick light/dark toggle. The full 3-way choice (incl. "follow system") lives in
@@ -681,11 +715,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         // between them, now and whenever the colour changes.
         let onTitlebar = titlebarColor ?? (hasCustom ? window.backgroundColor : nil)
         toolbarAppearance = ContrastAppearance.appearance(on: onTitlebar)
+        // Цвет заголовка — кнопкам: по нему они выбирают выделение под мышью. Без своего цвета —
+        // системный фон окна этой темы.
+        titlebarBackgroundColor = onTitlebar ?? Self.windowBackground(dark: dark)
+        titlebarButtons.values.forEach { $0.titlebarBackground = titlebarBackgroundColor }
+        window.toolbar?.items.forEach { ($0.view as? TitlebarButton)?.titlebarBackground = titlebarBackgroundColor }
         window.toolbar?.items.forEach { $0.view?.appearance = toolbarAppearance }
-        // Кнопки-картинки (macOS 26+) своего облика не имеют — их значки перекрашиваются.
-        if ToolbarLook.usesPlainItems {
-            window.toolbar?.items.forEach { applyPlainImage(to: $0) }
-        }
+        // Ряд кнопок в строке заголовка (macOS 26+) — тот же облик.
+        titlebarRow?.appearance = toolbarAppearance
         // The window's NAME too: the titlebar draws it, so the titlebar takes the same
         // appearance — the whole strip reads on its colour, name and buttons alike.
         Self.titlebarView(of: window)?.appearance = toolbarAppearance
@@ -705,11 +742,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
     }
 
     private func setThemeIcon(dark: Bool) {
-        guard let toolbar = window?.toolbar,
-              let item = toolbar.items.first(where: { $0.itemIdentifier == Self.themeItemID })
-        else { return }
-        setToolbarImage(NSImage(systemSymbolName: dark ? "moon.fill" : "sun.max.fill",
-                              accessibilityDescription: nil), on: item)
+        setTitlebarImage(NSImage(systemSymbolName: dark ? "moon.fill" : "sun.max.fill",
+                                 accessibilityDescription: nil), for: Self.themeItemID)
     }
 
     /// A drive glyph with an ⓘ badge at its lower-right — "properties of the DISK", not "help".
@@ -804,14 +838,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
 
     /// Keep the number on the shelf button honest.
     func refreshDropStackButton() {
-        guard let item = window?.toolbar?.items.first(where: { $0.itemIdentifier == Self.stackItemID })
-        else { return }
         let count = DropStackStore.count
-        setToolbarImage(Self.dropStackSymbol(count: count,
-                                           appearance: titlebarIconAppearance),
-                      on: item)
-        item.toolTip = count > 0 ? "\(L("stack.title")) (\(count))" : L("stack.tooltip")
-        item.view?.toolTip = item.toolTip
+        setTitlebarImage(Self.dropStackSymbol(count: count, appearance: titlebarIconAppearance),
+                         for: Self.stackItemID)
+        setTitlebarToolTip(count > 0 ? "\(L("stack.title")) (\(count))" : L("stack.tooltip"),
+                           for: Self.stackItemID)
     }
 
     /// A tray, and — when the shelf holds anything — how many, in a pill of the app's own
@@ -906,15 +937,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
 
     /// Redraw the gear when a check changes what is known.
     func refreshSettingsButton() {
-        guard let item = window?.toolbar?.items.first(where: { $0.itemIdentifier == Self.settingsItemID })
-        else { return }
         let release = UpdateChecker.shared.available
-        setToolbarImage(Self.settingsSymbol(updateAvailable: release != nil,
-                                          appearance: titlebarIconAppearance),
-                      on: item)
-        item.toolTip = release.map { String(format: L("settings.updates.badgeTip"), $0.version) }
-            ?? L("settings.title")
-        item.view?.toolTip = item.toolTip
+        setTitlebarImage(Self.settingsSymbol(updateAvailable: release != nil, appearance: titlebarIconAppearance),
+                         for: Self.settingsItemID)
+        setTitlebarToolTip(release.map { String(format: L("settings.updates.badgeTip"), $0.version) }
+                               ?? L("settings.title"),
+                           for: Self.settingsItemID)
     }
 
     /// Uninstall a program: find what it left, show the list, and put what was ticked in the

@@ -47,7 +47,7 @@ final class ToolbarLookTests: XCTestCase {
         XCTAssertEqual(both.title, "Полка")
         XCTAssertNotNil(both.image)
         XCTAssertEqual(both.imagePosition, .imageLeading, "подпись справа от значка")
-        XCTAssertTrue(both.showsBorderOnlyWhileMouseInside, "рамка только под мышью, как у пункта панели")
+        XCTAssertFalse(both.isBordered, "без рамки: под мышью кнопка приподнимается и берёт акцент")
         XCTAssertGreaterThan(both.fittingSize.width, both.fittingSize.height, "кнопка лежит, а не стоит")
 
         let labelOnly = MainWindowController.toolbarButton(label: "Полка", image: image, look: .labels)
@@ -214,49 +214,92 @@ final class ToolbarLookTests: XCTestCase {
 
     // MARK: - macOS 26 и новее
 
-    /// Пункт со своим вью система кладёт на стекло, и кнопки сливаются в одну капсулу; картинка
-    /// без рамки на стекло не попадает. Подписи рисует только своё вью — им стекло остаётся.
-    func test_наНовыхСистемахОдниЗначкиСтановятсяКартинками() {
-        XCTAssertTrue(ToolbarLook.usesPlainItems(look: .icons, systemMajor: 26), "Tahoe")
-        XCTAssertTrue(ToolbarLook.usesPlainItems(look: .icons, systemMajor: 27))
-        XCTAssertFalse(ToolbarLook.usesPlainItems(look: .icons, systemMajor: 15), "Sequoia — как было, своим вью")
-        XCTAssertFalse(ToolbarLook.usesPlainItems(look: .iconsAndLabels, systemMajor: 27), "подпись — только своим вью")
-        XCTAssertFalse(ToolbarLook.usesPlainItems(look: .labels, systemMajor: 27))
+    /// На macOS 26+ кнопки — своим рядом в строке заголовка: пункт панели со своим вью система
+    /// кладёт на стекло, а пункт-картинку расставляет широко и рисует наведение сама.
+    func test_наНовыхСистемахКнопкиСвоимРядомВЗаголовке() {
+        XCTAssertTrue(ToolbarLook.usesTitlebarRow(systemMajor: 26), "Tahoe")
+        XCTAssertTrue(ToolbarLook.usesTitlebarRow(systemMajor: 27))
+        XCTAssertFalse(ToolbarLook.usesTitlebarRow(systemMajor: 15), "Sequoia — пункты панели, как было")
     }
 
-    /// Своего облика у кнопки-картинки нет, поэтому значок красится под заголовок заранее: на
-    /// тёмном — светлый, на светлом — тёмный. Картинка со своими цветами остаётся как есть.
-    func test_значокКартинкиКраситсяПодЗаголовок() throws {
-        let symbol = try XCTUnwrap(NSImage(systemSymbolName: "trash", accessibilityDescription: nil))
-        func brightness(_ appearance: NSAppearance.Name) throws -> CGFloat {
-            let image = MainWindowController.plainToolbarImage(symbol, color: .secondaryLabelColor,
-                                                               appearance: NSAppearance(named: appearance))
-            XCTAssertFalse(image.isTemplate, "цвет уже в картинке: панель не перекрасит её по-своему")
-            let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64,
-                                                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
-                                                     isPlanar: false, colorSpaceName: .deviceRGB,
-                                                     bytesPerRow: 0, bitsPerPixel: 0))
-            NSGraphicsContext.saveGraphicsState()
-            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-            image.draw(in: NSRect(x: 0, y: 0, width: 64, height: 64))
-            NSGraphicsContext.restoreGraphicsState()
-            var best: CGFloat = 0, value: CGFloat = 0
-            for x in 0..<64 { for y in 0..<64 {
-                guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > best else { continue }
-                best = c.alphaComponent
-                value = (c.redComponent + c.greenComponent + c.blueComponent) / 3
-            } }
-            XCTAssertGreaterThan(best, 0.3, "значок нарисован")
-            return value
-        }
-        XCTAssertGreaterThan(try brightness(.darkAqua), 0.5, "на тёмном заголовке — светлый значок")
-        XCTAssertLessThan(try brightness(.aqua), 0.5, "на светлом — тёмный")
+    /// Под мышью кнопка берёт акцентный цвет и приподнимается; мышь ушла — всё как было.
+    func test_наведениеКрасит_иПриподнимает() throws {
+        let image = try XCTUnwrap(NSImage(systemSymbolName: "trash", accessibilityDescription: nil))
+        let button = MainWindowController.toolbarButton(label: "Корзина", image: image, look: .icons)
+        XCTAssertEqual(button.lift, 0)
+        XCTAssertEqual(button.currentTint, .secondaryLabelColor)
+        button.setHovered(true, animated: false)
+        XCTAssertEqual(button.lift, TitlebarButton.hoverLift)
+        XCTAssertEqual(button.currentTint, PanelAppearanceSettings.accentNSColor, "акцентный цвет")
+        XCTAssertEqual(button.contentTintColor, PanelAppearanceSettings.accentNSColor)
+        button.setHovered(false, animated: false)
+        XCTAssertEqual(button.lift, 0)
+        XCTAssertEqual(button.contentTintColor, .secondaryLabelColor)
+    }
 
-        let baked = NSImage(size: NSSize(width: 4, height: 4))
-        baked.isTemplate = false
-        XCTAssertTrue(MainWindowController.plainToolbarImage(baked, color: .secondaryLabelColor,
-                                                             appearance: nil) === baked,
-                      "поднос со счётчиком и шестерёнка с точкой уже испечены — как есть")
-        XCTAssertTrue(MainWindowController.separatorLineImage().isTemplate, "черта красится, как значки")
+    /// Приподнятая кнопка рисует значок ВЫШЕ, а не ниже, и есть куда — поля вокруг значка.
+    func test_приподнятыйЗначокРисуетсяВыше() throws {
+        let image = try XCTUnwrap(NSImage(systemSymbolName: "trash", accessibilityDescription: nil))
+        let button = MainWindowController.toolbarButton(label: "Корзина", image: image, look: .icons)
+        button.contentTintColor = .black
+        XCTAssertGreaterThanOrEqual(button.frame.height, button.image!.size.height + TitlebarButton.padding.height,
+                                    "поля сверху и снизу")
+        func topInk(lift: CGFloat) throws -> Int {
+            button.lift = lift
+            let rep = try XCTUnwrap(button.bitmapImageRepForCachingDisplay(in: button.bounds))
+            button.cacheDisplay(in: button.bounds, to: rep)
+            for y in 0..<rep.pixelsHigh {            // строки сверху вниз
+                for x in 0..<rep.pixelsWide where (rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.3 {
+                    return y
+                }
+            }
+            return -1
+        }
+        let resting = try topInk(lift: 0)
+        let lifted = try topInk(lift: TitlebarButton.hoverLift)
+        XCTAssertGreaterThan(resting, 0, "значок нарисован")
+        XCTAssertLessThan(lifted, resting, "приподнятый — выше: \(lifted) против \(resting)")
+    }
+
+    /// Акцент, сливающийся с заголовком, ничего не выделяет — тогда свечение цветом, контрастным
+    /// заголовку. Цвета — из набора автора.
+    func test_выделениеПодМышью_акцентИлиСвечениеПоКонтрасту() {
+        func hex(_ value: String) -> NSColor { PanelAppearanceSettings.nsColor(from: value, fallback: .clear) }
+        XCTAssertEqual(TitlebarButton.hoverLook(accent: hex("#59676F"), background: hex("#5A666F")), .glow(.white),
+                       "светлая тема: акцент сливается с грифельным заголовком — белое свечение")
+        guard case .accent = TitlebarButton.hoverLook(accent: hex("#86A67C"), background: hex("#434343")) else {
+            return XCTFail("тёмная тема: зелёный акцент на сером виден — акцентом")
+        }
+        XCTAssertEqual(TitlebarButton.hoverLook(accent: hex("#E6E6E6"), background: hex("#ECECEC")), .glow(.black),
+                       "на светлом заголовке — тёмное свечение")
+    }
+
+    /// Свечение — вокруг значка: под мышью закрашено больше, чем в покое.
+    func test_свечениеРисуетсяВокругЗначка() throws {
+        let image = try XCTUnwrap(NSImage(systemSymbolName: "trash", accessibilityDescription: nil))
+        let button = MainWindowController.toolbarButton(label: "Корзина", image: image, look: .icons)
+        button.titlebarBackground = PanelAppearanceSettings.accentNSColor   // акцент сливается — свечение
+        func inked(hovered: Bool) throws -> Int {
+            button.setHovered(hovered, animated: false)
+            let rep = try XCTUnwrap(button.bitmapImageRepForCachingDisplay(in: button.bounds))
+            button.cacheDisplay(in: button.bounds, to: rep)
+            var count = 0
+            for x in 0..<rep.pixelsWide { for y in 0..<rep.pixelsHigh
+                where (rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.05 { count += 1 } }
+            return count
+        }
+        let resting = try inked(hovered: false)
+        let glowing = try inked(hovered: true)
+        guard case .glow = button.hoverLook else { return XCTFail("ждали свечение") }
+        XCTAssertGreaterThan(glowing, resting + resting / 4, "свечение вокруг значка: \(glowing) против \(resting)")
+
+        // Акцент заметен на заголовке — свечение тоже есть, акцентного цвета.
+        button.setHovered(false, animated: false)
+        let accent = PanelAppearanceSettings.accentNSColor
+        button.titlebarBackground = ContrastAppearance.isDark(accent) ? .white : .black
+        guard case .accent = button.hoverLook else { return XCTFail("ждали акцент") }
+        let accentGlow = try inked(hovered: true)
+        XCTAssertGreaterThan(accentGlow, resting + resting / 4, "свечение акцентного цвета: \(accentGlow) против \(resting)")
     }
 }
+

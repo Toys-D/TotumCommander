@@ -40,18 +40,20 @@ enum ToolbarLook: String, CaseIterable {
     /// заголовок в середину и делали окно выше — человеку это не понравилось.
     var windowStyle: NSWindow.ToolbarStyle { .unifiedCompact }
 
-    /// Кнопки — картинками без рамки, а не своими вью.
+    /// Кнопки — своим рядом в строке заголовка, а не пунктами панели.
     ///
-    /// На macOS 26 и новее пункт со своим вью система кладёт на стекло, и соседние кнопки
-    /// сливаются в одну стеклянную капсулу с перегородками. Пункт с одной картинкой и без рамки
-    /// на стекло не попадает (проверено на macOS 27) — так панель выглядит, как до Tahoe.
-    /// Подпись рядом со значком рисует только своё вью, поэтому так — лишь при «одних значках».
-    static func usesPlainItems(look: ToolbarLook, systemMajor: Int) -> Bool {
-        look == .icons && systemMajor >= 26
+    /// На macOS 26 и новее пункт панели со своим вью система кладёт на стекло — кнопки слипаются
+    /// в одну стеклянную капсулу с перегородками; пункт-картинку без вью система кладёт без
+    /// стекла, но сама расставляет широко и сама рисует наведение. Дополнение строки заголовка
+    /// (NSTitlebarAccessoryViewController) на стекло не попадает (проверено на 27): расстояние и
+    /// наведение там свои. Панель остаётся пустой — ради высоты заголовка. На Sequoia кнопки —
+    /// пункты панели, как всегда.
+    static func usesTitlebarRow(systemMajor: Int) -> Bool {
+        systemMajor >= 26
     }
 
-    static var usesPlainItems: Bool {
-        usesPlainItems(look: chosen, systemMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+    static var usesTitlebarRow: Bool {
+        usesTitlebarRow(systemMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
     }
 
     /// Что выбрано сейчас; неизвестное значение — как было всегда, одни значки.
