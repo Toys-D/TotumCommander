@@ -5175,10 +5175,9 @@ final class MainContainerViewController: NSViewController {
         topSeparator.layer?.backgroundColor = NSColor.separatorColor.cgColor
         container.addSubview(topSeparator)
 
-        let separator = NSView()
+        // Цветом каймы туннеля — мягкий серый в светлой теме, белая в тёмной (TunnelBorderLine).
+        let separator = TunnelBorderLine()
         separator.translatesAutoresizingMaskIntoConstraints = false
-        separator.wantsLayer = true
-        separator.layer?.backgroundColor = NSColor.separatorColor.cgColor
         container.addSubview(separator)
 
         let footerHosting = NSHostingView(rootView: footerBar)

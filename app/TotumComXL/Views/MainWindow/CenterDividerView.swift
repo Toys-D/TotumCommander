@@ -221,6 +221,23 @@ struct CenterDividerView: View {
     @AppStorage("dividerShowQuickLinks") private var dividerShowQuickLinks: Bool = true
     @AppStorage("dividerBorderOpacity") private var dividerBorderOpacity: Double = 0.15
     @AppStorage("dividerBorderWidth") private var dividerBorderWidth: Double = 1
+    // Цвет каймы зависит от фона туннеля и цвета заголовка этой темы — перерисовать, когда они
+    // меняются или меняется сама тема.
+    @AppStorage(PanelAppearanceSettings.interfaceColorHexLightKey) private var interfaceLightHex = ""
+    @AppStorage(PanelAppearanceSettings.interfaceColorHexDarkKey) private var interfaceDarkHex = ""
+    @AppStorage(PanelAppearanceSettings.titlebarColorHexLightKey) private var titlebarLightHex = ""
+    @AppStorage(PanelAppearanceSettings.titlebarColorHexDarkKey) private var titlebarDarkHex = ""
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Кайма по краям туннеля (TunnelBorder): на светлом фоне — цветом заголовка этой темы.
+    private var borderColor: Color {
+        _ = colorScheme
+        let dark = PanelAppearanceSettings.isDarkAppearance
+        let background = TunnelBorder.resolved(PanelAppearanceSettings.interfaceNSColor(dark: dark), dark: dark)
+        return Color(nsColor: TunnelBorder.color(background: background,
+                                                 titlebar: PanelAppearanceSettings.titlebarNSColor(dark: dark),
+                                                 opacity: dividerBorderOpacity))
+    }
     @AppStorage("quickLinksGap") private var quickLinksGap: Double = 12
     @AppStorage(TunnelLabelFont.defaultsKey) private var labelFontSize: Double = TunnelLabelFont.defaultSize
 
@@ -299,10 +316,10 @@ struct CenterDividerView: View {
             .overlay(alignment: .top) { stack(labelMode: labelMode) }
             .frame(width: CGFloat(centerDividerWidth))
             .overlay(alignment: .leading) {
-                Color.white.opacity(dividerBorderOpacity).frame(width: dividerBorderWidth)
+                borderColor.frame(width: dividerBorderWidth)
             }
             .overlay(alignment: .trailing) {
-                Color.white.opacity(dividerBorderOpacity).frame(width: dividerBorderWidth)
+                borderColor.frame(width: dividerBorderWidth)
             }
             // Правая кнопка — у AppKit (TunnelDropHostingView.menu(for:)): SwiftUI-меню на
             // macOS значков не рисует, а меню туннеля со значками были всегда. Кто под
@@ -839,3 +856,91 @@ private struct QueueMiniProgressView: View {
         }
     }
 }
+
+/// Кайма по краям туннеля — по фону, на котором она лежит.
+///
+/// Была всегда белой: на тёмном фоне её видно, а на светлом сером туннеля (у автора #DADADA)
+/// белая полоса пропадала, и туннель не отделялся от панелей. Теперь на светлом фоне кайма —
+/// цвет строки заголовка этой темы (грифельный #5A666F у автора), смешанный с фоном туннеля:
+/// сплошной мягкий серый в тон программы — чистый цвет заголовка выделялся слишком, пополам с
+/// фоном — тоже. Без своего цвета заголовка или если он сливается с фоном — серая из чёрного,
+/// смешанного так же. На тёмном — белая, как была.
+enum TunnelBorder {
+    /// Доля цвета заголовка в кайме на светлом фоне; остальное — фон туннеля. Подобрано автором
+    /// на глаз: 1,0 и 0,5 выделялись слишком.
+    static let lightMix: CGFloat = 0.3
+
+    static func color(background: NSColor, titlebar: NSColor?, opacity: Double) -> NSColor {
+        if ContrastAppearance.isDark(background) {
+            return NSColor.white.withAlphaComponent(CGFloat(opacity))
+        }
+        let ink = titlebar.flatMap { TitlebarButton.contrastRatio($0, background) >= 1.5 ? $0 : nil } ?? .black
+        return mix(ink, into: background, amount: lightMix)
+    }
+
+    /// `amount` цвета `top` и остальное — `base`; сплошной цвет, без прозрачности.
+    static func mix(_ top: NSColor, into base: NSColor, amount: CGFloat) -> NSColor {
+        guard let t = top.usingColorSpace(.sRGB), let b = base.usingColorSpace(.sRGB) else { return top }
+        func blend(_ x: CGFloat, _ y: CGFloat) -> CGFloat { x * amount + y * (1 - amount) }
+        return NSColor(srgbRed: blend(t.redComponent, b.redComponent), green: blend(t.greenComponent, b.greenComponent),
+                       blue: blend(t.blueComponent, b.blueComponent), alpha: 1)
+    }
+
+    /// Системный цвет (фон окна, если свой не задан) — в цифрах нужной темы.
+    static func resolved(_ color: NSColor, dark: Bool) -> NSColor {
+        var result = color
+        NSAppearance(named: dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
+            result = color.usingColorSpace(.sRGB) ?? color
+        }
+        return result
+    }
+}
+
+/// Черта цвета каймы туннеля (TunnelBorder): между панелями и нижней полосой кнопок. Системный
+/// separatorColor брался один раз при создании — и в светлой теме это была тёмная полоса, а
+/// после смены темы цвет не менялся вовсе. Эта черта рисует себя по нынешним теме и цветам.
+final class TunnelBorderLine: NSView {
+    private var observer: NSObjectProtocol?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        observeAppearance()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        observeAppearance()
+    }
+
+    deinit {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+    }
+
+    /// Цвета интерфейса и заголовка меняют в настройках — перерисоваться.
+    private func observeAppearance() {
+        observer = NotificationCenter.default.addObserver(forName: .fcxlAppearanceChanged, object: nil,
+                                                          queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.needsDisplay = true }
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    /// Тот же цвет, что у каймы туннеля сейчас.
+    static var currentColor: NSColor {
+        let dark = PanelAppearanceSettings.isDarkAppearance
+        let background = TunnelBorder.resolved(PanelAppearanceSettings.interfaceNSColor(dark: dark), dark: dark)
+        let opacity = UserDefaults.standard.object(forKey: "dividerBorderOpacity") as? Double ?? 0.15
+        return TunnelBorder.color(background: background, titlebar: PanelAppearanceSettings.titlebarNSColor(dark: dark),
+                                  opacity: opacity)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        Self.currentColor.setFill()
+        bounds.fill()
+    }
+}
+
