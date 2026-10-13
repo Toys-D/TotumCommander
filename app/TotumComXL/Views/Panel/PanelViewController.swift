@@ -2508,6 +2508,9 @@ final class PanelViewController: NSViewController,
             SystemMonitorView(service: monitorService,
                               onClose: { [weak self] in self?.toggleMonitor() },
                               onRestoreFocus: { [weak self] in self?.focusMonitorHost() })))
+        // Как у краткого вида: место монитора — область списка, а не размер его содержимого,
+        // иначе содержимое могло бы ужать или растянуть всё окно.
+        host.sizingOptions = []
         host.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(host)
         NSLayoutConstraint.activate([
@@ -5945,6 +5948,12 @@ final class PanelViewController: NSViewController,
             return
         }
         let hosting = NSHostingView(rootView: AnyView(makeAlternateView()))
+        // Размер задают края области списка, а не содержимое SwiftUI. По умолчанию NSHostingView
+        // переносит в ограничения наименьший и наибольший размер содержимого (приоритет 999,9).
+        // При переходе в подробный вид этот вид ещё на месте, пока смена режима доходит до
+        // applyViewMode, а содержимое уже пустое (EmptyView): «не больше нуля» — и на macOS 27
+        // AppKit на ближайшей перерисовке ужимала под это ВСЁ окно, до 513×208 точек.
+        hosting.sizingOptions = []
         hosting.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(hosting)
 

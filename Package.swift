@@ -697,6 +697,7 @@ let package = Package(
                 "ViewModelTests/TabColorTests.swift",
                 "ViewModelTests/TabLookTests.swift",
                 "ViewModelTests/RefreshKeepsCursorTests.swift",
+                "ViewModelTests/ListAreaHostingSizeTests.swift",
                 "ViewModelTests/TunnelButtonLookTests.swift",
                 "ViewModelTests/RemoteSessionRegistryTests.swift",
                 "ViewModelTests/InlineRenameLookTests.swift",
