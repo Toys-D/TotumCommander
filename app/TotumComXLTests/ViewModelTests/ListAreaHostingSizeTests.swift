@@ -61,3 +61,38 @@ final class ListAreaHostingSizeTests: XCTestCase {
         XCTAssertEqual(monitor.sizingOptions, [])
     }
 }
+
+/// Нижние полосы прокрутки списка — малого размера, в подробном и кратком видах одинаковые.
+@MainActor
+final class CompactScrollerTests: XCTestCase {
+
+    private func scrollViews(in view: NSView) -> [NSScrollView] {
+        (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews)
+    }
+
+    func test_нижняяПолосаПрокруткиМалая_вПодробномИКраткомВидах() throws {
+        let folder = NSTemporaryDirectory() + "compact-scroller-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        FileManager.default.createFile(atPath: folder + "/a.txt", contents: Data("x".utf8))
+        let id = UUID().uuidString
+        let vm = PanelViewModel(service: CoreBridgeService(), initialPath: folder,
+                                pathDefaultsKey: "panel.path.scroller.\(id)",
+                                viewModeDefaultsKey: "panel.mode.scroller.\(id)", showHiddenFiles: false)
+        vm.viewMode = .detailed
+        let vc = PanelViewController(viewModel: vm, tabsVM: PanelTabsViewModel(panelKey: "tabs.scroller.\(id)",
+                                                                             initialPath: folder), side: .left)
+        vc.loadViewIfNeeded()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.contentView = vc.view
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        let detailed = try XCTUnwrap(scrollViews(in: vc.view).first { $0.documentView is NSTableView })
+        XCTAssertEqual(detailed.horizontalScroller?.controlSize, .small, "подробный вид")
+
+        vm.viewMode = .brief
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        let brief = try XCTUnwrap(scrollViews(in: vc.view).first { $0.documentView is NSCollectionView })
+        XCTAssertEqual(brief.horizontalScroller?.controlSize, .small, "краткий вид")
+    }
+}

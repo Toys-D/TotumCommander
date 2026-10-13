@@ -182,6 +182,7 @@ struct FileListBriefView: NSViewRepresentable {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = false
         scrollView.hasHorizontalScroller = true
+        scrollView.useCompactHorizontalScroller()
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
@@ -1866,3 +1867,11 @@ private final class InlineRenameBriefField: NSTextField, NSTextFieldDelegate {
     }
 }
 
+extension NSScrollView {
+    /// Нижняя полоса прокрутки списка — малого размера. При «всегда показывать полосы
+    /// прокрутки» обычная полоса на macOS 27 толщиной 17 точек — почти в строку списка; малая —
+    /// 13. Одна на краткий и подробный виды, чтобы нижние полосы панелей были одинаковыми.
+    func useCompactHorizontalScroller() {
+        horizontalScroller?.controlSize = .small
+    }
+}
