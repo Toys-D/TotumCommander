@@ -211,4 +211,52 @@ final class ToolbarLookTests: XCTestCase {
             XCTAssertFalse(title.contains("("), "клавиши — в подсказке, не в подписи: \(title)")
         }
     }
+
+    // MARK: - macOS 26 и новее
+
+    /// Пункт со своим вью система кладёт на стекло, и кнопки сливаются в одну капсулу; картинка
+    /// без рамки на стекло не попадает. Подписи рисует только своё вью — им стекло остаётся.
+    func test_наНовыхСистемахОдниЗначкиСтановятсяКартинками() {
+        XCTAssertTrue(ToolbarLook.usesPlainItems(look: .icons, systemMajor: 26), "Tahoe")
+        XCTAssertTrue(ToolbarLook.usesPlainItems(look: .icons, systemMajor: 27))
+        XCTAssertFalse(ToolbarLook.usesPlainItems(look: .icons, systemMajor: 15), "Sequoia — как было, своим вью")
+        XCTAssertFalse(ToolbarLook.usesPlainItems(look: .iconsAndLabels, systemMajor: 27), "подпись — только своим вью")
+        XCTAssertFalse(ToolbarLook.usesPlainItems(look: .labels, systemMajor: 27))
+    }
+
+    /// Своего облика у кнопки-картинки нет, поэтому значок красится под заголовок заранее: на
+    /// тёмном — светлый, на светлом — тёмный. Картинка со своими цветами остаётся как есть.
+    func test_значокКартинкиКраситсяПодЗаголовок() throws {
+        let symbol = try XCTUnwrap(NSImage(systemSymbolName: "trash", accessibilityDescription: nil))
+        func brightness(_ appearance: NSAppearance.Name) throws -> CGFloat {
+            let image = MainWindowController.plainToolbarImage(symbol, color: .secondaryLabelColor,
+                                                               appearance: NSAppearance(named: appearance))
+            XCTAssertFalse(image.isTemplate, "цвет уже в картинке: панель не перекрасит её по-своему")
+            let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64,
+                                                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                                     isPlanar: false, colorSpaceName: .deviceRGB,
+                                                     bytesPerRow: 0, bitsPerPixel: 0))
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            image.draw(in: NSRect(x: 0, y: 0, width: 64, height: 64))
+            NSGraphicsContext.restoreGraphicsState()
+            var best: CGFloat = 0, value: CGFloat = 0
+            for x in 0..<64 { for y in 0..<64 {
+                guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > best else { continue }
+                best = c.alphaComponent
+                value = (c.redComponent + c.greenComponent + c.blueComponent) / 3
+            } }
+            XCTAssertGreaterThan(best, 0.3, "значок нарисован")
+            return value
+        }
+        XCTAssertGreaterThan(try brightness(.darkAqua), 0.5, "на тёмном заголовке — светлый значок")
+        XCTAssertLessThan(try brightness(.aqua), 0.5, "на светлом — тёмный")
+
+        let baked = NSImage(size: NSSize(width: 4, height: 4))
+        baked.isTemplate = false
+        XCTAssertTrue(MainWindowController.plainToolbarImage(baked, color: .secondaryLabelColor,
+                                                             appearance: nil) === baked,
+                      "поднос со счётчиком и шестерёнка с точкой уже испечены — как есть")
+        XCTAssertTrue(MainWindowController.separatorLineImage().isTemplate, "черта красится, как значки")
+    }
 }

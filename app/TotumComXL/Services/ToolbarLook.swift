@@ -40,6 +40,20 @@ enum ToolbarLook: String, CaseIterable {
     /// заголовок в середину и делали окно выше — человеку это не понравилось.
     var windowStyle: NSWindow.ToolbarStyle { .unifiedCompact }
 
+    /// Кнопки — картинками без рамки, а не своими вью.
+    ///
+    /// На macOS 26 и новее пункт со своим вью система кладёт на стекло, и соседние кнопки
+    /// сливаются в одну стеклянную капсулу с перегородками. Пункт с одной картинкой и без рамки
+    /// на стекло не попадает (проверено на macOS 27) — так панель выглядит, как до Tahoe.
+    /// Подпись рядом со значком рисует только своё вью, поэтому так — лишь при «одних значках».
+    static func usesPlainItems(look: ToolbarLook, systemMajor: Int) -> Bool {
+        look == .icons && systemMajor >= 26
+    }
+
+    static var usesPlainItems: Bool {
+        usesPlainItems(look: chosen, systemMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+    }
+
     /// Что выбрано сейчас; неизвестное значение — как было всегда, одни значки.
     static var chosen: ToolbarLook {
         ToolbarLook(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .icons
