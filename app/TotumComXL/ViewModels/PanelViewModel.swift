@@ -2613,10 +2613,13 @@ final class PanelViewModel: ObservableObject {
                 preferredCursorPath: preferredCursorPath,
                 clearSelection: isNavigation
             )
+            // Запрошенный файл, которого в кэше ещё нет (только что созданный), ждёт свежего
+            // списка; найденный уже под курсором.
+            let pending = preferredCursorPath.flatMap { $0 == cursorItem?.path ? nil : $0 }
             startDirectoryRefreshPhase(
                 destination: destination,
                 requestID: requestID,
-                preferredCursorPath: cursorItem?.path
+                pendingCursorPath: pending
             )
             return
         }
@@ -3262,8 +3265,10 @@ final class PanelViewModel: ObservableObject {
 
     private func startDirectoryRefreshPhase(destination: String,
                                             requestID: UUID,
-                                            preferredCursorPath: String?) {
+                                            pendingCursorPath: String?) {
         let includeHidden = showHiddenFiles
+        // Где курсор сейчас — чтобы по приходу списка знать, двигал ли его человек.
+        let cursorAtStart = cursorItem?.path
         directoryDetailsTask = Task(priority: .utility) { [weak self] in
             guard let self else { return }
 
@@ -3283,7 +3288,8 @@ final class PanelViewModel: ObservableObject {
                     refreshedItems,
                     destination: destination,
                     requestID: requestID,
-                    preferredCursorPath: preferredCursorPath
+                    pendingCursorPath: pendingCursorPath,
+                    cursorAtStart: cursorAtStart
                 )
             }
         }
@@ -3307,21 +3313,59 @@ final class PanelViewModel: ObservableObject {
         }
     }
 
+    /// Свежий список той же папки после показа из кэша.
+    ///
+    /// Курсор встаёт туда, где он СЕЙЧАС. Раньше — на файл, который был под курсором, когда
+    /// перечитка началась: на сетевом томе список приходит через сотни миллисекунд, человек за
+    /// это время уходил стрелкой вниз, и курсор прыгал обратно. Перечитки там частые — слежка за
+    /// сетевой папкой срабатывает и тогда, когда в папке ничего не менялось (сервер сообщает о
+    /// чтении снимков для значков), — поэтому и прыжок был «не всегда, но часто».
     private func applyDirectoryRefreshIfCurrent(_ refreshedItems: [FileItem],
                                                 destination: String,
                                                 requestID: UUID,
-                                                preferredCursorPath: String?) {
+                                                pendingCursorPath: String?,
+                                                cursorAtStart: String?) {
         guard directoryLoadRequestID == requestID else { return }
         guard !insideArchive, !insideRemote, currentPath == destination else { return }
 
+        storeDirectoryCache(path: destination, items: refreshedItems)
+        // Та же папка, что на экране, — список не перекладывается вовсе: ни курсор, ни
+        // выделение, ни прокрутка не трогаются.
+        if pendingCursorPath == nil, Self.sameListing(refreshedItems, shown: allItems) { return }
         applyLoadedFileSystemItems(
             refreshedItems,
             destination: destination,
             resetCursor: false,
-            preferredCursorPath: preferredCursorPath,
+            preferredCursorPath: Self.refreshCursorTarget(current: cursorItem?.path,
+                                                          atStart: cursorAtStart,
+                                                          pending: pendingCursorPath),
             clearSelection: false
         )
-        storeDirectoryCache(path: destination, items: refreshedItems)
+    }
+
+    /// Куда встать курсору, когда пришёл свежий список: туда, где он сейчас. Запрошенный файл,
+    /// которого ещё не было в кэше, — только если курсор с начала перечитки не двигали.
+    nonisolated static func refreshCursorTarget(current: String?, atStart: String?,
+                                                pending: String?) -> String? {
+        if let pending, current == atStart { return pending }
+        return current
+    }
+
+    /// Пришёл ли с диска тот же список, что показан: те же файлы с теми же размерами, датами и
+    /// правами («..» не в счёт — его добавляет сама панель).
+    nonisolated static func sameListing(_ fresh: [FileItem], shown: [FileItem]) -> Bool {
+        let shownReal = shown.filter { $0.name != ".." }
+        guard fresh.count == shownReal.count else { return false }
+        var byPath: [String: FileItem] = [:]
+        byPath.reserveCapacity(shownReal.count)
+        for item in shownReal { byPath[item.path] = item }
+        return fresh.allSatisfy { item in
+            guard let old = byPath[item.path] else { return false }
+            return old.isDirectory == item.isDirectory && old.isHidden == item.isHidden
+                && old.isSymlink == item.isSymlink && old.size == item.size
+                && old.dateModified == item.dateModified && old.permissions == item.permissions
+                && old.entryCount == item.entryCount
+        }
     }
 
     private func startDirectoryDetailsPhase(destination: String, requestID: UUID) {
