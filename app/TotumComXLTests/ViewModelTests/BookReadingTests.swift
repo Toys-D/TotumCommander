@@ -370,6 +370,19 @@ final class BookReadingTests: XCTestCase {
         let heavy = "/Users/dimas/Documents/AC PRO Exam Objectives Illustrator 0923 (1).pdf"
         try XCTSkipUnless(FileManager.default.fileExists(atPath: heavy), "нет тяжёлого pdf")
 
+        // Прогрев: первый документ macOS 27 обставляет своими кэшами (PDFKit, CoreGraphics) —
+        // около 150 МБ, которые остаются и после закрытия, но второй и третий документ к ним
+        // уже ничего не прибавляют (замер: 177, 189, 190 МБ после каждого из трёх). Это не
+        // наша память, поэтому мерить от отметки после прогрева: утечка нашего кэша дала бы
+        // по 93 МБ на каждый документ, и её видно по-прежнему.
+        try autoreleasepool {
+            let warmUp = try XCTUnwrap(PDFCachingDocument(url: URL(fileURLWithPath: heavy)))
+            for index in 0..<warmUp.pageCount {
+                _ = drawSeconds(try XCTUnwrap(warmUp.page(at: index)), scale: 2.9)
+            }
+            warmUp.cache.purge()
+        }
+
         let before = footprintMB()
         weak var closed: PDFCachingDocument?
         var cached = 0

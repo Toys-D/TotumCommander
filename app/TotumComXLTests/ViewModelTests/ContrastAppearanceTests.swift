@@ -72,8 +72,10 @@ final class ContrastAppearanceTests: XCTestCase {
             let pixel = try XCTUnwrap(rep.colorAt(x: 20, y: 20)?.usingColorSpace(.sRGB))
             return (pixel.redComponent + pixel.greenComponent + pixel.blueComponent) / 3
         }
-        XCTAssertLessThan(try centerBrightness(hex: ""), 0.2, "светлая тема без своего цвета — чёрный текст")
+        // Тёмный текст — ниже 0,3: на macOS 27 системный цвет текста в светлой теме чуть светлее
+        // (0,203 против прежних ~0,14), а белый по-прежнему выше 0,8 — разница та же, резкая.
+        XCTAssertLessThan(try centerBrightness(hex: ""), 0.3, "светлая тема без своего цвета — чёрный текст")
         XCTAssertGreaterThan(try centerBrightness(hex: "#5c6b73"), 0.8, "на грифельной полосе — белый")
-        XCTAssertLessThan(try centerBrightness(hex: "#f0f0f0"), 0.2, "на светлой полосе — чёрный")
+        XCTAssertLessThan(try centerBrightness(hex: "#f0f0f0"), 0.3, "на светлой полосе — чёрный")
     }
 }

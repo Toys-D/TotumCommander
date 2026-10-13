@@ -71,6 +71,13 @@ final class RemoteSessionRegistryTests: XCTestCase {
 
     /// Чип чужой сессии рисуется в полосе панели, у которой своей сессии нет.
     func test_полосаРисуетЧужоеПодключение() throws {
+        // Список подключений общий на весь процесс. Тесты живых хранилищ (rclone, S3, гонки
+        // переходов) выбрасывают свои панели, не выходя из хранилища, и их подключения
+        // оставались здесь: на полосе уже стоял оранжевый чип, а новый в тесную полосу почти не
+        // помещался (на macOS 27 — 84 точки краски против нужных 100). Полоса — с чистого листа.
+        for leftover in RemoteSessionRegistry.shared.sessions {
+            RemoteSessionRegistry.shared.replace(leftover, with: nil)
+        }
         let owner = panel()
         let watcher = panel()
         let drive = session("Google Drive", connection: RemoteConnection(label: "Google Drive", proto: .rclone, host: ""))

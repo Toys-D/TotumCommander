@@ -172,6 +172,12 @@ final class NumberedTextViewTests: XCTestCase {
     /// Двумя пальцами на трекпаде, 120 событий в секунду по 20 точек: текст проходит весь путь.
     /// Список SwiftUI на таком файле успевал меньше половины — он «тормозил».
     func test_текстИдётЗаПальцами() throws {
+        // На macOS 27 AppKit, получив жест двумя пальцами, ждёт следующих событий от оконного
+        // сервера, а в процессе тестов их нет: искусственный жест вешал весь прогон навсегда
+        // (стек — _addConcurrentEventMonitorMatchingMask → CGEventThreadStartPullingEvents).
+        // Программы это не касается: у неё жесты настоящие.
+        try XCTSkipIf(ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27,
+                      "на macOS 27 искусственный жест вешает тестовый процесс")
         let (window, view) = try viewer(showing: crashLogLikeText())
         let scroll = try XCTUnwrap(view.enclosingScrollView)
         let middle = window.convertPoint(toScreen: scroll.convert(NSPoint(x: scroll.bounds.midX, y: scroll.bounds.midY), to: nil))
