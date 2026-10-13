@@ -82,6 +82,16 @@ while IFS= read -r -d '' bin; do
 done < <(find "$OUT" -type f \( -perm -u+x -o -name '*.dylib' \) -print0)
 [ "$BAD" = 0 ] || { echo "Homebrew paths inside the bundle — it would not run elsewhere"; exit 1; }
 
+# Выпуск должен открываться на всех системах, начиная с Sequoia: без повторных путей поиска
+# библиотек (macOS 27 отказывается запускать такую программу — так не открывался 1.8.7) и без
+# системных функций, которых нет в macOS 15 (их приносят библиотеки Homebrew, собранные под
+# новую систему). Каждая сильная ссылка каждой части сверяется со списками SDK macOS 15.
+echo "=== Checking it runs on macOS 15 and later ==="
+if ! python3 scripts/check_macos_compat.py "$OUT"; then
+    echo "The release would not start on every macOS from 15 on — not shipping"
+    exit 1
+fi
+
 # The crash that taught this: SwiftPM writes Bundle.module out of exactly two paths — the
 # bundle NEXT TO the .app and an ABSOLUTE path inside the build directory of the machine that
 # compiled it. Neither is where a macOS app keeps its resources, so on the author's Mac the

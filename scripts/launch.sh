@@ -58,12 +58,17 @@ PYBUMP
 echo "=== Build number $NEW_BUILD ==="
 
 echo "=== Building ($CONFIG) ==="
-swift build -c "$CONFIG"
+# Прежняя система сборки SwiftPM — явно. Swift 6.4 (Xcode под macOS 27) по умолчанию собирает
+# новой (swiftbuild), а та компилирует шейдер SwiftTerm заранее и требует отдельно скачанного
+# Metal Toolchain: без него сборка падает на Shaders.metal. Прежняя кладёт исходник шейдера
+# как есть, и SwiftTerm компилирует его сам при запуске — так собирались все выпуски до 1.8.7.
+SWIFT_BUILD_SYSTEM=(--build-system native)
+swift build "${SWIFT_BUILD_SYSTEM[@]}" -c "$CONFIG"
 
 # Папка со собранным — у самого SwiftPM, а не строкой в скрипте. Было вписано имя папки для
 # Apple Silicon: на Intel-Mac она называется иначе, и сборка на таком копировала бы ничего —
 # из того же семейства, что и личный сертификат ниже.
-BIN="$(swift build -c "$CONFIG" --show-bin-path)"
+BIN="$(swift build "${SWIFT_BUILD_SYSTEM[@]}" -c "$CONFIG" --show-bin-path 2>/dev/null)"
 
 echo "=== Updating bundle ==="
 cp "$BIN/TotumComXLApp" "$APP/Contents/MacOS/TotumComXL"
@@ -185,7 +190,7 @@ cp third_party/rclone/LICENSE-rclone.txt "$APP/Contents/Resources/LICENSE-rclone
 # Standalone DjVu reader, shipped INSIDE our bundle so the commander can launch it as a
 # separate program and the user still installs nothing. macOS has no DjVu support at all.
 echo "=== Embedding DjVu viewer ==="
-swift build -c "$CONFIG" --product FCXLDjVuViewer
+swift build "${SWIFT_BUILD_SYSTEM[@]}" -c "$CONFIG" --product FCXLDjVuViewer
 VIEWER_APP="$APP/Contents/Library/FCXL DjVu Viewer.app"
 mkdir -p "$VIEWER_APP/Contents/MacOS"
 cp "$BIN/FCXLDjVuViewer" "$VIEWER_APP/Contents/MacOS/FCXLDjVuViewer"
@@ -268,6 +273,33 @@ dylibbundler -od -b \
     -x "$VIEWER_APP/Contents/MacOS/FCXLDjVuViewer" \
     -d "$VIEWER_APP/Contents/Frameworks" \
     -p @executable_path/../Frameworks
+
+# Каждый путь поиска библиотек — один раз. dylibbundler вписывает @executable_path/../Frameworks/
+# на каждую зависимость, которая ищется через @rpath, и в программе и в просмотрщике DjVu их
+# оказывалось по три. Прежние macOS это терпели, macOS 27 такую программу не запускает вовсе —
+# «duplicate LC_RPATH» ещё до первой строки (так не открывались выпуски 1.8.7 и раньше).
+# Лишние копии убираются по одной, пока не останется одна. До подписи: правка меняет файл.
+rpaths_of() {
+    otool -l "$1" | awk '/cmd LC_RPATH/ { getline; getline; print $2 }'
+}
+dedupe_rpaths() {
+    local bin="$1" rp
+    rpaths_of "$bin" | sort | uniq -d | while IFS= read -r rp; do
+        while [ "$(rpaths_of "$bin" | grep -cxF "$rp")" -gt 1 ]; do
+            install_name_tool -delete_rpath "$rp" "$bin" 2>/dev/null || break
+        done
+    done
+}
+echo "=== One copy of each library search path ==="
+while IFS= read -r -d '' f; do
+    if file "$f" | grep -q 'Mach-O'; then dedupe_rpaths "$f"; fi
+done < <(find "$APP" -type f \( -perm -u+x -o -name '*.dylib' \) -print0)
+
+# Запустится ли сборка на всех системах, начиная с Sequoia. Здесь — только предупреждение,
+# чтобы библиотеки Homebrew, собранные под новую систему, были видны сразу, а не в день
+# выпуска; release.sh с такой сборкой выпуск не делает.
+echo "=== Checking it runs on macOS 15 and later ==="
+python3 scripts/check_macos_compat.py "$APP" || echo "    WARNING: this build would not start on every macOS from 15 on"
 
 # Signing. A STABLE identity is a convenience for the developer: macOS then remembers the
 # permissions and firewall rules it granted, instead of asking again after every build.
