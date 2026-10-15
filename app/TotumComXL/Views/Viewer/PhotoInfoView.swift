@@ -53,14 +53,21 @@ struct PhotoInfoView: View {
                         map(coordinate)
                     }
                     HStack {
-                        Button(L("exif.clean.button")) {
+                        Button(L("metadata.clean.button")) {
                             fcxlPresentModal {
                                 guard let request = DialogService.shared
                                     .showCleanMetadata(paths: [path]) else { return }
-                                _ = try? PhotoMetadataService.clean(
-                                    path: path, what: request.what,
-                                    keepingOriginal: request.keepOriginal)
-                                load()
+                                Task { @MainActor in
+                                    do {
+                                        try await MetadataScrubber.clean(
+                                            path: path, scope: request.scope,
+                                            keepingOriginal: request.keepOriginal)
+                                    } catch {
+                                        DialogService.shared.showOperationError(
+                                            title: L("metadata.clean.title"), error: error)
+                                    }
+                                    load()
+                                }
                             }
                         }
                         Spacer()

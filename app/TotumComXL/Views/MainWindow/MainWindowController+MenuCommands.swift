@@ -238,7 +238,7 @@ extension MainWindowController {
 
     @objc func menuClearTags(_ sender: Any?) { panel.clearTagsOnTargets() }
     @objc func menuRecognizeText(_ sender: Any?) { recognizeText(in: vm) }
-    @objc func menuCleanMetadata(_ sender: Any?) { cleanPhotoMetadata(in: vm) }
+    @objc func menuCleanMetadata(_ sender: Any?) { cleanMetadata(in: vm) }
     @objc func menuVaultToggle(_ sender: Any?) { panel.lockOrUnlockVaultAtCursor() }
     /// Та же дорога, что у F8 на .app: список всего, что осталось от программы.
     @objc func menuUninstall(_ sender: Any?) {
@@ -360,7 +360,7 @@ extension MainWindowController {
         case #selector(menuRecognizeText(_:)):
             return local && (cursor.map { TextRecognitionService.canReadText(in: $0.path) } ?? false)
         case #selector(menuCleanMetadata(_:)):
-            return local && (cursor.map { PhotoMetadataService.hasMetadata(path: $0.path) } ?? false)
+            return local && targets.contains(where: MetadataScrubber.mayClean)
         case #selector(menuVaultToggle(_:)):
             guard let cursor, local, VaultService.isVault(cursor.path) else { return false }
             item.title = VaultService.isUnlocked(cursor.path) ? L("vault.lock.menu")

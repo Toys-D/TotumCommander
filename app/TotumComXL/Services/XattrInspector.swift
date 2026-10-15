@@ -24,24 +24,26 @@ enum XattrInspector {
     /// Every attribute on `path`, alphabetized. A file without any — or an unreadable one —
     /// answers an empty list; the inspector shows "none", not an error.
     static func list(path: String) -> [Entry] {
-        let listSize = listxattr(path, nil, 0, XATTR_NOFOLLOW)
-        guard listSize > 0 else { return [] }
-        var nameBuffer = [CChar](repeating: 0, count: listSize)
-        let filled = listxattr(path, &nameBuffer, listSize, XATTR_NOFOLLOW)
-        guard filled > 0 else { return [] }
-
-        let names = nameBuffer.prefix(filled)
-            .split(separator: 0, omittingEmptySubsequences: true)
-            .compactMap { chunk in
-                String(bytes: chunk.map { UInt8(bitPattern: $0) }, encoding: .utf8)
-            }
-
-        return names.sorted().map { name in
+        names(path: path).sorted().map { name in
             let value = read(path: path, name: name) ?? Data()
             return Entry(name: name, size: value.count,
                          preview: preview(of: value),
                          friendly: friendly(name: name, data: value))
         }
+    }
+
+    /// Just the names, values unread — cheap enough to ask while a menu opens.
+    nonisolated static func names(path: String) -> [String] {
+        let listSize = listxattr(path, nil, 0, XATTR_NOFOLLOW)
+        guard listSize > 0 else { return [] }
+        var nameBuffer = [CChar](repeating: 0, count: listSize)
+        let filled = listxattr(path, &nameBuffer, listSize, XATTR_NOFOLLOW)
+        guard filled > 0 else { return [] }
+        return nameBuffer.prefix(filled)
+            .split(separator: 0, omittingEmptySubsequences: true)
+            .compactMap { chunk in
+                String(bytes: chunk.map { UInt8(bitPattern: $0) }, encoding: .utf8)
+            }
     }
 
     static func read(path: String, name: String) -> Data? {

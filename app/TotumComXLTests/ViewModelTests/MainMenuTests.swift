@@ -17,6 +17,29 @@ final class MainMenuTests: XCTestCase {
         menu = AppDelegate.buildMainMenu()
     }
 
+    /// macOS 27 прячет картинки пунктов меню, если их не попросить остаться, — так из
+    /// «Инструментов» пропали все значки, что были в Sequoia.
+    func test_значкиМенюНеПрячутсяВ27() throws {
+        guard #available(macOS 27, *) else { throw XCTSkip("до macOS 27 значки видны и так") }
+        MenuImageVisibility.keepVisible()
+        let menu = NSMenu()
+        let given = menu.addItem(withTitle: "Пункт", action: nil, keyEquivalent: "")
+        given.image = NSImage(systemSymbolName: "eye.slash", accessibilityDescription: nil)
+        XCTAssertEqual(given.preferredImageVisibility, .visible, "картинку дали пункту уже в меню")
+        let later = NSMenuItem(title: "Позже", action: nil, keyEquivalent: "")
+        later.image = NSImage(systemSymbolName: "tag", accessibilityDescription: nil)
+        menu.addItem(later)
+        XCTAssertEqual(later.preferredImageVisibility, .visible, "пункт пришёл в меню с картинкой")
+
+        let bar = AppDelegate.buildMainMenu()
+        MenuImageVisibility.keepVisible(in: bar)
+        func items(_ menu: NSMenu) -> [NSMenuItem] {
+            menu.items.flatMap { [$0] + ($0.submenu.map(items) ?? []) }
+        }
+        let hidden = items(bar).filter { $0.image != nil && $0.preferredImageVisibility != .visible }
+        XCTAssertTrue(hidden.isEmpty, "в строке меню спрятаны значки: \(hidden.map(\.title))")
+    }
+
     /// Все пункты с действием, из всех уровней.
     private func commands(in menu: NSMenu) -> [NSMenuItem] {
         menu.items.flatMap { item -> [NSMenuItem] in

@@ -19,7 +19,9 @@ enum PhotoMetadataService {
 
     /// The groups the lines fall into, in the order a person reads them.
     enum Section: String, CaseIterable, Equatable {
-        case picture, camera, exposure, description, place
+        /// `origin`: made by a neural network, and how — right after the picture itself, where
+        /// a person checking a picture looks first.
+        case picture, origin, camera, exposure, description, place
 
         var localizedName: String { L("exif.section.\(rawValue)") }
     }
@@ -52,7 +54,9 @@ enum PhotoMetadataService {
         guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
               let raw = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
         else { return Info() }
-        return info(from: raw)
+        var info = info(from: raw)
+        info.entries += AIOrigin.read(path: path).entries
+        return info
     }
 
     /// The whole reading, from the dictionary ImageIO hands back — pure, so every rule below is
@@ -230,114 +234,5 @@ enum PhotoMetadataService {
     /// 2.0 → "2", 2.8 → "2.8": trailing zeroes make a lens sound like a measurement.
     static func trimmed(_ value: Double) -> String {
         value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
-    }
-}
-
-// MARK: - Taking the metadata out
-
-extension PhotoMetadataService {
-
-    /// How much to take out.
-    enum Cleaning: String, CaseIterable {
-        /// Only the place — the camera, the settings and the dates stay.
-        case place
-        /// Everything a picture carries besides the picture.
-        case everything
-
-        var localizedName: String { L("exif.clean.\(rawValue)") }
-    }
-
-    enum CleaningError: LocalizedError {
-        case unreadable(String)
-        case unwritable(String)
-
-        var errorDescription: String? {
-            switch self {
-            case .unreadable(let name): return String(format: L("exif.clean.unreadable"), name)
-            case .unwritable(let name): return String(format: L("exif.clean.unwritable"), name)
-            }
-        }
-    }
-
-    /// Rewrite a picture without its metadata.
-    ///
-    /// The pixels are COPIED, not re-encoded: a JPEG cleaned this way is the very same JPEG
-    /// minus the tags, so cleaning a photograph twice does not degrade it the way opening and
-    /// re-saving would. That is what `CGImageDestinationCopyImageSource` is for.
-    ///
-    /// The cleaned file replaces the original, unless `keepingOriginal` asks for a copy beside
-    /// it — in which case the new path is returned.
-    @discardableResult
-    static func clean(path: String, what: Cleaning = .everything,
-                      keepingOriginal: Bool = false) throws -> String {
-        let name = (path as NSString).lastPathComponent
-        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
-              let type = CGImageSourceGetType(source) else {
-            throw CleaningError.unreadable(name)
-        }
-
-        let target = keepingOriginal ? copyPath(for: path) : temporaryPath(for: path)
-        guard let destination = CGImageDestinationCreateWithURL(
-            URL(fileURLWithPath: target) as CFURL, type,
-            CGImageSourceGetCount(source), nil) else {
-            throw CleaningError.unwritable(name)
-        }
-
-        var options: [CFString: Any] = [
-            kCGImageDestinationMetadata: CGImageMetadataCreateMutable(),
-            kCGImageDestinationMergeMetadata: false,
-        ]
-        if what == .place {
-            // Keep the rest of the tags and drop only the place: the metadata handed over is
-            // the file's own, with the GPS excluded on the way through.
-            options[kCGImageDestinationMetadata] =
-                CGImageSourceCopyMetadataAtIndex(source, 0, nil) ?? CGImageMetadataCreateMutable()
-            options[kCGImageMetadataShouldExcludeGPS] = true
-        }
-
-        var error: Unmanaged<CFError>?
-        let copied = CGImageDestinationCopyImageSource(destination, source,
-                                                       options as CFDictionary, &error)
-        guard copied else {
-            try? FileManager.default.removeItem(atPath: target)
-            throw CleaningError.unwritable(name)
-        }
-        guard !keepingOriginal else { return target }
-
-        // In place, and atomically: a half-written picture is worse than an uncleaned one.
-        _ = try FileManager.default.replaceItemAt(URL(fileURLWithPath: path),
-                                                  withItemAt: URL(fileURLWithPath: target))
-        return path
-    }
-
-    /// "снимок.jpg" → "снимок (без сведений).jpg", and never over something that is already there.
-    static func copyPath(for path: String) -> String {
-        let base = (path as NSString).deletingPathExtension
-        let ext = (path as NSString).pathExtension
-        let suffix = L("exif.clean.copySuffix")
-        var candidate = ext.isEmpty ? "\(base) \(suffix)" : "\(base) \(suffix).\(ext)"
-        var index = 2
-        while FileManager.default.fileExists(atPath: candidate) {
-            candidate = ext.isEmpty ? "\(base) \(suffix) \(index)"
-                                    : "\(base) \(suffix) \(index).\(ext)"
-            index += 1
-        }
-        return candidate
-    }
-
-    private static func temporaryPath(for path: String) -> String {
-        let folder = (path as NSString).deletingLastPathComponent
-        let name = (path as NSString).lastPathComponent
-        return (folder as NSString).appendingPathComponent(".fcxl-clean-\(UUID().uuidString)-\(name)")
-    }
-
-    /// Do we have anything to take out of this file? Used to keep the offer off a picture that
-    /// carries nothing anyway.
-    static func hasMetadata(path: String) -> Bool {
-        let info = read(path: path)
-        return info.coordinate != nil
-            || !info.entries(in: .camera).isEmpty
-            || !info.entries(in: .exposure).isEmpty
-            || !info.entries(in: .description).isEmpty
     }
 }

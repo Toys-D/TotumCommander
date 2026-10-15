@@ -2152,16 +2152,19 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         return wanted
     }
 
-    /// Take the invisible notes out of the chosen photographs.
+    /// Take the invisible notes out of the chosen files.
     ///
-    /// Asked first, always: this rewrites the files, and a place a photograph remembers cannot
-    /// be put back once it is gone.
-    func cleanPhotoMetadata(in viewModel: PanelViewModel) {
-        let targets = viewModel.operationTargets
-            .filter { !$0.isDirectory
-                && fileCategory(extension: $0.fileExtension) == .image }
-            .map(\.path)
-        guard !targets.isEmpty else { return }
+    /// Asked first, always: this rewrites the files, and what a file remembered — the place a
+    /// photograph was taken, the author of a document — cannot be put back once it is gone.
+    func cleanMetadata(in viewModel: PanelViewModel) {
+        guard !viewModel.insideArchive, !viewModel.insideRemote else { return }
+        let targets = viewModel.operationTargets.filter(MetadataScrubber.canClean).map(\.path)
+        guard !targets.isEmpty else {
+            // The menu only glanced; a closer look found nothing to take out.
+            DialogService.shared.showInfo(title: L("metadata.clean.title"),
+                                          message: L("metadata.clean.nothing"))
+            return
+        }
         fcxlPresentModal { [weak self] in
             guard let request = DialogService.shared.showCleanMetadata(paths: targets) else {
                 return
@@ -2171,29 +2174,46 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
     }
 
     private func runCleaning(_ paths: [String], request: CleanMetadataRequest) {
+        // "Only the place" leaves what has no place alone — and does not count it as cleaned.
+        let work = request.scope == .place
+            ? paths.filter { MetadataScrubber.kind(of: $0).knowsPlace } : paths
+        let progress = DialogService.shared.showProgress(
+            title: L("metadata.clean.progress"), message: L("progress.preparing"),
+            cancelHandler: nil)
         Task { @MainActor in
             var cleaned = 0
-            var failure: Error?
-            for path in paths {
+            var failures: [String] = []
+            for (index, path) in work.enumerated() {
+                if progress.isCancelled { break }
+                progress.update(currentFile: (path as NSString).lastPathComponent,
+                                progress: Double(index) / Double(max(work.count, 1)),
+                                bytesDone: 0, bytesTotal: 0,
+                                filesDone: index, filesTotal: work.count)
                 do {
                     _ = try await Task.detached(priority: .userInitiated) {
-                        try PhotoMetadataService.clean(path: path, what: request.what,
-                                                       keepingOriginal: request.keepOriginal)
+                        try await MetadataScrubber.clean(path: path, scope: request.scope,
+                                                         keepingOriginal: request.keepOriginal)
                     }.value
                     cleaned += 1
                 } catch {
-                    failure = error
+                    failures.append(error.localizedDescription)
                 }
             }
+            progress.close()
             splitVC.leftPanelVM.reloadKeepingCursor()
             splitVC.rightPanelVM.reloadKeepingCursor()
-            if let failure {
-                DialogService.shared.showOperationError(title: L("exif.clean.title"),
-                                                        error: failure)
-            } else {
+            if failures.isEmpty {
                 DialogService.shared.showInfo(
-                    title: L("exif.clean.title"),
-                    message: String(format: L("exif.clean.done"), cleaned))
+                    title: L("metadata.clean.title"),
+                    message: String(format: L("metadata.clean.done"), cleaned))
+            } else {
+                // Every file that did not come out clean, by name — not just the last one.
+                let listed = failures.prefix(8).map { "• " + $0 }.joined(separator: "\n")
+                let more = failures.count > 8 ? "\n…" : ""
+                DialogService.shared.showError(
+                    title: L("metadata.clean.title"),
+                    message: String(format: L("metadata.clean.failed"), cleaned, work.count)
+                        + "\n" + listed + more)
             }
         }
     }

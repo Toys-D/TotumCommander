@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import XCTest
 @testable import TotumComXLApp
 
@@ -420,6 +421,64 @@ final class ContextMenuLayoutTests: XCTestCase {
     }
 
     /// Панель, стоящая в папке с настоящим файлом, и сам файл.
+    /// Картинка нейросети говорит об этом сразу, верхним уровнем меню, — там, где пункт ждёт
+    /// каталог. И пункт строки меню «Удалить метаданные…» для неё не серый: строка панели
+    /// приходит из ядра с расширением «.png» — с точкой.
+    func test_картинкаНейросети_ВидныСразу() async throws {
+        let folder = NSTemporaryDirectory() + "ctx-ai-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: folder) }
+        let png = folder + "/лиса.png"
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let image = context.makeImage(),
+              let destination = CGImageDestinationCreateWithURL(
+                URL(fileURLWithPath: png) as CFURL, "public.png" as CFString, 1, nil)
+        else { throw XCTSkip("PNG не пишется") }
+        CGImageDestinationAddImage(destination, image, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        var bytes = [UInt8](try Data(contentsOf: URL(fileURLWithPath: png)))
+        let parameters = "a fox in the snow\nSteps: 20, Sampler: Euler a, Seed: 1, Model: sd15"
+        bytes.insert(contentsOf: PNGChunks.chunk("tEXt", Array("parameters\u{0}".utf8) + Array(parameters.utf8)),
+                     at: 33)   // сразу за IHDR
+        try Data(bytes).write(to: URL(fileURLWithPath: png))
+
+        let vc = try panel()
+        vc.viewModel.loadDirectory(at: folder)
+        let срок = Date().addingTimeInterval(3)
+        while Date() < срок, !vc.viewModel.items.contains(where: { $0.name == "лиса.png" }) {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let item = try XCTUnwrap(vc.viewModel.items.first { $0.name == "лиса.png" })
+        XCTAssertEqual(item.fileExtension, ".png", "ядро отдаёт расширение с точкой")
+        XCTAssertTrue(MetadataScrubber.mayClean(item), "пункт строки меню не гаснет")
+
+        let saved = snapshot()
+        defer { restore(saved) }
+        ContextMenuLayout.shared.reset()
+        let menu = NSMenu()
+        vc.populateContextMenu(menu, for: item)
+        let row = try XCTUnwrap(menu.items.first { $0.identifier?.rawValue == "context.aiOrigin" })
+        XCTAssertEqual(row.title, String(format: L("context.aiOrigin.named"), L("ai.headline")))
+        XCTAssertFalse(row.title.contains("Stable Diffusion"), "чем сделано — в «Инфо», не в меню")
+        // Живой значок: звёзды-слои в колонке значка, а не нарисованный символ.
+        let mark = try XCTUnwrap(row.view?.subviews.first { $0 is AISparkleView })
+        XCTAssertEqual(mark.layer?.sublayers?.first?.mask?.sublayers?.count, 3, "три звезды")
+        if !AISparkleView.reduceMotion {
+            XCTAssertNotNil(mark.layer?.sublayers?.first?.animation(forKey: "flow"), "цвет переливается")
+        }
+        let ids = menu.items.map { $0.isSeparatorItem ? ContextMenuLayout.separatorID
+                                                      : ($0.identifier?.rawValue ?? "БЕЗ-ИМЕНИ") }
+        var rest = ContextMenuCatalogue.defaultOrder[...]
+        for id in ids {
+            guard let position = rest.firstIndex(of: id) else {
+                return XCTFail("«\(id)» нет в списке по умолчанию или он стоит не там: \(ids)")
+            }
+            rest = rest[(position + 1)...]
+        }
+    }
+
     private func panelWithFile() async throws -> (PanelViewController, FileItem) {
         let folder = NSTemporaryDirectory() + "ctx-\(UUID().uuidString)"
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)

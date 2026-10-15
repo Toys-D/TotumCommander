@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let delegate = AppDelegate()
         app.delegate = delegate
         app.setActivationPolicy(.regular)
+        MenuImageVisibility.keepVisible()
         setupMainMenu()
         updateQuitKeyEquivalent()
         app.run()
@@ -337,7 +338,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private static func setupMainMenu() {
-        NSApplication.shared.mainMenu = buildMainMenu()
+        let menu = buildMainMenu()
+        MenuImageVisibility.keepVisible(in: menu)
+        NSApplication.shared.mainMenu = menu
     }
 
     /// «Отправить» наполняется при открытии — службы зависят от файла под курсором.

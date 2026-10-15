@@ -242,7 +242,7 @@ The pack and unpack dialogs can be turned off in the "Confirmation dialogs" sett
 
 | What | Particulars |
 |---|---|
-| Images | Zoom and pan with the trackpad. The **Read the text** button highlights the lines found, "Copy all". The **photo info** panel: size, camera, lens, shutter, aperture, ISO, date, place (open in Maps, copy coordinates), a "Clear the information…" button. |
+| Images | Zoom and pan with the trackpad. The **Read the text** button highlights the lines found, "Copy all". The **photo info** panel: size, camera, lens, shutter, aperture, ISO, date, place (open in Maps, copy coordinates), a "Remove metadata…" button. The **Origin** section — for a picture made by a neural network: what made it (Stable Diffusion, ComfyUI, Midjourney, NovelAI, ChatGPT, Firefly…), the prompt, the negative prompt, the model and settings, C2PA content credentials. Such a picture shows itself without that section too: a "Made by a neural network" badge with a "Remove metadata…" button in the viewer's header, and a "Made by a neural network — remove metadata…" item in the context menu. What is shown is what the file says; an invisible watermark in the pixels themselves (Google's SynthID) cannot be seen this way. |
 | PDF, DjVu | A page strip (show/hide), paging. |
 | Documents | Word, Excel, Pages, Numbers and the rest — through the system engine. |
 | Text | Encoding choice, big files are truncated for viewing, binaries suggest HEX. Markdown is shown formatted: headings, lists, quotes, code blocks. |
@@ -315,8 +315,14 @@ Format (JPEG, PNG, HEIC, TIFF or keep), quality, keep photo info, size (fit into
 ### 9.10. Read the text…
 The macOS system recogniser, no internet: pictures, scans, PDF (page by page, honouring the document's own text layer). The text can be selected, copied whole or saved as `.txt` next to the file.
 
-### 9.11. Clear the shooting information…
-Removes EXIF: only the place (GPS) or all info. A copy marked "(cleaned)" or overwriting the original (irreversible). The picture is not recompressed.
+### 9.11. Remove metadata…
+Takes the hidden notes out of files — who made them, with what, when and where. Nothing is recompressed: the notes are cut out of the file, and the picture, the sound and the text stay byte for byte.
+- **Pictures** (JPEG, HEIC, PNG, TIFF, GIF, WebP): EXIF, XMP, IPTC, the place, the camera, comments, and for pictures made by neural networks — the prompt, the settings and the C2PA content credentials. The orientation and the colour profile stay — a portrait will not lie on its side.
+- **Film and sound** (MOV, MP4, M4A, WAV, AIFF): where it was shot, the camera, the program, tags; the file is put together anew from its own tracks. **MP3, FLAC** — tags and cover art.
+- **Documents**: PDF — properties, XMP, the notes inside embedded photographs, the authors of comments (links and form fields are left alone; a password-protected PDF is not rewritten). Word, Excel, PowerPoint, OpenDocument — author, company, template, dates, custom properties.
+- **Any file** — the macOS notes: where it was downloaded from, tags, the Finder comment. The "downloaded from the internet" mark stays: macOS checks the file by it before the first opening.
+
+Either everything or only the place (GPS) — the latter touches only photographs and films. A copy marked "(cleaned)" or overwriting the original (irreversible). The command is in the context menu (the tools submenu) and in the Tools menu; it appears only when the file has something to say about itself.
 
 ### 9.12. Encryption
 - **New Encrypted Vault…** — a safe-file with a size ceiling (space is taken as it fills), a password and optionally Touch ID. ↩ opens it as a folder, "Lock the vault" turns it back into a file. "Ask for the password, forget Touch ID" and "Open with Touch ID" — in the context menu.
@@ -592,7 +598,7 @@ Detailed ⌘1 · Brief ⌘2 · Thumbnails ⌘3 · Sort By ▸ · Columns ▸ · 
 Enclosing Folder ⌘↑ · Back ⌘[ · Forward ⌘] · Home ⇧⌘H · Desktop ⇧⌘D · Documents ⇧⌘O · Downloads ⌥⌘L · Applications ⇧⌘A · Pictures · Music · Movies · Root of the Disk ⇧⌘C · Favorite Folders ⌘D · Browse .app as a folder · Follow Symlink · Other Panel · Swap Panels ⌃U · Open Left Folder in Right Panel · Open Right Folder in Left Panel · Panel Proportions ▸
 
 ### Tools
-Command palette… ⌘P · F9 Search ⌘F · New Encrypted Vault… · Lock / Unlock Vault · Encrypt with a password (age)… · Decrypt… · Make a PDF… · Merge into one PDF… · Split the PDF… · Rotate the pages… · Convert the images… · Read the text… · Clear the shooting information… · Apply Rules to This Folder · Rules… · Multi-Rename… · Checksums… · Compare folders… · Compare Files… · Split file… · Join parts… · Tags ▸ · Send to ▸ · Open Disk Image the Other Way · Uninstall the program…
+Command palette… ⌘P · F9 Search ⌘F · New Encrypted Vault… · Lock / Unlock Vault · Encrypt with a password (age)… · Decrypt… · Make a PDF… · Merge into one PDF… · Split the PDF… · Rotate the pages… · Convert the images… · Read the text… · Remove metadata… · Apply Rules to This Folder · Rules… · Multi-Rename… · Checksums… · Compare folders… · Compare Files… · Split file… · Join parts… · Tags ▸ · Send to ▸ · Open Disk Image the Other Way · Uninstall the program…
 
 ### Window, Help
 Minimize ⌘M · Zoom · Totum Commander Help ⇧⌘? (a window with topics: folder comparison, checksums, tags, PDF, rules, Git, file splitting, multi-rename, monitor; with text search).

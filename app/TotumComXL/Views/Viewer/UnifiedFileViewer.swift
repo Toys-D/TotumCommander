@@ -105,6 +105,8 @@ struct UnifiedFileViewer: View {
     /// Text found INSIDE a picture (Vision), as opposed to `plainText` — the text of a text
     /// file the viewer is showing.
     @State private var pictureText: [RecognizedLine] = []
+    /// Made by a neural network, by the picture's own say-so; nil for everything else.
+    @State private var aiOrigin: AIOrigin?
     @State private var isReadingText = false
     /// Set when the button was pressed before the picture had loaded.
     @State private var wantsTextAfterLoad = false
@@ -482,6 +484,7 @@ struct UnifiedFileViewer: View {
                 bookTurnControls
                 pageCounter
                 bookmarkControls
+                aiOriginBadge
                 textRecognitionControls
                 if let onClose {
                     Button(L("button.close"), action: onClose)
@@ -503,6 +506,8 @@ struct UnifiedFileViewer: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
+        // Read beside the preview, not in its way: a few small reads of the file's own notes.
+        .task(id: targetItem?.path) { await loadAIOrigin() }
     }
 
     /// Чем показывать этот файл.
@@ -1630,6 +1635,54 @@ struct UnifiedFileViewer: View {
             }
         default:
             break
+        }
+    }
+
+    /// A picture made by a neural network says so in the header, the moment it opens — with
+    /// the way to take that out beside it. The info panel tells the whole story; this is the
+    /// headline.
+    @ViewBuilder
+    private var aiOriginBadge: some View {
+        if let origin = aiOrigin, let item = targetItem {
+            HStack(spacing: 6) {
+                HStack(spacing: 5) {
+                    AISparkleIcon().frame(width: 13, height: 13)
+                    Text(origin.headline)
+                }
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(accent.opacity(0.18)))
+                    .help(origin.prompt ?? origin.headline)
+                Button(L("metadata.clean.button")) { cleanMetadata(of: item.path) }
+                    .buttonStyle(FCXLChipButtonStyle(compact: true))
+            }
+        }
+    }
+
+    private func loadAIOrigin() async {
+        aiOrigin = nil
+        guard let item = targetItem, !item.isDirectory else { return }
+        let path = item.path
+        let found = await Task.detached(priority: .utility) { AIOrigin.ofPicture(atPath: path) }.value
+        guard !Task.isCancelled, targetItem?.path == path else { return }
+        aiOrigin = found
+    }
+
+    private func cleanMetadata(of path: String) {
+        fcxlPresentModal {
+            guard let request = DialogService.shared.showCleanMetadata(paths: [path]) else { return }
+            Task { @MainActor in
+                do {
+                    try await MetadataScrubber.clean(path: path, scope: request.scope,
+                                                     keepingOriginal: request.keepOriginal)
+                } catch {
+                    DialogService.shared.showOperationError(title: L("metadata.clean.title"),
+                                                            error: error)
+                }
+                await loadAIOrigin()
+            }
         }
     }
 

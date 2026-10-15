@@ -53,6 +53,8 @@ protocol PanelActionDelegate: AnyObject {
 /// Generic closure-based target for NSMenuItem actions.
 final class MenuItemActionTarget: NSObject {
     let callback: () -> Void
+    /// The row shows the live neural-network mark instead of its symbol (see `AISparkleView`).
+    var sparkles = false
 
     init(callback: @escaping () -> Void) {
         self.callback = callback
@@ -365,8 +367,10 @@ extension NSMenu {
                        isDestructive: Bool = false,
                        tint: NSColor? = nil,
                        id: String? = nil,
+                       sparkles: Bool = false,
                        action: @escaping () -> Void) {
         let target = MenuItemActionTarget(callback: action)
+        target.sparkles = sparkles
         let item = NSMenuItem(
             title: title,
             action: #selector(MenuItemActionTarget.invoke(_:)),
@@ -410,7 +414,8 @@ extension NSMenu {
                 MenuActionDispatch.run(item)
             }
             let view = AccentMenuItemView(title: item.title, image: item.image,
-                                          baseTextColor: baseColor, hasSubmenu: hasSub, onTap: onTap)
+                                          baseTextColor: baseColor, hasSubmenu: hasSub, onTap: onTap,
+                                          sparkles: (item.representedObject as? MenuItemActionTarget)?.sparkles ?? false)
             item.view = view
             rows.append(view)
         }
@@ -495,8 +500,11 @@ final class AccentMenuItemView: NSView {
     private let cornerRadius: CGFloat
     private let font: NSFont
     private var fixedWidth: CGFloat?
+    /// The live neural-network mark, standing in the icon column instead of a drawn symbol.
+    private var sparkle: AISparkleView?
 
-    init(title: String, image: NSImage?, baseTextColor: NSColor, hasSubmenu: Bool, onTap: (() -> Void)?) {
+    init(title: String, image: NSImage?, baseTextColor: NSColor, hasSubmenu: Bool, onTap: (() -> Void)?,
+         sparkles: Bool = false) {
         self.titleText = title
         self.iconImage = image
         self.baseTextColor = baseTextColor
@@ -510,6 +518,12 @@ final class AccentMenuItemView: NSView {
         self.font = NSFont.menuFont(ofSize: ContextMenuSettings.fontSize)
         super.init(frame: NSRect(x: 0, y: 0, width: 120, height: ContextMenuSettings.rowHeight))
         autoresizingMask = [.width]
+        if sparkles {
+            let mark = AISparkleView(frame: NSRect(x: hPad, y: (rowHeight - iconSize) / 2,
+                                                   width: iconSize, height: iconSize))
+            addSubview(mark)
+            sparkle = mark
+        }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
@@ -570,7 +584,9 @@ final class AccentMenuItemView: NSView {
 
         // Icon column is always reserved so titles align. Template images are
         // tinted to the text colour; real icons (app/swatch) are drawn as-is.
-        if let icon = iconImage {
+        if let sparkle {
+            sparkle.setHighlightColor(highlighted ? textColor : nil)
+        } else if let icon = iconImage {
             let box = NSRect(x: hPad, y: (bounds.height - iconSize) / 2, width: iconSize, height: iconSize)
             // Fit the symbol into the box keeping its aspect ratio — otherwise wide
             // symbols (e.g. "eye") get stretched to a square.

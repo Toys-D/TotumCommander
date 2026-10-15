@@ -374,7 +374,12 @@ private struct ContextPopupRow: View {
 
         Button(action: { if enabled { action() } }) {
             HStack(spacing: 7) {
-                if let image = item.image {
+                // The neural-network row wears the live mark (see AISparkleView) instead of its
+                // symbol: this window is ours, so the stars twinkle here as anywhere.
+                if (item.representedObject as? MenuItemActionTarget)?.sparkles == true {
+                    AISparkleIcon(highlight: hovering ? NSColor(textColor) : nil)
+                        .frame(width: ContextMenuSettings.iconSize, height: ContextMenuSettings.iconSize)
+                } else if let image = item.image {
                     Image(nsImage: tinted(image, to: hovering ? NSColor(textColor) : nil))
                         .resizable()
                         .aspectRatio(contentMode: .fit)

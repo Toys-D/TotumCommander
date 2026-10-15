@@ -5147,14 +5147,14 @@ final class PanelViewController: NSViewController,
                 guard let self else { return }
                 controller()?.convertImages(in: viewModel)
             }
-            // Only on a photograph that actually carries something: on a picture with no
-            // notes in it the item would do nothing and mean nothing.
-            if PhotoMetadataService.hasMetadata(path: item.path) {
-                submenu.addStyledItem(title: L("context.cleanMetadata"),
-                                      symbolName: "eye.slash", id: "context.cleanMetadata") { [weak self] in
-                    guard let self else { return }
-                    controller()?.cleanPhotoMetadata(in: viewModel)
-                }
+        }
+        // Any file — but only one that says something about itself: on a file with no notes
+        // in it or beside it the item would do nothing and mean nothing.
+        if MetadataScrubber.canClean(item) {
+            submenu.addStyledItem(title: L("context.cleanMetadata"),
+                                  symbolName: "eye.slash", id: "context.cleanMetadata") { [weak self] in
+                guard let self else { return }
+                controller()?.cleanMetadata(in: viewModel)
             }
         }
         guard submenu.numberOfItems > 0 else { return nil }
@@ -5329,6 +5329,19 @@ final class PanelViewController: NSViewController,
         if let tools = fileToolsMenuItem(for: item) {
             tools.identifier = NSUserInterfaceItemIdentifier("context.fileTools")
             menu.addItem(tools)
+        }
+
+        // A picture made by a neural network says so right here, the moment it is right-clicked,
+        // with the way to take that out in the same row — no viewer, no info panel to open.
+        if item.name != "..", !item.isDirectory, !item.isSymlink,
+           !viewModel.insideRemote, !viewModel.insideArchive,
+           let origin = AIOrigin.ofPicture(atPath: item.path) {
+            menu.addStyledItem(title: String(format: L("context.aiOrigin.named"), origin.headline),
+                               symbolName: "sparkles", id: "context.aiOrigin",
+                               sparkles: true) { [weak self] in
+                guard let self else { return }
+                (view.window?.windowController as? MainWindowController)?.cleanMetadata(in: viewModel)
+            }
         }
 
         // Marks: the colour tags and the shelf — both ways of SETTING a file aside rather than
