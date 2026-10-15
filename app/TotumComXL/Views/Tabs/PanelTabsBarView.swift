@@ -212,8 +212,7 @@ private struct TabOverflowMenuButton: NSViewRepresentable {
                 }
                 menu.addItem(item)
             }
-            let point = NSPoint(x: 0, y: sender.bounds.height + 4)
-            menu.popUp(positioning: nil, at: point, in: sender)
+            ContextPopupMenuController.shared.show(menu, below: sender)
         }
 
         @objc func selectTab(_ sender: NSMenuItem) {

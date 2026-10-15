@@ -270,7 +270,7 @@ final class SortBarRightClickView: NSView {
     override func rightMouseDown(with event: NSEvent) {
         guard let viewModel else { return }
         let menu = buildMenu(viewModel: viewModel)
-        NSMenu.popUpContextMenu(menu, with: event, for: self)
+        ContextPopupMenuController.shared.show(menu, for: event, in: self)
     }
 
     private func buildMenu(viewModel: PanelViewModel) -> NSMenu {

@@ -352,7 +352,7 @@ final class MainSplitViewController: NSViewController {
             onSyncRightToLeft: { [weak self] in self?.syncRightToLeft() },
             onPopUpMenu: { [weak self] menu in
                 guard let self, let event = NSApp.currentEvent else { return }
-                NSMenu.popUpContextMenu(menu, with: event, for: self.dividerHosting)
+                ContextPopupMenuController.shared.show(menu, for: event, in: self.dividerHosting)
             }
         )
     }
@@ -707,7 +707,7 @@ final class TunnelDropHostingView: NSHostingView<CenterDividerView> {
     /// полагаться на то, что он спросит menu(for:), нельзя.
     override func rightMouseDown(with event: NSEvent) {
         guard let menu = menu(for: event) else { return super.rightMouseDown(with: event) }
-        NSMenu.popUpContextMenu(menu, with: event, for: self)
+        ContextPopupMenuController.shared.show(menu, for: event, in: self)
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {

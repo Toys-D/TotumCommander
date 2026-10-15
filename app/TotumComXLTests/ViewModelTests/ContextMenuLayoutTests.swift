@@ -267,6 +267,32 @@ final class ContextMenuLayoutTests: XCTestCase {
         XCTAssertNil(popup.openMenuWindow, "меню погасло")
     }
 
+    /// Все меню программы — в одном окне: выпадающее под кнопкой висит под ней, а не где
+    /// курсор, и работает внутри модального окна (иначе ни одна его строка не нажмётся).
+    func test_менюПодКнопкой_ВОдномОкне() throws {
+        let window = NSWindow(contentRect: NSRect(x: 300, y: 300, width: 400, height: 300),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        addTeardownBlock { MainActor.assumeIsolated { window.orderOut(nil) } }
+        let anchor = NSView(frame: NSRect(x: 50, y: 200, width: 120, height: 24))
+        window.contentView?.addSubview(anchor)
+        window.orderFront(nil)
+        let menu = NSMenu()
+        menu.addStyledItem(title: "Первый", symbolName: "1.circle") {}
+        menu.addStyledItem(title: "Второй", symbolName: "2.circle") {}
+        let popup = ContextPopupMenuController.shared
+        addTeardownBlock { MainActor.assumeIsolated { popup.dismiss() } }
+
+        popup.show(menu, below: anchor)
+
+        let shown = try XCTUnwrap(popup.openMenuWindow)
+        let anchorOnScreen = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+        XCTAssertEqual(shown.frame.minX, anchorOnScreen.minX, accuracy: 0.5, "левый край — по кнопке")
+        XCTAssertEqual(shown.frame.maxY, anchorOnScreen.minY - 4, accuracy: 0.5, "сразу под кнопкой")
+        XCTAssertTrue(shown.worksWhenModal, "кнопки меню живы и в модальном окне")
+        XCTAssertEqual(shown.animationBehavior, .none, "системной анимации появления нет")
+        XCTAssertEqual(popup.openMenuRows.count, 2)
+    }
+
     /// Страницу с живым предпросмотром меню окно настроек узнаёт по запомненному разделу:
     /// оно достаётся из кармана, и `onAppear` страницы при повторном открытии молчит.
     func test_предпросмотрПоднимаетсяТолькоНаСвоейСтранице() {

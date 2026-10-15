@@ -3296,9 +3296,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
                      action: #selector(terminalMenuRight), keyEquivalent: "")
         for item in menu.items { item.target = self }
 
-        // Show at mouse location or center of window
+        // At the mouse, in the program's own menu window like every other menu.
         let pos = window?.mouseLocationOutsideOfEventStream ?? .zero
-        menu.popUp(positioning: nil, at: pos, in: window?.contentView)
+        let screenPoint = window?.convertPoint(toScreen: pos) ?? NSEvent.mouseLocation
+        ContextPopupMenuController.shared.show(menu, at: screenPoint)
     }
 
     @objc private func terminalMenuBottom()  { handleTerminalBottom() }

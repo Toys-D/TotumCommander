@@ -634,14 +634,15 @@ final class AccentMenuItemView: NSView {
         guard bounds.contains(p) else { super.mouseUp(with: event); return }
 
         // Submenu parent → open the submenu IMMEDIATELY on click (instead of the
-        // native hover-and-wait, which the user finds slow).
+        // native hover-and-wait, which the user finds slow) — in the program's own menu
+        // window, the one every menu of the program opens in.
         if hasSubmenu, let submenu = enclosingMenuItem?.submenu {
             let rectInWindow = convert(bounds, to: nil)
             let screenRect = window?.convertToScreen(rectInWindow) ?? rectInWindow
             let point = NSPoint(x: screenRect.maxX - 3, y: screenRect.maxY)
             enclosingMenuItem?.menu?.cancelTracking()
             DispatchQueue.main.async {
-                submenu.popUp(positioning: nil, at: point, in: nil)
+                ContextPopupMenuController.shared.show(submenu, at: point)
             }
             return
         }

@@ -31,6 +31,19 @@ final class ContextPopupMenuController {
     var openMenuRows: [NSMenuItem] { rootRows?.items ?? [] }
     var openMenuWindow: NSWindow? { panels.first }
 
+    /// Show `menu` where the mouse event happened in `view` — a right-click menu.
+    func show(_ menu: NSMenu, for event: NSEvent, in view: NSView) {
+        let point = view.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
+        show(menu, at: point)
+    }
+
+    /// Show `menu` hanging below `anchor` — a dropdown under a button or a chip.
+    func show(_ menu: NSMenu, below anchor: NSView) {
+        guard let window = anchor.window else { return show(menu, at: NSEvent.mouseLocation) }
+        let frame = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+        show(menu, at: NSPoint(x: frame.minX, y: frame.minY - 4))
+    }
+
     /// Show `menu` with its top-left near `screenPoint` (AppKit screen coords).
     func show(_ menu: NSMenu, at screenPoint: NSPoint) {
         dismiss()
@@ -111,6 +124,9 @@ final class ContextPopupMenuController {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hidesOnDeactivate = false
+        // A dropdown inside a modal dialog is this same window: it must take clicks while the
+        // dialog runs its modal loop, or every row in it would be dead.
+        panel.worksWhenModal = true
         // No system show/hide animation: from macOS 27 a panel at menu level gets the native
         // submenu's slide-in from the side, on top of the rows' own top-down reveal — two
         // motions at once, and the menu looked like it flew in. The reveal is ours alone.

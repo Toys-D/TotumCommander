@@ -334,7 +334,7 @@ struct FCXLDialogMenuPicker<Item: Hashable>: View {
                 }
             }
             menu.applyAccentStyle()
-            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.height + 4), in: anchor)
+            ContextPopupMenuController.shared.show(menu, below: anchor)
         }) {
             HStack(spacing: compact ? 4 : 6) {
                 if let icon {
@@ -520,7 +520,7 @@ struct FCXLBarMenu<Item: Hashable>: View {
                 }
             }
             menu.applyAccentStyle()
-            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.height + 4), in: anchor)
+            ContextPopupMenuController.shared.show(menu, below: anchor)
         }) {
             FCXLBarItem(isOn: isOn, isHovered: isHovered) {
                 HStack(spacing: 4) {

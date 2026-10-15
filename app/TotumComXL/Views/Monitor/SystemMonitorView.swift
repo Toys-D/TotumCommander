@@ -194,7 +194,7 @@ struct SystemMonitorView: View {
                 ], current: service.updateInterval) { service.updateInterval = $0 }
 
                 menu.applyAccentStyle()
-                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.height + 4), in: anchor)
+                ContextPopupMenuController.shared.show(menu, below: anchor)
             }) {
                 Image(systemName: "ellipsis.circle").font(.system(size: 15))
                     .contentShape(Rectangle())
