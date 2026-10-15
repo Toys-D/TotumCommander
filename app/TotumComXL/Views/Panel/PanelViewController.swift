@@ -2586,14 +2586,10 @@ final class PanelViewController: NSViewController,
                let volumeName = tabPath.dropFirst("/Volumes/".count).split(separator: "/").first {
                 let volumePath = "/Volumes/" + String(volumeName)
                 DispatchQueue.global(qos: .userInitiated).async {
-                    let proc = Process()
-                    proc.executableURL = URL(fileURLWithPath: "/usr/sbin/diskutil")
-                    proc.arguments = ["unmount", volumePath]
-                    proc.standardOutput = Pipe()
-                    proc.standardError = Pipe()
-                    try? proc.run()
-                    proc.waitUntilExit()
-                    NSLog("[NetworkMount] Unmounted %@ (exit %d)", volumePath, proc.terminationStatus)
+                    let started = Date()
+                    let outcome = VolumeUnmount.unmount(path: volumePath)
+                    MountTrace.log("Закрытие вкладки «\(volumeName)»: диспетчер ответил \(outcome)",
+                                   since: started)
                 }
             }
             if isClosingActiveTab {

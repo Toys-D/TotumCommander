@@ -705,14 +705,19 @@ struct PanelVolumeBar: View {
 
         // Actually start the eject: stop watchers, navigate both panels away, then unmount after
         // a short delay so file handles close first. Network volumes need a longer delay.
+        let clicked = Date()
+        MountTrace.log("Извлечение «\(label)» (\(isNetwork ? "сетевой" : "локальный")): нажато")
         let startEject = {
             controller?.prepareForVolumeEject(volumeRoot)
-            let delay: Double = isNetwork ? 1.0 : 0.5
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                if isNetwork {
-                    // Network volumes: use diskutil unmount (more reliable for SMB/AFP)
-                    self.unmountNetworkVolume(path: volumeRoot, label: label)
-                } else {
+            MountTrace.log("Извлечение «\(label)»: панели уведены с тома", since: clicked)
+            if isNetwork {
+                // Сразу: сетевой том отключается через диспетчер дисков, и если какой-то
+                // файл ещё не успел закрыться, диспетчер так и скажет — тогда повторим.
+                // Пауза в секунду «чтобы файлы закрылись» стояла здесь раньше и была
+                // большей частью того, за что эту кнопку звали задумчивой.
+                self.unmountNetworkVolume(path: volumeRoot, label: label, since: clicked)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     self.ejectLocalVolume(volumeRoot: volumeRoot, label: label)
                 }
             }
@@ -900,12 +905,22 @@ struct PanelVolumeBar: View {
     /// Unmount a network volume using diskutil (more reliable than NSWorkspace for SMB/AFP).
     /// If the graceful unmount fails (the share is busy), ASK before force-unmounting — a silent
     /// force can tear the share out from under an in-flight transfer and corrupt data.
-    private func unmountNetworkVolume(path: String, label: String) {
+    private func unmountNetworkVolume(path: String, label: String, since clicked: Date) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = Self.runDiskutil(["unmount", path])
-            if result.code == 0 {
+            // Занят — значит, панель ещё не отпустила папку: две короткие повторные попытки
+            // укладываются в то время, что раньше стояло паузой, а обычно не нужны вовсе.
+            var outcome = VolumeUnmount.Outcome.busy
+            for attempt in 0..<3 {
+                if attempt > 0 { Thread.sleep(forTimeInterval: 0.4) }
+                outcome = VolumeUnmount.unmount(path: path)
+                MountTrace.log("Отключение «\(label)»: диспетчер ответил \(outcome) (попытка \(attempt + 1))",
+                               since: clicked)
+                if outcome != .busy { break }
+            }
+            if outcome == .done {
                 DispatchQueue.main.async {
                     NotificationCenter.default.post(name: .volumeBarNeedsRefresh, object: nil)
+                    MountTrace.log("Отключение «\(label)»: полоса дисков обновлена", since: clicked)
                 }
                 return
             }
@@ -928,17 +943,19 @@ struct PanelVolumeBar: View {
         }
     }
 
-    /// Force-unmount a busy network share (no `diskutil eject` — network mounts aren't ejected).
+    /// Force-unmount a busy network share (network mounts are unmounted, never ejected).
     private static func forceUnmountNetwork(path: String, label: String) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = runDiskutil(["unmount", "force", path])
+            let outcome = VolumeUnmount.unmount(path: path, force: true)
+            MountTrace.log("Отключение «\(label)» силой: диспетчер ответил \(outcome)")
             DispatchQueue.main.async {
-                if result.code == 0 || !FileManager.default.fileExists(atPath: path) {
+                if outcome == .done || !FileManager.default.fileExists(atPath: path) {
                     NotificationCenter.default.post(name: .volumeBarNeedsRefresh, object: nil)
                 } else {
-                    DialogService.shared.showError(
-                        title: L("volume.eject.failed.title"),
-                        message: result.err.isEmpty ? L("volume.eject.forceFailed", label) : result.err)
+                    let reason: String
+                    if case .failed(let text) = outcome, !text.isEmpty { reason = text }
+                    else { reason = L("volume.eject.forceFailed", label) }
+                    DialogService.shared.showError(title: L("volume.eject.failed.title"), message: reason)
                 }
             }
         }

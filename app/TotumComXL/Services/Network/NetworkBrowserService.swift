@@ -362,6 +362,66 @@ final class NetworkBrowserService {
         }
     }
 
+    // MARK: - The name to connect by
+
+    /// Имя, по которому к компьютеру идут подключения и запросы общих папок, — вместо адреса.
+    ///
+    /// Finder ходит к Windows по имени, и сервер отвечает ему за полсекунды; та же просьба
+    /// по адресу у того же сервера занимает три с лишним (замерено `smbutil view`). Имя
+    /// годится только то, которое NetBIOS сам возвращает на этот же адрес: выдуманное —
+    /// от Bonjour или обратного DNS без домена — не разрешится, и подключение ждало бы
+    /// впустую. Ответ запоминается на сеанс: NetBIOS спрашивают один раз.
+    private var connectHosts: [String: String] = [:]
+
+    func connectHost(for host: DiscoveredHost) async -> String {
+        let address = host.host
+        if let known = connectHosts[address] { return known }
+        guard Self.looksLikeIPv4(address), !host.name.isEmpty, host.name != address else { return address }
+        let name = host.name
+        let resolved = await Task.detached(priority: .userInitiated) { Self.netBIOSAddress(of: name) }.value
+        let chosen = resolved == address ? name : address
+        connectHosts[address] = chosen
+        if chosen != address { Self.log.notice("К \(address, privacy: .public) — по имени \(name, privacy: .public)") }
+        return chosen
+    }
+
+    nonisolated static func looksLikeIPv4(_ text: String) -> Bool {
+        let parts = text.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count == 4 && parts.allSatisfy { !$0.isEmpty && $0.count <= 3 && $0.allSatisfy(\.isNumber) }
+    }
+
+    /// `smbutil lookup NAME` → адрес, который NetBIOS даёт этому имени; nil, если никто
+    /// не отозвался. Полторы секунды — тот же предел, что у обратного вопроса «как зовут».
+    nonisolated static func netBIOSAddress(of name: String) -> String? {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/smbutil")
+        proc.arguments = ["lookup", name]
+        let outPipe = Pipe()
+        proc.standardOutput = outPipe
+        proc.standardError = Pipe()
+        do { try proc.run() } catch { return nil }
+        let timer = DispatchSource.makeTimerSource(queue: .global())
+        timer.schedule(deadline: .now() + 1.5)
+        timer.setEventHandler { [weak proc] in if proc?.isRunning == true { proc?.terminate() } }
+        timer.resume()
+        let output = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        proc.waitUntilExit()
+        timer.cancel()
+        guard proc.terminationStatus == 0 else { return nil }
+        return parseNetBIOSLookup(output)
+    }
+
+    /// "IP address of server_so: 192.168.0.169" → "192.168.0.169".
+    nonisolated static func parseNetBIOSLookup(_ output: String) -> String? {
+        for line in output.components(separatedBy: "\n") {
+            guard let colon = line.range(of: ":", options: .backwards),
+                  line.lowercased().hasPrefix("ip address of") else { continue }
+            let address = line[colon.upperBound...].trimmingCharacters(in: .whitespaces)
+            if looksLikeIPv4(address) { return address }
+        }
+        return nil
+    }
+
     // MARK: - List Shares
 
     /// List SMB shares on a host via `smbutil view`.
@@ -373,12 +433,15 @@ final class NetworkBrowserService {
         guard let host = discoveredHosts.first(where: { $0.name == computerName }) else {
             return SharesResult(shares: [], cancelled: false)
         }
-        let hostname = host.host
+        let hostname = await connectHost(for: host)
+        let started = Date()
 
+        // Гостем сразу там, где входили гостем: первый запрос по связке ключей ушёл бы впустую.
+        let guestFirst = NetworkGuestMemory.isGuest(hostname)
         var listing = await Task.detached(priority: .userInitiated) {
-            Self.runSmbutil(host: hostname, asGuest: false)
+            Self.runSmbutil(host: hostname, asGuest: guestFirst)
         }.value
-        if listing.shares.isEmpty {
+        if listing.shares.isEmpty, !guestFirst {
             listing = await Task.detached(priority: .userInitiated) {
                 Self.runSmbutil(host: hostname, asGuest: true)
             }.value
@@ -387,11 +450,13 @@ final class NetworkBrowserService {
         // silent, gone or simply has no shares is not.
         var cancelled = false
         if listing.shares.isEmpty, listing.failure == .authentication {
+            if guestFirst { NetworkGuestMemory.forget(hostname) }
             let answered = await Self.listSharesWithOwnAuth(host: hostname)
             listing.shares = answered.shares
             cancelled = answered.cancelled
         }
         let shares = listing.shares
+        MountTrace.log("Папки \(hostname): \(shares.count)", since: started)
 
         let items = shares.map { name in
             FileItem(
@@ -433,7 +498,9 @@ final class NetworkBrowserService {
                     : runSmbutil(host: host, account: answer.account, password: answer.password)
             }.value
             if !listing.shares.isEmpty {
-                if answer.remember, !answer.asGuest {
+                if answer.asGuest {
+                    NetworkGuestMemory.remember(host)
+                } else if answer.remember {
                     NetworkCredentialStore.save(server: host, scheme: "smb",
                                                 account: answer.account, password: answer.password)
                 }
@@ -455,15 +522,16 @@ final class NetworkBrowserService {
     func mountShare(computerName: String, shareName: String) async -> String? {
         guard let host = discoveredHosts.first(where: { $0.name == computerName }) else { return nil }
         let scheme = host.proto == "AFP" ? "afp" : "smb"
-        let hostname = host.host
+        let hostname = await connectHost(for: host)
 
-        // Build URL: smb://hostname.local/ShareName
-        var components = URLComponents()
-        components.scheme = scheme
-        components.host = hostname
-        components.path = "/\(shareName)"
-
-        guard let shareURL = components.url else {
+        func url(host: String) -> URL? {
+            var components = URLComponents()
+            components.scheme = scheme
+            components.host = host
+            components.path = "/\(shareName)"
+            return components.url
+        }
+        guard let shareURL = url(host: hostname) else {
             NSLog("[NetworkBrowser] Invalid URL for %@/%@", hostname, shareName)
             return nil
         }
@@ -471,7 +539,15 @@ final class NetworkBrowserService {
         NSLog("[NetworkBrowser] Mounting %@", shareURL.absoluteString)
 
         // Through the one mount that asks for a login in our own window.
-        let result = await Self.mountWithOwnAuth(url: shareURL, shareName: shareName)
+        var result = await Self.mountWithOwnAuth(url: shareURL, shareName: shareName)
+        // The name did not get through (not a login problem — the server was not found by it):
+        // once more by the address, and the address from now on.
+        if result.path == nil, result.status != 0, !Self.isAuthFailure(result.status),
+           result.status != Int32(ECANCELED), hostname != host.host, let byAddress = url(host: host.host) {
+            connectHosts[host.host] = host.host
+            MountTrace.log("Подключение \(hostname): не вышло (\(result.status)), снова по адресу \(host.host)")
+            result = await Self.mountWithOwnAuth(url: byAddress, shareName: shareName)
+        }
         if let mp = result.path {
             NSLog("[NetworkBrowser] Mounted at %@", mp)
             return mp
@@ -513,12 +589,17 @@ final class NetworkBrowserService {
         if asGuest { openOptions[kNetFSUseGuestKey] = true }
 
         var mountPoints: Unmanaged<CFArray>?
+        let started = Date()
+        let who = asGuest ? "гость" : (account == nil ? "из связки ключей" : "с логином")
+        MountTrace.log("Подключение \(url.host ?? "")\(url.path) (\(who)): NetFS запущен")
         let status = NetFSMountURLSync(url as CFURL, nil,
                                        account as CFString?, password as CFString?,
                                        openOptions as CFMutableDictionary, nil, &mountPoints)
+        MountTrace.log("Подключение \(url.host ?? "")\(url.path): NetFS ответил \(status)", since: started)
         guard status == 0 else { return (nil, status) }
         if let pts = mountPoints?.takeRetainedValue() as? [String], let mp = pts.first {
             waitUntilReadable(mp)
+            MountTrace.log("Подключение \(url.host ?? "")\(url.path): том \(mp) читается", since: started)
             return (mp, 0)
         }
         return (nil, 0)
@@ -535,11 +616,15 @@ final class NetworkBrowserService {
         let server = url.host ?? ""
         let scheme = url.scheme ?? "smb"
 
+        // Гостем сразу, если сюда входили гостем: иначе первая попытка (по связке ключей)
+        // уходит впустую, а человек каждый раз снова нажимает «Гость».
+        let rememberedGuest = NetworkGuestMemory.isGuest(server)
         var result = await Task.detached(priority: .userInitiated) {
-            mountAttempt(url: url, account: nil, password: nil, asGuest: false)
+            mountAttempt(url: url, account: nil, password: nil, asGuest: rememberedGuest)
         }.value
         if result.status == 0 { return result }
         guard isAuthFailure(result.status), !server.isEmpty else { return result }
+        if rememberedGuest { NetworkGuestMemory.forget(server) }
 
         let saved = NetworkCredentialStore.lookup(server: server, scheme: scheme)
         var suggested = saved?.account ?? NetworkAuthDialog.defaultAccount
@@ -559,7 +644,9 @@ final class NetworkBrowserService {
             }.value
 
             if result.status == 0 {
-                if answer.remember {
+                if answer.asGuest {
+                    NetworkGuestMemory.remember(server)
+                } else if answer.remember {
                     NetworkCredentialStore.save(server: server, scheme: scheme,
                                                 account: answer.account, password: answer.password)
                 }

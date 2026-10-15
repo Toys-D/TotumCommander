@@ -111,6 +111,10 @@ final class ContextPopupMenuController {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hidesOnDeactivate = false
+        // No system show/hide animation: from macOS 27 a panel at menu level gets the native
+        // submenu's slide-in from the side, on top of the rows' own top-down reveal — two
+        // motions at once, and the menu looked like it flew in. The reveal is ours alone.
+        panel.animationBehavior = .none
         panel.contentViewController = host
         panel.setContentSize(size)
         if level == 0 {
@@ -155,6 +159,14 @@ final class ContextPopupMenuController {
         panels.append(child)
         while openedFor.count < panels.count { openedFor.append(nil) }
         openedFor[panels.count - 1] = ObjectIdentifier(item)
+    }
+
+    /// Open the submenu of row `index` of the open menu, as a click on that row would. For the
+    /// checks, which have no pointer to click with.
+    func openSubmenu(ofRow index: Int) {
+        guard let rows = rootRows, rows.items.indices.contains(index) else { return }
+        openSubmenu(rows.items[index], fromLevel: 0,
+                    rowTopInPanel: ContextPopupMenuView.rowTop(forIndex: index, in: rows.items))
     }
 
     /// Drop every panel deeper than `level` — what happens when the pointer settles on a row
@@ -337,6 +349,10 @@ private struct ContextPopupMenuView: View {
 
     /// Approximate row-top within the panel for submenu alignment.
     private func rowTop(forIndex index: Int) -> CGFloat {
+        Self.rowTop(forIndex: index, in: items)
+    }
+
+    static func rowTop(forIndex index: Int, in items: [NSMenuItem]) -> CGFloat {
         var y: CGFloat = 6   // top padding
         for i in 0..<index {
             y += items[i].isSeparatorItem ? (1 + 6) : (ContextMenuSettings.rowHeight + 1)
