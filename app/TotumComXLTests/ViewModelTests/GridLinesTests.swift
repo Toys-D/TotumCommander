@@ -74,6 +74,15 @@ final class GridLinesTests: XCTestCase {
         XCTAssertEqual(vertical, [NSRect(x: 199.5, y: 0, width: 1, height: 60),
                                   NSRect(x: 399.5, y: 0, width: 1, height: 60)])
 
+        // С промежутком: горизонтальные линии шагают на ширину + промежуток и в него не заходят,
+        // вертикальная стоит посередине промежутка.
+        let gapped = GridLines.brief(itemCount: 7, rowsPerColumn: 3, itemWidth: 200, itemHeight: 20,
+                                     columnGap: 10, style: .init(horizontal: true))
+        XCTAssertEqual(gapped[3], NSRect(x: 210, y: 19.5, width: 200, height: 1))
+        XCTAssertEqual(GridLines.brief(itemCount: 7, rowsPerColumn: 3, itemWidth: 200, itemHeight: 20,
+                                       columnGap: 10, style: .init(vertical: true)).first,
+                       NSRect(x: 204.5, y: 0, width: 1, height: 60))
+
         XCTAssertTrue(GridLines.brief(itemCount: 2, rowsPerColumn: 3, itemWidth: 200, itemHeight: 20,
                                       style: .init(vertical: true)).isEmpty, "одна колонка — вертикальных нет")
         XCTAssertTrue(GridLines.brief(itemCount: 0, rowsPerColumn: 3, itemWidth: 200, itemHeight: 20,

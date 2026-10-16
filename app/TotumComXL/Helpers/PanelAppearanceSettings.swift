@@ -136,6 +136,16 @@ enum PanelAppearanceSettings {
         return CGFloat(max(0, min(40, raw)))
     }
 
+    /// Промежуток между столбцами краткого режима и между эскизами, в пунктах. Один на оба
+    /// режима — по слову пользователя. 4 — как всегда было у эскизов; столбцы краткого режима
+    /// раньше клались вплотную, и расширение одного касалось значка следующего.
+    static let columnGapKey = "gridColumnGap"
+    static let defaultColumnGap: Double = 4
+    static var resolvedColumnGap: CGFloat {
+        let raw = UserDefaults.standard.object(forKey: columnGapKey) as? Double ?? defaultColumnGap
+        return CGFloat(max(0, min(40, raw)))
+    }
+
     // MARK: - File-list typography
     /// Font family ("" = system), point size, bold flag, and extra line spacing added to the
     /// row height. A separate switch enlarges the text on the cursor row.

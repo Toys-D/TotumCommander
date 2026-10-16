@@ -42,22 +42,25 @@ enum GridLines {
     /// элемент `i` стоит в колонке `i / rowsPerColumn` и строке `i % rowsPerColumn`.
     /// Горизонтальные — под каждым элементом в ширину его колонки; вертикальные — между
     /// колонками, на высоту полной колонки (левая у любой границы всегда полная).
+    /// `columnGap` — промежуток между столбцами: горизонтальные линии не заходят в него,
+    /// вертикальная стоит посередине него.
     static func brief(itemCount: Int, rowsPerColumn: Int, itemWidth: CGFloat, itemHeight: CGFloat,
-                      style: Style) -> [NSRect] {
+                      columnGap: CGFloat = 0, style: Style) -> [NSRect] {
         guard itemCount > 0, rowsPerColumn > 0, itemWidth > 0, itemHeight > 0 else { return [] }
         let columns = (itemCount + rowsPerColumn - 1) / rowsPerColumn
+        let pitch = itemWidth + max(0, columnGap)
         var lines: [NSRect] = []
         if style.horizontal {
             for item in 0..<itemCount {
                 let column = item / rowsPerColumn, row = item % rowsPerColumn
-                lines.append(NSRect(x: CGFloat(column) * itemWidth,
+                lines.append(NSRect(x: CGFloat(column) * pitch,
                                     y: CGFloat(row + 1) * itemHeight - thickness / 2,
                                     width: itemWidth, height: thickness))
             }
         }
         if style.vertical, columns > 1 {
             for column in 1..<columns {
-                lines.append(NSRect(x: CGFloat(column) * itemWidth - thickness / 2, y: 0,
+                lines.append(NSRect(x: CGFloat(column) * pitch - max(0, columnGap) / 2 - thickness / 2, y: 0,
                                     width: thickness, height: CGFloat(rowsPerColumn) * itemHeight))
             }
         }

@@ -460,7 +460,7 @@ The colours of the interface, cursor and tabs, the file-colour rules and the fol
 ### List view
 - **Sorting** — the default field and direction; "Remember sorting in every folder" (section 2.2).
 - **Git state** — show Git marks in the list (section 2.6).
-- **List rows** — brief-mode column width, row height, icon scale, gap between name and icon, icon inset from the edge (in detailed and brief modes).
+- **List rows** — brief-mode column width, row height, icon scale, gap between name and icon, icon inset from the edge (in detailed and brief modes), gap between columns (between brief-mode columns and between thumbnails).
 - **Thumbnails mode** — tile size.
 - **The ".." icon** — kind (chevrons, arrow, to the top level…), scale and weight.
 

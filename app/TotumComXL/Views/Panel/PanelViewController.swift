@@ -1291,6 +1291,7 @@ final class PanelViewController: NSViewController,
         PanelAppearanceSettings.cursorFontZoomEnabledKey,
         PanelAppearanceSettings.cursorFontZoomAmountKey,
         PanelAppearanceSettings.iconEdgeInsetKey,
+        PanelAppearanceSettings.columnGapKey,
     ]
 
     /// Keys that only affect the detailed-mode feathered cursor glow (the SwiftUI modes
@@ -6144,6 +6145,7 @@ private struct AlternateFileListWrapper: View {
     let onCancelRename: () -> Void
 
     @AppStorage("briefColumnWidth") private var briefItemWidth: Double = 190
+    @AppStorage(PanelAppearanceSettings.columnGapKey) private var columnGap: Double = PanelAppearanceSettings.defaultColumnGap
     @AppStorage("briefRowHeight") private var briefRowHeight: Double = 26
     @AppStorage(PanelAppearanceSettings.iconScaleKey) private var iconScale: Double = PanelAppearanceSettings.defaultIconScale
     @AppStorage(PanelAppearanceSettings.folderNameColorHexKey) private var folderNameColorHex: String = ""
@@ -6220,11 +6222,11 @@ private struct AlternateFileListWrapper: View {
                 viewModel: viewModel,
                 isActive: isActive,
                 itemWidth: CGFloat(briefItemWidth),
-                // The cell grows for a big icon here too, so the scale setting means the same
-                // thing in every mode instead of quietly stopping at the row's height.
-                itemHeight: max(PanelAppearanceSettings.resolvedListRowHeight,
-                                CGFloat(16) * CGFloat(max(iconScale,
-                                                          PanelAppearanceSettings.minimumIconScale)) + 4),
+                columnGap: CGFloat(columnGap),
+                // The row is as tall as the person set it, as in the detailed list: a big icon
+                // overflows the row rather than propping it up — the height slider used to stop
+                // at the icon (16 × 2.17 + 4 ≈ 38) and go no lower, while the detailed list obeyed.
+                itemHeight: PanelAppearanceSettings.resolvedListRowHeight,
                 iconSize: max(10, CGFloat(16) * CGFloat(max(iconScale,
                                                             PanelAppearanceSettings.minimumIconScale))),
                 folderIconStyle: resolvedFolderIconStyle,
@@ -6274,6 +6276,7 @@ private struct AlternateFileListWrapper: View {
                 viewModel: viewModel,
                 isActive: isActive,
                 cellSize: thumbnailCellSize,
+                cellGap: CGFloat(columnGap),
                 previewSize: thumbnailPreviewSize,
                 useQuickLookPreviews: true,
                 folderIconStyle: resolvedFolderIconStyle,

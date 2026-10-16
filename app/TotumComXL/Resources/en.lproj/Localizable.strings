@@ -205,6 +205,8 @@
 "upicon.squareInset" = "Square with center";
 "upicon.toLine" = "To top level";
 "design.iconNameGap" = "Name offset from icon";
+"design.columnGap" = "Gap between columns";
+"design.columnGapHint" = "The gap applies between brief-mode columns and between thumbnails.";
 "diskinfo.title" = "Disk information";
 "diskinfo.refresh" = "Refresh";
 "diskinfo.done" = "Done";

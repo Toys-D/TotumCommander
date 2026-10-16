@@ -210,6 +210,8 @@
 "upicon.squareInset" = "Квадрат с центром";
 "upicon.toLine" = "К верхнему уровню";
 "design.iconNameGap" = "Отступ названия от иконки";
+"design.columnGap" = "Промежуток между столбцами";
+"design.columnGapHint" = "Промежуток — между столбцами краткого режима и между эскизами.";
 "diskinfo.title" = "Информация о дисках";
 "diskinfo.refresh" = "Обновить";
 "diskinfo.done" = "Готово";

@@ -30,6 +30,7 @@ final class FileListThumbnailsViewTests: XCTestCase {
             viewModel: view.viewModel,
             isActive: view.isActive,
             cellSize: view.cellSize,
+            cellGap: view.cellGap,
             previewSize: view.previewSize,
             useQuickLookPreviews: true,
             folderIconStyle: view.folderIconStyle,
@@ -67,6 +68,11 @@ final class FileListThumbnailsViewTests: XCTestCase {
         coordinator.updateColumnsPerRow(forVisibleWidth: 340)
 
         XCTAssertEqual(capturedColumns, 3)
+
+        // Шире промежуток — меньше столбцов на той же ширине: 340 − 8 + 20 = 352, по 120 на
+        // каждый — два, а не три.
+        coordinator.updateColumnsPerRow(forVisibleWidth: 340, spacing: 20)
+        XCTAssertEqual(capturedColumns, 2)
     }
 
     /// Та же рамка переноса в миниатюрах: после перезагрузки — только на папке, после
@@ -105,6 +111,7 @@ final class FileListThumbnailsViewTests: XCTestCase {
             viewModel: viewModel,
             isActive: true,
             cellSize: 100,
+            cellGap: 4,
             previewSize: 64,
             useQuickLookPreviews: true,
             folderIconStyle: .macos,

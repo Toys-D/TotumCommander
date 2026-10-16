@@ -17,6 +17,9 @@ final class BriefFlowLayout: NSCollectionViewFlowLayout {
     private var cache: [NSCollectionViewLayoutAttributes] = []
     private var computedContentSize: NSSize = .zero
 
+    /// Промежуток между столбцами: шаг столбца = ширина ячейки + промежуток.
+    var columnGap: CGFloat = 0
+
     /// True when the last prepare() bailed because the collection was still 0-height
     /// (mode-switch transient).  A zero content size suppresses the automatic
     /// bounds-change re-layout, so BriefCollectionView.layout() watches this flag and
@@ -57,21 +60,24 @@ final class BriefFlowLayout: NSCollectionViewFlowLayout {
         }
 
         let rowsPerColumn = max(1, Int(floor(availableHeight / h)))
+        let gap = max(0, columnGap)
+        let pitch = w + gap
 
         cache.reserveCapacity(totalItems)
         for i in 0..<totalItems {
             let col = i / rowsPerColumn
             let row = i % rowsPerColumn
             let attr = NSCollectionViewLayoutAttributes(forItemWith: IndexPath(item: i, section: 0))
-            attr.frame = NSRect(x: CGFloat(col) * w,
+            attr.frame = NSRect(x: CGFloat(col) * pitch,
                                 y: CGFloat(row) * h,
                                 width: w,
                                 height: h)
             cache.append(attr)
         }
 
+        // Без промежутка после последнего столбца: он нужен между столбцами, а не за краем.
         let totalColumns = (totalItems + rowsPerColumn - 1) / rowsPerColumn
-        computedContentSize = NSSize(width: CGFloat(totalColumns) * w,
+        computedContentSize = NSSize(width: max(0, CGFloat(totalColumns) * pitch - gap),
                                      height: availableHeight)
     }
 
@@ -127,6 +133,8 @@ struct FileListBriefView: NSViewRepresentable {
     @ObservedObject var viewModel: PanelViewModel
     let isActive: Bool
     let itemWidth: CGFloat
+    /// Промежуток между столбцами (настройка, общая с эскизами).
+    let columnGap: CGFloat
     let itemHeight: CGFloat
     let iconSize: CGFloat
     let folderIconStyle: FolderIconStyle
@@ -188,6 +196,7 @@ struct FileListBriefView: NSViewRepresentable {
         scrollView.drawsBackground = false
 
         let layout = BriefFlowLayout()
+        layout.columnGap = columnGap
         layout.scrollDirection = .horizontal
         layout.minimumInteritemSpacing = 0
         layout.minimumLineSpacing = 0
@@ -288,8 +297,11 @@ struct FileListBriefView: NSViewRepresentable {
             coordinator?.updateRowsPerColumn(forVisibleHeight: visibleHeight)
         }
 
-        if layout.itemSize.width != itemWidth || layout.itemSize.height != itemHeight {
+        let brief = layout as? BriefFlowLayout
+        if layout.itemSize.width != itemWidth || layout.itemSize.height != itemHeight
+            || brief?.columnGap != columnGap {
             layout.itemSize = NSSize(width: itemWidth, height: itemHeight)
+            brief?.columnGap = columnGap
             layout.invalidateLayout()
         }
 
@@ -501,6 +513,7 @@ struct FileListBriefView: NSViewRepresentable {
             cv.gridLineColor = PanelAppearanceSettings.resolvedGridLineColor()
             cv.gridStyle = PanelAppearanceSettings.resolvedGridStyle()
             cv.gridItemWidth = parent.itemWidth
+            cv.gridColumnGap = parent.columnGap
             cv.cursorGlowBlur = parent.cursorBlur   // may be 0 → sharp-edged bar
             cv.cursorGlowHeightFraction = parent.cursorHeightFraction
             cv.cursorGlowWidthFraction = parent.cursorWidthFraction
@@ -971,6 +984,7 @@ final class BriefCollectionView: NSCollectionView {
     var gridLineColor: NSColor? { didSet { needsDisplay = true } }
     var gridStyle = GridLines.Style() { didSet { needsDisplay = true } }
     var gridItemWidth: CGFloat = 0 { didSet { needsDisplay = true } }
+    var gridColumnGap: CGFloat = 0 { didSet { needsDisplay = true } }
 
     var cursorGlowFrame: NSRect? { didSet { needsDisplay = true } }
     var cursorGlowColor: NSColor = .selectedContentBackgroundColor { didSet { needsDisplay = true } }
@@ -1010,7 +1024,7 @@ final class BriefCollectionView: NSCollectionView {
             let lines = GridLines.brief(itemCount: numberOfItems(inSection: 0),
                                         rowsPerColumn: alternateRowCount,
                                         itemWidth: gridItemWidth, itemHeight: alternateRowHeight,
-                                        style: gridStyle)
+                                        columnGap: gridColumnGap, style: gridStyle)
             for line in lines where line.intersects(dirtyRect) { line.fill() }
         }
     }
@@ -1375,7 +1389,10 @@ final class BriefItemView: NSView, DropRingCell {
     private var liftRatio: CGFloat = 1
 
     var isCursor = false {
-        didSet { needsDisplay = true }
+        didSet {
+            needsDisplay = true
+            layer?.zPosition = FileListRowView.zPosition(isCursor: isCursor)
+        }
     }
     var isItemSelected = false {
         didSet {
@@ -1395,6 +1412,10 @@ final class BriefItemView: NSView, DropRingCell {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        // Как строка подробного списка: ячейка не режет содержимое по своим краям, и под
+        // курсором лежит над соседями — иконка крупнее строки выходит на них, как свечение.
+        clipsToBounds = false
+        wantsLayer = true
 
         iconView.imageScaling = .scaleProportionallyDown
         iconView.translatesAutoresizingMaskIntoConstraints = false

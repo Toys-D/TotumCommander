@@ -68,6 +68,7 @@ enum SettingsSearchIndex {
             ("design.iconScale", nil),
             ("design.iconNameGap", nil),
             ("settings.performance.iconEdgeInset", nil),
+            ("design.columnGap", nil),
             ("design.thumbnailSize", "design.section.rows"),
             ("design.upIcon.kind", "design.section.thumbnails"),
             ("design.upIcon.scale", "design.section.thumbnails"),

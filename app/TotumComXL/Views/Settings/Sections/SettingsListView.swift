@@ -13,6 +13,8 @@ struct SettingsListView: View {
     // about what a folder icon looks like.
     @AppStorage(PanelAppearanceSettings.iconEdgeInsetKey) private var iconEdgeInset: Double =
         PanelAppearanceSettings.defaultIconEdgeInset
+    @AppStorage(PanelAppearanceSettings.columnGapKey) private var columnGap: Double =
+        PanelAppearanceSettings.defaultColumnGap
 
     @AppStorage(PanelAppearanceSettings.gitStatusEnabledKey) private var showGitStatus = true
 
@@ -59,7 +61,7 @@ struct SettingsListView: View {
             // относится каждый, и подписи под отдельными строками больше не нужны — они
             // висели посреди списка и читались как приписка к соседнему ползунку.
             Section {
-                row(L("design.briefColumnWidth"), value: $briefColumnWidth, in: 120...400, step: 10,
+                row(L("design.briefColumnWidth"), value: $briefColumnWidth, in: 120...800, step: 10,
                     display: "\(Int(briefColumnWidth)) \(L("unit.pixels"))")
                 row(L("design.rowHeight"), value: $briefRowHeight, in: 18...60, step: 0.5,
                     display: String(format: "%.1f \(L("unit.pixels"))", briefRowHeight))
@@ -72,10 +74,12 @@ struct SettingsListView: View {
                 row(L("settings.performance.iconEdgeInset"), value: $iconEdgeInset,
                     in: 0...40, step: 1,
                     display: "\(Int(iconEdgeInset)) \(L("unit.pixels"))")
+                row(L("design.columnGap"), value: $columnGap, in: 0...40, step: 1,
+                    display: "\(Int(columnGap)) \(L("unit.pixels"))")
             } header: {
                 Text(L("design.section.rows"))
             } footer: {
-                Text(L("settings.performance.iconEdgeInsetHint"))
+                Text(L("settings.performance.iconEdgeInsetHint") + "\n" + L("design.columnGapHint"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -139,11 +139,60 @@ final class FileListBriefViewTests: XCTestCase {
         XCTAssertEqual(try chipTooltip(), String(format: L("folderNews.tooltip"), 12), "«+12» — без смены списка")
     }
 
+    /// Промежуток между столбцами: ячейки шагают на ширину + промежуток, последний столбец
+    /// без хвоста, высота строки не трогается.
+    func test_промежутокМеждуСтолбцами() {
+        final class Seven: NSObject, NSCollectionViewDataSource {
+            func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int { 7 }
+            func collectionView(_ collectionView: NSCollectionView,
+                                itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
+                NSCollectionViewItem()
+            }
+        }
+        let source = Seven()
+        let layout = BriefFlowLayout()
+        layout.scrollDirection = .horizontal
+        layout.itemSize = NSSize(width: 200, height: 20)
+        layout.columnGap = 10
+        let collection = NSCollectionView(frame: NSRect(x: 0, y: 0, width: 1000, height: 60))
+        collection.collectionViewLayout = layout
+        collection.dataSource = source
+        layout.prepare()
+
+        XCTAssertEqual(layout.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))?.frame,
+                       NSRect(x: 0, y: 0, width: 200, height: 20))
+        XCTAssertEqual(layout.layoutAttributesForItem(at: IndexPath(item: 3, section: 0))?.frame,
+                       NSRect(x: 210, y: 0, width: 200, height: 20), "второй столбец — через промежуток")
+        XCTAssertEqual(layout.layoutAttributesForItem(at: IndexPath(item: 6, section: 0))?.frame,
+                       NSRect(x: 420, y: 0, width: 200, height: 20))
+        XCTAssertEqual(layout.collectionViewContentSize, NSSize(width: 620, height: 60),
+                       "три столбца и два промежутка, без хвоста")
+
+        layout.columnGap = 0
+        layout.prepare()
+        XCTAssertEqual(layout.layoutAttributesForItem(at: IndexPath(item: 3, section: 0))?.frame.minX, 200)
+        XCTAssertEqual(layout.collectionViewContentSize.width, 600)
+        withExtendedLifetime(source) {}
+    }
+
+    /// Ячейка краткого режима ведёт себя как строка подробного: не режет иконку крупнее себя,
+    /// под курсором лежит над соседями — поэтому высота строки может быть меньше иконки.
+    func test_ячейкаНеРежетИконкуИПодКурсоромВыше() {
+        let cell = BriefItemView(frame: NSRect(x: 0, y: 0, width: 190, height: 20))
+        XCTAssertFalse(cell.clipsToBounds)
+        XCTAssertNotNil(cell.layer)
+        cell.isCursor = true
+        XCTAssertEqual(cell.layer?.zPosition, FileListRowView.zPosition(isCursor: true))
+        cell.isCursor = false
+        XCTAssertEqual(cell.layer?.zPosition, 0)
+    }
+
     private func makeBriefView(viewModel: PanelViewModel) -> FileListBriefView {
         FileListBriefView(
             viewModel: viewModel,
             isActive: true,
             itemWidth: 190,
+            columnGap: 0,
             itemHeight: 20,
             iconSize: 14,
             folderIconStyle: .macos,

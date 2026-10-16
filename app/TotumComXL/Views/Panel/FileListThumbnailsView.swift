@@ -8,6 +8,8 @@ struct FileListThumbnailsView: NSViewRepresentable {
     @ObservedObject var viewModel: PanelViewModel
     let isActive: Bool
     let cellSize: CGFloat
+    /// Промежуток между эскизами, по горизонтали и по вертикали (настройка, общая с кратким режимом).
+    let cellGap: CGFloat
     let previewSize: CGFloat
     let useQuickLookPreviews: Bool
     let folderIconStyle: FolderIconStyle
@@ -66,8 +68,8 @@ struct FileListThumbnailsView: NSViewRepresentable {
 
         let layout = NSCollectionViewFlowLayout()
         layout.scrollDirection = .vertical
-        layout.minimumInteritemSpacing = 4
-        layout.minimumLineSpacing = 4
+        layout.minimumInteritemSpacing = cellGap
+        layout.minimumLineSpacing = cellGap
         layout.sectionInset = NSEdgeInsets(top: 4, left: 4, bottom: 4, right: 4)
         layout.itemSize = NSSize(width: cellSize, height: cellSize)
 
@@ -183,8 +185,10 @@ struct FileListThumbnailsView: NSViewRepresentable {
         }
 
         let desiredSize = NSSize(width: cellSize, height: cellSize)
-        if layout.itemSize != desiredSize {
+        if layout.itemSize != desiredSize || layout.minimumInteritemSpacing != cellGap {
             layout.itemSize = desiredSize
+            layout.minimumInteritemSpacing = cellGap
+            layout.minimumLineSpacing = cellGap
             layout.invalidateLayout()
         }
 
@@ -537,13 +541,13 @@ struct FileListThumbnailsView: NSViewRepresentable {
         func collectionView(_ collectionView: NSCollectionView,
                             layout collectionViewLayout: NSCollectionViewLayout,
                             minimumLineSpacingForSectionAt section: Int) -> CGFloat {
-            4
+            parent.cellGap
         }
 
         func collectionView(_ collectionView: NSCollectionView,
                             layout collectionViewLayout: NSCollectionViewLayout,
                             minimumInteritemSpacingForSectionAt section: Int) -> CGFloat {
-            4
+            parent.cellGap
         }
 
         func menuNeedsUpdate(_ menu: NSMenu) {
@@ -581,7 +585,8 @@ struct FileListThumbnailsView: NSViewRepresentable {
 
         func updateColumnsPerRow(forVisibleWidth visibleWidth: CGFloat,
                                  sectionInset: NSEdgeInsets = NSEdgeInsets(top: 4, left: 4, bottom: 4, right: 4),
-                                 spacing: CGFloat = 4) {
+                                 spacing: CGFloat? = nil) {
+            let spacing = spacing ?? parent.cellGap
             let usableWidth = max(1, visibleWidth - sectionInset.left - sectionInset.right + spacing)
             let columns = max(1, Int(floor(usableWidth / max(parent.cellSize + spacing, 1))))
             if columns != lastColumnsPerRow {
