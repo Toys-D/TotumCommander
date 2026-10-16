@@ -20,7 +20,7 @@ struct FooterBar: View {
     @AppStorage("terminalPlacement") private var terminalPlacement: String = "ask"
     @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
     private var accent: Color { PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple) }
-    @State private var showTerminalMenu = false
+    @State private var terminalAnchor = MenuAnchorBox()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -72,9 +72,18 @@ struct FooterBar: View {
 
             // Terminal button — menu if "ask", direct action otherwise
             if terminalPlacement == "ask" {
-                // Custom popover (not native Menu) so the highlight uses the accent.
+                // The program's own menu, above the button — the same window every menu uses.
                 Button {
-                    showTerminalMenu = true
+                    let menu = NSMenu()
+                    menu.addStyledItem(title: L("settings.terminalPlacement.bottom"),
+                                       symbolName: "rectangle.bottomhalf.inset.filled") { onTerminalBottom() }
+                    menu.addStyledItem(title: L("settings.terminalPlacement.activePanel"),
+                                       symbolName: "rectangle.inset.filled") { onTerminalActive() }
+                    menu.addStyledItem(title: L("settings.terminalPlacement.leftPanel"),
+                                       symbolName: "rectangle.lefthalf.inset.filled") { onTerminalLeft() }
+                    menu.addStyledItem(title: L("settings.terminalPlacement.rightPanel"),
+                                       symbolName: "rectangle.righthalf.inset.filled") { onTerminalRight() }
+                    ContextPopupMenuController.shared.show(menu, anchoredTo: terminalAnchor.view, edge: .maxY)
                 } label: {
                     Image(systemName: "terminal")
                         .font(.system(size: 11))
@@ -85,24 +94,7 @@ struct FooterBar: View {
                 .buttonStyle(.plain)
                 .frame(width: 28)
                 .help(L("terminal.title") + " (Cmd+`)")
-                .popover(isPresented: $showTerminalMenu, arrowEdge: .top) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        AccentMenuItem(title: L("settings.terminalPlacement.bottom"), accent: accent) {
-                            showTerminalMenu = false; onTerminalBottom()
-                        }
-                        AccentMenuItem(title: L("settings.terminalPlacement.activePanel"), accent: accent) {
-                            showTerminalMenu = false; onTerminalActive()
-                        }
-                        AccentMenuItem(title: L("settings.terminalPlacement.leftPanel"), accent: accent) {
-                            showTerminalMenu = false; onTerminalLeft()
-                        }
-                        AccentMenuItem(title: L("settings.terminalPlacement.rightPanel"), accent: accent) {
-                            showTerminalMenu = false; onTerminalRight()
-                        }
-                    }
-                    .padding(6)
-                    .frame(width: 220)
-                }
+                .background(MenuAnchorProbe(terminalAnchor))
             } else {
                 Button {
                     onTerminal()

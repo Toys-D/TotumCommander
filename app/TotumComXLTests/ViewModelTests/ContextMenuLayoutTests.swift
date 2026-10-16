@@ -293,6 +293,54 @@ final class ContextMenuLayoutTests: XCTestCase {
         XCTAssertEqual(popup.openMenuRows.count, 2)
     }
 
+    /// Меню над кнопкой и справа от неё — там, где раньше висели всплывающие окна с кнопками
+    /// SwiftUI (сеть, размещение терминала): macOS 27 рисовала синее кольцо фокуса вокруг
+    /// первой кнопки такого окна.
+    func test_менюНадКнопкойИСправаОтНеё() throws {
+        let window = NSWindow(contentRect: NSRect(x: 300, y: 300, width: 400, height: 300),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        addTeardownBlock { MainActor.assumeIsolated { window.orderOut(nil) } }
+        let anchor = NSView(frame: NSRect(x: 150, y: 40, width: 28, height: 22))
+        window.contentView?.addSubview(anchor)
+        window.orderFront(nil)
+        let popup = ContextPopupMenuController.shared
+        addTeardownBlock { MainActor.assumeIsolated { popup.dismiss() } }
+        let anchorOnScreen = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+
+        popup.show(NetworkMenu.build(onLocalNetwork: {}, onConnectNetworkDrive: {}, onFTPDisk: {}),
+                   anchoredTo: anchor, edge: .maxY)
+        let above = try XCTUnwrap(popup.openMenuWindow)
+        XCTAssertEqual(above.frame.minY, anchorOnScreen.maxY + 4, accuracy: 0.5, "низ меню над кнопкой")
+        XCTAssertEqual(above.frame.minX, anchorOnScreen.minX, accuracy: 0.5)
+        XCTAssertEqual(popup.openMenuRows.compactMap { $0.identifier?.rawValue },
+                       ["network.localNetwork", "network.connectDrive", "network.ftpDisk"])
+
+        popup.show(NetworkMenu.build(onLocalNetwork: nil, onConnectNetworkDrive: nil, onFTPDisk: nil),
+                   anchoredTo: anchor, edge: .maxX)
+        let beside = try XCTUnwrap(popup.openMenuWindow)
+        XCTAssertEqual(beside.frame.minX, anchorOnScreen.maxX + 4, accuracy: 0.5, "справа от кнопки")
+        XCTAssertEqual(beside.frame.maxY, anchorOnScreen.maxY, accuracy: 0.5, "верх вровень с кнопкой")
+
+        // Без кнопки (вид ещё не в окне) — у мыши, а не нигде.
+        popup.show(NSMenu(), anchoredTo: nil, edge: .minY)
+        XCTAssertNotNil(popup.openMenuWindow)
+    }
+
+    /// Облака в сетевом меню: своим логотипом, не шаблонным значком, и подписью по положению.
+    func test_сетевоеМеню_Облака() {
+        let menu = NetworkMenu.build(onLocalNetwork: nil, onConnectNetworkDrive: nil, onFTPDisk: nil,
+                                     clouds: [(CloudProvider.icloud, CloudPlacement.menuHidden(path: "/x")),
+                                              (CloudProvider.dropbox, CloudPlacement.menuInstall)])
+        XCTAssertTrue(menu.items[3].isSeparatorItem)
+        XCTAssertEqual(menu.items[4].title, CloudProvider.icloud.title)
+        XCTAssertEqual(menu.items[5].title, NetworkMenu.cloudTitle(.dropbox, .menuInstall))
+        XCTAssertTrue(menu.items[5].title.contains(L("cloud.menu.install")))
+        if let logo = CloudProvider.dropbox.logo {
+            XCTAssertTrue(menu.items[5].image === logo, "фирменный логотип как есть")
+            XCTAssertFalse(logo.isTemplate)
+        }
+    }
+
     /// Страницу с живым предпросмотром меню окно настроек узнаёт по запомненному разделу:
     /// оно достаётся из кармана, и `onAppear` страницы при повторном открытии молчит.
     func test_предпросмотрПоднимаетсяТолькоНаСвоейСтранице() {

@@ -428,7 +428,8 @@ let package = Package(
                 "Views/Settings/Sections/SettingsContextMenuView.swift",
                 "Views/Settings/Sections/SettingsNetworkNTFSView.swift",
                 "Services/FileClipboard.swift",
-                "Views/Common/NetworkMenuContent.swift",
+                "Views/Common/NetworkMenu.swift",
+                "Views/Common/MenuAnchorProbe.swift",
                 "Views/Network/ConnectionManagerView.swift",
                 "Views/Network/NewConnectionDialogView.swift",
                 "Views/Network/ConnectNetworkDriveView.swift",
@@ -446,7 +447,6 @@ let package = Package(
                 "Views/Common/OperationQueuePanel.swift",
                 "Views/Common/SharePanelHint.swift",
                 "Views/Common/QueueOperationsBar.swift",
-                "Views/Common/AccentMenuItem.swift",
 
 
                 "Views/Search/AdvancedSearchView.swift",

@@ -55,7 +55,7 @@ struct PanelVolumeBar: View {
         var activeKey = ""
         var activeLabel = ""
     }
-    @State private var showNetworkMenu = false
+    @State private var networkAnchor = MenuAnchorBox()
     @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
     @AppStorage(PanelAppearanceSettings.beautyModeEnabledKey) private var beautyModeEnabled: Bool = false
     /// Есть ли iCloud Drive. Сначала дешёвая примета (папка на месте), а настоящий ответ
@@ -193,7 +193,18 @@ struct PanelVolumeBar: View {
             // Network connect button — popup menu with LAN / FTP options
             // Custom popover (not a native Menu) so the highlight uses the app accent.
             Button {
-                showNetworkMenu = true
+                // Shared with the centre divider's "Сеть" button — see NetworkMenu.
+                let menu = NetworkMenu.build(
+                    onLocalNetwork: onLocalNetwork,
+                    onConnectNetworkDrive: onConnectNetworkDrive,
+                    onFTPDisk: onNetwork,
+                    clouds: CloudPlaces.placements(icloudAvailable: icloudAvailable)
+                        .filter { !$0.placement.isInBar },
+                    onCloud: { provider, placement in
+                        CloudPlaces.activate(provider, placement: placement)
+                        mountedVolumesRevision &+= 1
+                    })
+                ContextPopupMenuController.shared.show(menu, anchoredTo: networkAnchor.view, edge: .minY)
             } label: {
                 Image(systemName: "network")
                     .font(.system(size: BarGlyph.size))
@@ -206,22 +217,7 @@ struct PanelVolumeBar: View {
             }
             .buttonStyle(.plain)
             .help(L("network.connectToServer"))
-            .popover(isPresented: $showNetworkMenu, arrowEdge: .bottom) {
-                // Shared with the centre divider's "Сеть" button — see NetworkMenuContent.
-                NetworkMenuContent(
-                    accent: accent,
-                    onLocalNetwork: onLocalNetwork,
-                    onConnectNetworkDrive: onConnectNetworkDrive,
-                    onFTPDisk: onNetwork,
-                    clouds: CloudPlaces.placements(icloudAvailable: icloudAvailable)
-                        .filter { !$0.placement.isInBar },
-                    onCloud: { provider, placement in
-                        CloudPlaces.activate(provider, placement: placement)
-                        mountedVolumesRevision &+= 1
-                    },
-                    onDismiss: { showNetworkMenu = false }
-                )
-            }
+            .background(MenuAnchorProbe(networkAnchor))
 
             Spacer(minLength: 0)
 

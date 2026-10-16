@@ -166,7 +166,7 @@ private extension View {
 // MARK: - CenterDividerView
 
 struct CenterDividerView: View {
-    @State private var showNetworkMenu = false
+    @State private var networkAnchor = MenuAnchorBox()
     /// The queue drops out of its own button — the same popover manner as the network menu.
     /// A separate floating window was one more window to find, move and lose.
     @State private var showQueuePopover = false
@@ -437,18 +437,13 @@ struct CenterDividerView: View {
                         DividerButtonView(icon: "network", tooltip: L("network.connectToServer"),
                                           subtitle: labelText(L("quickLink.network"), short: L("quickLink.short.network"), mode: labelMode),
                                           horizontal: rowLayout) {
-                            showNetworkMenu = true
+                            // Shared with the drive bar's globe button — see NetworkMenu.
+                            let menu = NetworkMenu.build(onLocalNetwork: onLocalNetwork,
+                                                         onConnectNetworkDrive: onConnectNetworkDriveAction,
+                                                         onFTPDisk: onNetwork)
+                            ContextPopupMenuController.shared.show(menu, anchoredTo: networkAnchor.view, edge: .maxX)
                         }
-                        .popover(isPresented: $showNetworkMenu, arrowEdge: .trailing) {
-                            // Shared with the drive bar's globe button — see NetworkMenuContent.
-                            NetworkMenuContent(
-                                accent: dividerAccent,
-                                onLocalNetwork: onLocalNetwork,
-                                onConnectNetworkDrive: onConnectNetworkDriveAction,
-                                onFTPDisk: onNetwork,
-                                onDismiss: { showNetworkMenu = false }
-                            )
-                        }
+                        .background(MenuAnchorProbe(networkAnchor))
                     }
                 }
                 VStack(spacing: 0) {

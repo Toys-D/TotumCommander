@@ -39,16 +39,38 @@ final class ContextPopupMenuController {
 
     /// Show `menu` hanging below `anchor` — a dropdown under a button or a chip.
     func show(_ menu: NSMenu, below anchor: NSView) {
-        guard let window = anchor.window else { return show(menu, at: NSEvent.mouseLocation) }
+        show(menu, anchoredTo: anchor, edge: .minY)
+    }
+
+    /// Show `menu` beside `anchor`, on the side `edge` names: `.minY` under it, `.maxY` above
+    /// it, `.maxX` to its right, `.minX` to its left. No anchor (a view not yet in a window)
+    /// — at the mouse.
+    func show(_ menu: NSMenu, anchoredTo anchor: NSView?, edge: NSRectEdge) {
+        guard let anchor, let window = anchor.window else { return show(menu, at: NSEvent.mouseLocation) }
         let frame = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
-        show(menu, at: NSPoint(x: frame.minX, y: frame.minY - 4))
+        let gap: CGFloat = 4
+        present(menu) { size in
+            switch edge {
+            case .minY: return NSPoint(x: frame.minX, y: frame.minY - gap)
+            case .maxY: return NSPoint(x: frame.minX, y: frame.maxY + gap + size.height)
+            case .maxX: return NSPoint(x: frame.maxX + gap, y: frame.maxY)
+            case .minX: return NSPoint(x: frame.minX - gap - size.width, y: frame.maxY)
+            @unknown default: return NSPoint(x: frame.minX, y: frame.minY - gap)
+            }
+        }
     }
 
     /// Show `menu` with its top-left near `screenPoint` (AppKit screen coords).
     func show(_ menu: NSMenu, at screenPoint: NSPoint) {
+        present(menu) { _ in screenPoint }
+    }
+
+    /// The one way a menu goes on screen: `topLeft` names the place once the menu's size is
+    /// known — a menu hung above a button needs its own height to know where its top goes.
+    private func present(_ menu: NSMenu, topLeft: (NSSize) -> NSPoint) {
         dismiss()
         let panel = makePanel(for: menu, level: 0)
-        position(panel, preferredTopLeft: screenPoint)
+        position(panel, preferredTopLeft: topLeft(panel.frame.size))
         panel.orderFront(nil)
         panels.append(panel)
         installMonitors()
