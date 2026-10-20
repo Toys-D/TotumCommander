@@ -527,26 +527,15 @@ struct UnifiedFileViewer: View {
                 quickModeButton(natural)
             }
 
-            Menu {
-                ForEach(PreviewMode.allCases) { mode in
-                    Button {
-                        applyMode(mode)
-                    } label: {
-                        // Галочка у выбранного, полное имя, свой значок — всё, чего не влезало
-                        // в кнопку шириной в три буквы.
-                        Label(isModeSelected(mode) ? "✓ " + mode.title : mode.title,
-                              systemImage: mode.iconName)
-                    }
-                    .disabled(isModeDisabled(mode))
-                }
-            } label: {
+            ProgramMenuButton(makeMenu: modeMenu) {
                 HStack(spacing: 4) {
                     Image(systemName: effectiveMode.iconName).font(.system(size: 11))
                     Text(effectiveMode.title).font(.caption).lineLimit(1)
+                    MenuChevron()
                 }
                 .frame(minHeight: 30)
+                .contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton)
             .fixedSize()
             .help(L("viewer.mode.choose"))
 
@@ -882,18 +871,10 @@ struct UnifiedFileViewer: View {
     private var imageToolButtons: some View {
         Group {
             editButton("aspectratio", L("viewer.image.resize")) { askImageResize() }
-            Menu {
-                    Button(L("viewer.image.cropWhole")) { changeImage { $0.crop = nil } }
-                    Divider()
-                    ForEach(Self.cropRatios, id: \.name) { ratio in
-                        Button(ratio.name) { cropToRatio(ratio.value) }
-                    }
-            } label: {
+            ProgramMenuButton(makeMenu: cropMenu) {
                     Image(systemName: "crop").font(.system(size: 14))
                         .foregroundStyle(imageEdits.crop != nil ? Color.accentColor : Color.primary)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
             .fixedSize()
             .help(L("viewer.image.crop"))
             .disabled(imageSaving)
@@ -938,19 +919,12 @@ struct UnifiedFileViewer: View {
                 // One place for every way out, spelled out: replace the file, put a copy
                 // beside it, or write it in another format. A bare "Save" that silently
                 // overwrote the original told the person nothing about what it was doing.
-                Menu {
-                    Button(L("viewer.image.replaceOriginal")) { saveImageEdits(as: nil, asCopy: false) }
-                    Button(L("viewer.image.saveCopy")) { saveImageEdits(as: nil, asCopy: true) }
-                    Divider()
-                    ForEach(ImageSaveFormat.allCases, id: \.rawValue) { format in
-                        Button(String(format: L("viewer.image.saveAsFormat"), L(format.titleKey))) {
-                            saveImageEdits(as: format, asCopy: true)
-                        }
+                ProgramMenuButton(makeMenu: saveMenu) {
+                    HStack(spacing: 4) {
+                        Text(L("viewer.image.save"))
+                        MenuChevron()
                     }
-                } label: {
-                    Text(L("viewer.image.save"))
                 }
-                .menuStyle(.borderlessButton)
             .fixedSize()
             .help(L("viewer.image.saveTip"))
             .disabled(imageEdits.isIdentity || imageSaving)
@@ -1044,6 +1018,37 @@ struct UnifiedFileViewer: View {
     /// used to walk out of this function on the spot and nothing happened. The size also has
     /// to be the FINAL one, after turning, or 1:1 on a picture standing on its side would cut
     /// the wrong way.
+    /// Обрезка: целиком или по пропорции — в окне меню программы.
+    private func cropMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.addChoiceItem(title: L("viewer.image.cropWhole"), checked: imageEdits.crop == nil) {
+            changeImage { $0.crop = nil }
+        }
+        menu.addItem(.separator())
+        for ratio in Self.cropRatios {
+            menu.addChoiceItem(title: ratio.name) { cropToRatio(ratio.value) }
+        }
+        return menu
+    }
+
+    /// Все дороги сохранения: поверх, копией рядом, копией в другом формате.
+    private func saveMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.addStyledItem(title: L("viewer.image.replaceOriginal"), symbolName: "square.and.arrow.down") {
+            saveImageEdits(as: nil, asCopy: false)
+        }
+        menu.addStyledItem(title: L("viewer.image.saveCopy"), symbolName: "plus.square.on.square") {
+            saveImageEdits(as: nil, asCopy: true)
+        }
+        menu.addItem(.separator())
+        for format in ImageSaveFormat.allCases {
+            menu.addChoiceItem(title: String(format: L("viewer.image.saveAsFormat"), L(format.titleKey))) {
+                saveImageEdits(as: format, asCopy: true)
+            }
+        }
+        return menu
+    }
+
     private func cropToRatio(_ ratio: CGFloat) {
         guard let item = targetItem else { return }
         if effectiveMode != .image { forcedMode = .image }
@@ -1383,6 +1388,19 @@ struct UnifiedFileViewer: View {
 
     /// «Эта страница — первая». Одного указания хватает на весь файл: дальше и счётчик, и
     /// закладки говорят теми же номерами, что напечатаны в книге.
+    /// С какой страницы считать номера: с этой — или как в самом файле.
+    private func numberingMenu(index: Int) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.addChoiceItem(title: L("viewer.page.setFirst"), enabled: index != numberingStart) {
+            setNumberingStart(index)
+        }
+        menu.addChoiceItem(title: L("viewer.page.fileNumbering"), enabled: numberingStart != 0) {
+            setNumberingStart(0)
+        }
+        return menu
+    }
+
     private func setNumberingStart(_ index: Int) {
         guard let path = targetItem?.path else { return }
         numberingStart = index
@@ -1416,12 +1434,7 @@ struct UnifiedFileViewer: View {
                 let index = currentPageIndex
                 let printed = PageNumbering.printed(index: index, start: numberingStart)
                 let numbered = PageNumbering.numberedCount(total: total, start: numberingStart)
-                Menu {
-                    Button(L("viewer.page.setFirst")) { setNumberingStart(index) }
-                        .disabled(index == numberingStart)
-                    Button(L("viewer.page.fileNumbering")) { setNumberingStart(0) }
-                        .disabled(numberingStart == 0)
-                } label: {
+                ProgramMenuButton(makeMenu: { numberingMenu(index: index) }) {
                     Text(printed.map { String(format: L("viewer.page.of"), $0, numbered) }
                          ?? L("viewer.page.cover"))
                         .font(.system(size: 11))
@@ -1429,8 +1442,6 @@ struct UnifiedFileViewer: View {
                         .lineLimit(1)
                         .fixedSize()
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
                 .fixedSize()
                 .help(L("viewer.page.numberingHint"))
             }
@@ -1538,29 +1549,11 @@ struct UnifiedFileViewer: View {
             .contentShape(Rectangle())
             .help(L(isMarked ? "viewer.bookmark.remove" : "viewer.bookmark.add"))
 
-            Menu {
-                if marks.isEmpty {
-                    Text(L("viewer.bookmark.none"))
-                } else {
-                    ForEach(marks) { mark in
-                        Button(mark.label) { jump(to: mark) }
-                    }
-                    Divider()
-                    Menu(L("viewer.bookmark.rename")) {
-                        ForEach(marks) { mark in
-                            Button(mark.label) { renameBookmark(mark) }
-                        }
-                    }
-                    Button(L("viewer.bookmark.removeAll"), role: .destructive) {
-                        ReaderMarksStore.shared.removeAllMarks(for: path)
-                        readerMarks = []
-                    }
-                }
-            } label: {
+            ProgramMenuButton(makeMenu: { bookmarksMenu(marks, path: path) }) {
                 Image(systemName: "list.bullet").font(.system(size: 12))
+                    .frame(width: 26, height: 22)
+                    .contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
             .frame(width: 26)
             .help(L("viewer.bookmark.list"))
         }
@@ -1600,6 +1593,33 @@ struct UnifiedFileViewer: View {
 
     /// Своё название закладке — «тут про коня». Угаданное имя годится, чтобы не потерять
     /// место, но человек помнит, ЗАЧЕМ он его отметил.
+    /// Список закладок: перейти, переименовать (вложенное меню), убрать все.
+    private func bookmarksMenu(_ marks: [ReaderMark], path: String) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        guard !marks.isEmpty else {
+            menu.addNote(L("viewer.bookmark.none"))
+            return menu
+        }
+        for mark in marks {
+            menu.addStyledItem(title: mark.label, symbolName: "bookmark") { jump(to: mark) }
+        }
+        menu.addItem(.separator())
+        let rename = NSMenu()
+        for mark in marks {
+            rename.addChoiceItem(title: mark.label) { renameBookmark(mark) }
+        }
+        let renameItem = NSMenuItem(title: L("viewer.bookmark.rename"), action: nil, keyEquivalent: "")
+        renameItem.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: nil)
+        renameItem.submenu = rename
+        menu.addItem(renameItem)
+        menu.addStyledItem(title: L("viewer.bookmark.removeAll"), symbolName: "trash", isDestructive: true) {
+            ReaderMarksStore.shared.removeAllMarks(for: path)
+            readerMarks = []
+        }
+        return menu
+    }
+
     private func renameBookmark(_ mark: ReaderMark) {
         guard let path = targetItem?.path else { return }
         guard let name = DialogService.shared.showTextInput(
@@ -2365,6 +2385,19 @@ struct UnifiedFileViewer: View {
     }
 
     // MARK: - Mode Logic
+
+    /// Выбор способа показа: галочка у выбранного, полное имя, свой значок — всё, чего не
+    /// влезало в кнопку шириной в три буквы.
+    private func modeMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for mode in PreviewMode.allCases {
+            menu.addStyledItem(title: mode.title, symbolName: mode.iconName) { applyMode(mode) }
+            menu.items.last?.state = isModeSelected(mode) ? .on : .off
+            menu.items.last?.isEnabled = !isModeDisabled(mode)
+        }
+        return menu
+    }
 
     private func isModeSelected(_ mode: PreviewMode) -> Bool {
         if mode == .auto { return forcedMode == nil }

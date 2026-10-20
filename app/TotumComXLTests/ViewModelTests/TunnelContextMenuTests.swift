@@ -14,7 +14,7 @@ import XCTest
 final class TunnelContextMenuTests: XCTestCase {
 
     private var window: NSWindow!
-    private var hosting: NSHostingView<CenterDividerView>!
+    private var hosting: TunnelDropHostingView!
     private var savedDefaults: [String: Any?] = [:]
 
     private static let keys = ["dividerOffsetY", "dividerIconSpacing", "quickLinksGap",
@@ -62,7 +62,7 @@ final class TunnelContextMenuTests: XCTestCase {
         super.tearDown()
     }
 
-    /// Какое меню AppKit покажет при правой кнопке в этой точке (координаты окна).
+    /// Какое меню туннель покажет при правой кнопке в этой точке (координаты окна).
     private func menu(atY y: CGFloat) -> NSMenu? {
         let point = NSPoint(x: hosting.bounds.midX, y: y)
         let event = NSEvent.mouseEvent(
@@ -70,13 +70,9 @@ final class TunnelContextMenuTests: XCTestCase {
             timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: window.windowNumber, context: nil,
             eventNumber: 0, clickCount: 1, pressure: 1)!
-        // Как AppKit: у вида под курсором, а нет своего — у родителя, и так до окна.
-        var view: NSView? = hosting.hitTest(point) ?? hosting
-        while let current = view {
-            if let menu = current.menu(for: event) { return menu }
-            view = current.superview
-        }
-        return nil
+        // Системе туннель меню не отдаёт: показывает своё, в окне меню программы.
+        XCTAssertNil(hosting.menu(for: event), "системного меню нет")
+        return hosting.tunnelMenu(for: event)
     }
 
     /// Меню туннеля — со значками у каждого пункта, как было всегда: SwiftUI-меню их

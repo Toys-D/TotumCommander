@@ -192,7 +192,7 @@ struct TabChipView: View {
             Color.clear.frame(width: 1, height: 1)
         }
         .overlay {
-            TabContextMenuHelper(makeMenu: buildContextMenu)
+            RightClickMenu(buildContextMenu)
         }
         .popover(isPresented: $showColorPicker, arrowEdge: .bottom) {
             FCXLColorPickerPanel(
@@ -436,48 +436,6 @@ private extension NSMenu {
             item.image = img
         }
         addItem(item)
-    }
-}
-
-/// Right-click on a tab, shown through the app's OWN popup menu — the same one the file panels
-/// use. A native NSMenu opens its submenus on hover and closes the whole menu when the parent
-/// row is clicked; ours opens them on click, and the two menus in the app must not disagree
-/// about that. The menu is built at click time rather than on every SwiftUI render.
-struct TabContextMenuHelper: NSViewRepresentable {
-    let makeMenu: () -> NSMenu
-
-    func makeNSView(context: Context) -> NSView {
-        let view = TabContextMenuView()
-        view.makeMenu = makeMenu
-        // A menu has to be present for AppKit to route the right-click here at all; the real
-        // one is built in menu(for:) and shown by our own controller.
-        view.menu = NSMenu()
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        (nsView as? TabContextMenuView)?.makeMenu = makeMenu
-    }
-}
-
-private final class TabContextMenuView: NSView {
-    var makeMenu: (() -> NSMenu)?
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        if NSApp.currentEvent?.type == .rightMouseDown {
-            return super.hitTest(point)
-        }
-        return nil
-    }
-
-    /// The same road the file panels take: build the items, hand them to our popup, and return
-    /// nil so AppKit does not also open a native menu.
-    override func menu(for event: NSEvent) -> NSMenu? {
-        guard let menu = makeMenu?() else { return super.menu(for: event) }
-        let screenPoint = window?.convertPoint(toScreen: event.locationInWindow)
-            ?? event.locationInWindow
-        ContextPopupMenuController.shared.show(menu, at: screenPoint)
-        return nil
     }
 }
 

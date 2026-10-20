@@ -319,21 +319,8 @@ struct PanelVolumeBar: View {
             .buttonStyle(.plain)
             .help(vol.path)
             .contentShape(Rectangle())
-            .contextMenu {
-                if vol.isEjectable, vol.cloud == nil {
-                    Button {
-                        showVolumeInfo(for: vol)
-                    } label: {
-                        Label(L("volume.info.menu"), systemImage: "info.circle")
-                    }
-                    Divider()
-                    Button {
-                        ejectVolume(path: vol.path, label: vol.label)
-                    } label: {
-                        Label("Eject", systemImage: "eject")
-                    }
-                }
-            }
+            // Правый щелчок — меню программы, как у вкладок и файлов, а не системное.
+            .overlay { RightClickMenu { volumeMenu(for: vol) } }
 
             if vol.isEjectable {
                 Button {
@@ -975,6 +962,21 @@ struct PanelVolumeBar: View {
         let err = (String(data: errData, encoding: .utf8) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return (p.terminationStatus, err)
+    }
+
+    /// Меню диска по правому щелчку: сведения и извлечение — у того, что можно извлечь
+    /// (облако прячется своей кнопкой на чипе). Остальным меню нет.
+    private func volumeMenu(for vol: VolumeButtonModel) -> NSMenu? {
+        guard vol.isEjectable, vol.cloud == nil else { return nil }
+        let menu = NSMenu()
+        menu.addStyledItem(title: L("volume.info.menu"), symbolName: "info.circle", id: "volume.info") {
+            showVolumeInfo(for: vol)
+        }
+        menu.addItem(.separator())
+        menu.addStyledItem(title: L("volume.eject.tooltip"), symbolName: "eject", id: "volume.eject") {
+            ejectVolume(path: vol.path, label: vol.label)
+        }
+        return menu
     }
 
     private func showVolumeInfo(for vol: VolumeButtonModel) {

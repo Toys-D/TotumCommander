@@ -206,28 +206,44 @@ struct MultiRenameView: View {
     }
 
     private var presetsMenu: some View {
-        Menu {
-            if vm.presets.isEmpty {
-                Text(L("mrt.presets.empty"))
-            } else {
-                ForEach(vm.presets, id: \.name) { preset in
-                    Button(preset.name) { vm.applyPreset(preset) }
-                }
-                Divider()
-                Menu(L("mrt.presets.delete")) {
-                    ForEach(vm.presets, id: \.name) { preset in
-                        Button(preset.name) { vm.deletePreset(name: preset.name) }
-                    }
+        ProgramMenuButton(makeMenu: buildPresetsMenu) {
+            HStack(spacing: 4) {
+                Label(L("mrt.presets"), systemImage: "bookmark")
+                MenuChevron()
+            }
+            .font(.system(size: 11))
+        }
+        .fixedSize()
+    }
+
+    /// Наборы: применить, удалить (вложенное меню), сохранить нынешние правила — в окне
+    /// меню программы.
+    private func buildPresetsMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        if vm.presets.isEmpty {
+            menu.addNote(L("mrt.presets.empty"))
+        } else {
+            for preset in vm.presets {
+                menu.addStyledItem(title: preset.name, symbolName: "bookmark") { vm.applyPreset(preset) }
+            }
+            menu.addItem(.separator())
+            let delete = NSMenu()
+            for preset in vm.presets {
+                delete.addChoiceItem(title: preset.name, isDestructive: true) {
+                    vm.deletePreset(name: preset.name)
                 }
             }
-            Divider()
-            Button(L("mrt.presets.saveAs")) { promptSavePreset() }
-        } label: {
-            Label(L("mrt.presets"), systemImage: "bookmark")
-                .font(.system(size: 11))
+            let deleteItem = NSMenuItem(title: L("mrt.presets.delete"), action: nil, keyEquivalent: "")
+            deleteItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
+            deleteItem.submenu = delete
+            menu.addItem(deleteItem)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
+        menu.addItem(.separator())
+        menu.addStyledItem(title: L("mrt.presets.saveAs"), symbolName: "square.and.arrow.down") {
+            promptSavePreset()
+        }
+        return menu
     }
 
     private func promptSavePreset() {

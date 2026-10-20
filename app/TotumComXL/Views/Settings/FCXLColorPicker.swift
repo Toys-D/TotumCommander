@@ -206,7 +206,15 @@ struct FCXLColorPickerPanel: View {
                         .overlay(Circle().strokeBorder(Color.primary.opacity(0.18)))
                 }
                 .buttonStyle(.plain)
-                .contextMenu { Button(L("common.delete"), role: .destructive) { removeSaved(c) } }
+                .overlay {
+                    RightClickMenu {
+                        let menu = NSMenu()
+                        menu.addStyledItem(title: L("common.delete"), symbolName: "trash", isDestructive: true) {
+                            removeSaved(c)
+                        }
+                        return menu
+                    }
+                }
             }
             Button(action: saveCurrent) {
                 Image(systemName: "plus")

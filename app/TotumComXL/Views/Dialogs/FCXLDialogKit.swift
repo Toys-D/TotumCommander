@@ -810,10 +810,10 @@ struct FCXLSwitch: NSViewRepresentable {
 
 // MARK: - Dropdown (pop-up) styled like the grouped-form pickers
 
-/// A pop-up menu matching the app's Settings pickers — a native AppKit NSPopUpButton, which puts
-/// the gray up/down chevron on the RIGHT (SwiftUI's Menu/borderlessButton keeps its indicator on
-/// the left and ignores menuIndicator(.hidden), so we wrap AppKit directly).
-struct FCXLDropdown<T: Hashable>: NSViewRepresentable {
+/// A drop-down matching the app's Settings pickers: the value, flat, with a subtle gray up/down
+/// chevron on the right. Its list opens in the program's own menu window, like every menu here —
+/// an NSPopUpButton used to open the system menu, with its own look and its own appearance.
+struct FCXLDropdown<T: Hashable>: View {
     @Binding var selection: T
     let options: [(value: T, label: String)]
     var onChange: (() -> Void)?
@@ -824,102 +824,66 @@ struct FCXLDropdown<T: Hashable>: NSViewRepresentable {
         self.onChange = onChange
     }
 
-    func makeNSView(context: Context) -> NSPopUpButton {
-        let button = NSPopUpButton(frame: .zero, pullsDown: false)
-        // No blue halo, here as everywhere: the ring belongs to the AppKit control, so
-        // `.focusEffectDisabled()` on the SwiftUI side never reaches it — it has to be turned
-        // off on the button itself.
-        button.focusRingType = .none
-        button.controlSize = .regular
-        button.font = .systemFont(ofSize: 13)
-        // Flat, like the grouped-form pickers in Settings: no bezel box, no blue chevron button —
-        // just the value with a subtle gray up/down chevron on the right.
-        button.isBordered = false
-        button.target = context.coordinator
-        button.action = #selector(Coordinator.changed(_:))
-        button.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        return button
+    var body: some View {
+        ProgramMenuButton(makeMenu: menu) {
+            HStack(spacing: 5) {
+                Text(options.first { $0.value == selection }?.label ?? "")
+                    .font(.system(size: 13))
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .foregroundStyle(.primary)
+            .contentShape(Rectangle())
+        }
+        .fixedSize()
     }
 
-    func updateNSView(_ button: NSPopUpButton, context: Context) {
-        context.coordinator.parent = self
-        let titles = options.map { $0.label }
-        if button.itemTitles != titles {
-            button.removeAllItems()
-            button.addItems(withTitles: titles)
+    private func menu() -> NSMenu {
+        let menu = NSMenu()
+        for option in options {
+            menu.addChoiceItem(title: option.label, checked: option.value == selection) {
+                selection = option.value
+                onChange?()
+            }
         }
-        if let idx = options.firstIndex(where: { $0.value == selection }) {
-            button.selectItem(at: idx)
-        }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    final class Coordinator: NSObject {
-        var parent: FCXLDropdown
-        init(_ parent: FCXLDropdown) { self.parent = parent }
-        @objc func changed(_ sender: NSPopUpButton) {
-            let idx = sender.indexOfSelectedItem
-            guard idx >= 0, idx < parent.options.count else { return }
-            parent.selection = parent.options[idx].value
-            parent.onChange?()
-        }
+        return menu
     }
 }
 
-/// A flat pull-down menu button (native NSPopUpButton in pull-down mode). Chevron on the right,
-/// no bezel — like the Settings dropdowns. The title stays fixed; picking an item calls onSelect.
-/// `groups` render as disabled section headers with their items beneath.
-struct FCXLMenuButton: NSViewRepresentable {
+/// A flat pull-down menu button: a fixed title with a chevron on the right, like the Settings
+/// dropdowns; picking an item calls onSelect. `groups` render as disabled section headers with
+/// their items beneath. The list opens in the program's own menu window.
+struct FCXLMenuButton: View {
     let title: String
     let groups: [(header: String, items: [String])]
     let onSelect: (String) -> Void
 
-    func makeNSView(context: Context) -> NSPopUpButton {
-        let button = NSPopUpButton(frame: .zero, pullsDown: true)
-        button.focusRingType = .none
-        button.isBordered = false
-        button.controlSize = .small
-        button.font = .systemFont(ofSize: 12)
-        context.coordinator.rebuild(button)
-        return button
-    }
-
-    func updateNSView(_ button: NSPopUpButton, context: Context) {
-        context.coordinator.parent = self
-        context.coordinator.rebuild(button)
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    final class Coordinator: NSObject {
-        var parent: FCXLMenuButton
-        init(_ parent: FCXLMenuButton) { self.parent = parent }
-
-        func rebuild(_ button: NSPopUpButton) {
-            let menu = NSMenu()
-            // Item 0 is the fixed label shown on the button (pull-down convention).
-            let titleItem = NSMenuItem(title: parent.title, action: nil, keyEquivalent: "")
-            titleItem.attributedTitle = NSAttributedString(
-                string: parent.title,
-                attributes: [.foregroundColor: NSColor.secondaryLabelColor,
-                             .font: NSFont.systemFont(ofSize: 12)])
-            menu.addItem(titleItem)
-            for group in parent.groups {
-                menu.addItem(.separator())
-                let header = NSMenuItem(title: group.header, action: nil, keyEquivalent: "")
-                header.isEnabled = false
-                menu.addItem(header)
-                for tag in group.items {
-                    let item = NSMenuItem(title: tag, action: #selector(pick(_:)), keyEquivalent: "")
-                    item.target = self
-                    menu.addItem(item)
-                }
+    var body: some View {
+        ProgramMenuButton(makeMenu: menu) {
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                MenuChevron()
             }
-            button.menu = menu
+            .contentShape(Rectangle())
         }
+    }
 
-        @objc func pick(_ sender: NSMenuItem) { parent.onSelect(sender.title) }
+    private func menu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for (index, group) in groups.enumerated() {
+            if index > 0 { menu.addItem(.separator()) }
+            menu.addNote(group.header)
+            for tag in group.items {
+                menu.addChoiceItem(title: tag) { onSelect(tag) }
+            }
+        }
+        return menu
     }
 }
 

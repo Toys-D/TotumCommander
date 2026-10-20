@@ -69,11 +69,22 @@ final class ContextPopupMenuController {
     /// known — a menu hung above a button needs its own height to know where its top goes.
     private func present(_ menu: NSMenu, topLeft: (NSSize) -> NSPoint) {
         dismiss()
-        let panel = makePanel(for: menu, level: 0)
+        let (panel, rows) = makePanel(for: menu, level: 0)
         position(panel, preferredTopLeft: topLeft(panel.frame.size))
-        panel.orderFront(nil)
+        putOnScreen(panel, rows)
         panels.append(panel)
         installMonitors()
+    }
+
+    /// На экран — и только потом появление строк. Раскладку в окне доводим сами, сразу:
+    /// иначе её сделает следующий проход отрисовки ВМЕСТЕ с появлением, и SwiftUI поведёт
+    /// строки на место из предварительной раскладки — той, что была до окна, вокруг нулевой
+    /// точки: строки влетали по диагонали из угла. Первое меню после запуска собиралось
+    /// долго и успевало разложиться, все следующие и подменю — нет.
+    private func putOnScreen(_ panel: NSPanel, _ rows: ContextPopupRows) {
+        panel.orderFront(nil)
+        panel.contentView?.layoutSubtreeIfNeeded()
+        rows.revealed = true
     }
 
     func dismiss() {
@@ -101,10 +112,10 @@ final class ContextPopupMenuController {
     func showPreview(_ menu: NSMenu, at screenPoint: NSPoint) {
         dismiss()
         isPreview = true
-        let panel = makePanel(for: menu, level: 0)
+        let (panel, rows) = makePanel(for: menu, level: 0)
         panel.ignoresMouseEvents = true
         position(panel, preferredTopLeft: screenPoint)
-        panel.orderFront(nil)
+        putOnScreen(panel, rows)
         panels.append(panel)
     }
 
@@ -116,7 +127,7 @@ final class ContextPopupMenuController {
 
     // MARK: - Panels
 
-    private func makePanel(for menu: NSMenu, level: Int) -> NSPanel {
+    private func makePanel(for menu: NSMenu, level: Int) -> (NSPanel, ContextPopupRows) {
         // Ширину меряем сразу по ПОЛНОМУ списку — вместе со спрятанным под «Ещё». Тогда
         // раскрытие только удлиняет меню вниз: ни одна строка не съезжает вбок.
         let full = expandedItems(of: menu.items).map { measure($0, minWidth: ContextMenuSettings.minWidth) }
@@ -159,7 +170,7 @@ final class ContextPopupMenuController {
             rootRows = rows
             expandedSize = full
         }
-        return panel
+        return (panel, rows)
     }
 
     /// Полный список строк меню: показанное плюс спрятанное под «Ещё». Нет «Ещё» —
@@ -188,12 +199,12 @@ final class ContextPopupMenuController {
         closeDeeper(than: level)
         guard let parentPanel = panels[safe: level] else { return }
 
-        let child = makePanel(for: submenu, level: level + 1)
+        let (child, rows) = makePanel(for: submenu, level: level + 1)
         let pf = parentPanel.frame
         // Top-left of the child: to the right of the parent, aligned to the row.
         let topLeft = NSPoint(x: pf.maxX - 4, y: pf.maxY - rowTopInPanel)
         position(child, preferredTopLeft: topLeft, leftAlternative: pf.minX - child.frame.width + 4)
-        child.orderFront(nil)
+        putOnScreen(child, rows)
         panels.append(child)
         while openedFor.count < panels.count { openedFor.append(nil) }
         openedFor[panels.count - 1] = ObjectIdentifier(item)
@@ -302,6 +313,8 @@ private extension Array {
 /// дописывается в уже открытое окно, а не собирается заново.
 private final class ContextPopupRows: ObservableObject {
     @Published var items: [NSMenuItem]
+    /// Пора проявлять строки: окно уже на экране и разложено (см. `putOnScreen`).
+    @Published var revealed = false
     init(_ items: [NSMenuItem]) { self.items = items }
 }
 
@@ -320,12 +333,11 @@ private struct ContextPopupMenuView: View {
     @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
     private var accent: Color { PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple) }
 
-    /// Drives the opening moment: the border traces itself around the menu and the rows
-    /// flutter in behind it. Fast on purpose — the whole thing is over in a third of a second,
-    /// an effect the eye catches without the hand ever waiting for it.
-    @State private var appeared = false
-
     var body: some View {
+        // Drives the opening moment: the border traces itself around the menu and the rows
+        // flutter in behind it. Fast on purpose — the whole thing is over in a third of a second,
+        // an effect the eye catches without the hand ever waiting for it.
+        let revealed = rows.revealed
         VStack(alignment: .leading, spacing: 1) {
             ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                 Group {
@@ -355,10 +367,11 @@ private struct ContextPopupMenuView: View {
                     }
                 }
                 // Each row a breath after the one above: reading order, at reading speed.
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : -4)
-                .animation(.easeOut(duration: 0.14).delay(Double(index) * 0.016),
-                           value: appeared)
+                // The animation covers the fade and the short drop and NOTHING else: a layout
+                // landing in the same moment moves the row at once instead of gliding it in.
+                .animation(.easeOut(duration: 0.14).delay(Double(index) * 0.016)) { row in
+                    row.opacity(revealed ? 1 : 0).offset(y: revealed ? 0 : -4)
+                }
             }
         }
         .padding(6)
@@ -373,16 +386,10 @@ private struct ContextPopupMenuView: View {
         // reads one thread: the row, and the menu growing out of it.
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .trim(from: 0, to: appeared ? 1 : 0)
+                .trim(from: 0, to: revealed ? 1 : 0)
                 .stroke(accent.opacity(0.55), lineWidth: 1.5)
-                .animation(.easeOut(duration: 0.3), value: appeared)
+                .animation(.easeOut(duration: 0.3), value: revealed)
         )
-        .onAppear {
-            // One runloop later, AFTER the first layout has settled. Flipped in the same
-            // frame, the reveal animation also caught the menu's own widths resolving — and
-            // every submenu chevron drifted to the right edge on its own schedule.
-            DispatchQueue.main.async { appeared = true }
-        }
     }
 
     /// Approximate row-top within the panel for submenu alignment.

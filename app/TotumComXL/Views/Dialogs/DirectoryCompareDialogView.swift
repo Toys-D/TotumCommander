@@ -791,45 +791,53 @@ struct DirectoryCompareDialogView: View {
         .onTapGesture {
             if entry.isDirectory { advanceFolder(entry, stat: stat) } else { advance(entry) }
         }
-        .contextMenu {
-            if entry.isDirectory {
-                Button(L("compare.menu.excludeFolder")) {
-                    excluded.formUnion(folderFiles(entry).map(\.relativePath))
-                    excluded.insert(entry.relativePath)
-                }
+        .overlay { RightClickMenu { entryMenu(entry, direction: dir) } }
+    }
+
+    /// Правый щелчок по строке сравнения — в окне меню программы, как всякое меню здесь.
+    private func entryMenu(_ entry: CompareEntry, direction dir: SyncDirection) -> NSMenu {
+        let menu = NSMenu()
+        if entry.isDirectory {
+            menu.addStyledItem(title: L("compare.menu.excludeFolder"), symbolName: "eye.slash") {
+                excluded.formUnion(folderFiles(entry).map(\.relativePath))
+                excluded.insert(entry.relativePath)
             }
-            if !entry.isDirectory {
-                Button(L("compare.menu.exclude")) { excluded.insert(entry.relativePath) }
-                Divider()
-                // Deletions live here rather than in the click cycle: arming one has to be a
-                // deliberate act, not something a mis-click can do.
-                if entry.leftSize != nil {
-                    Button(L("compare.menu.moveRight")) {
-                        overrides[entry.relativePath] = .moveRight
-                    }
-                }
-                if entry.rightSize != nil {
-                    Button(L("compare.menu.moveLeft")) {
-                        overrides[entry.relativePath] = .moveLeft
-                    }
-                }
-                Divider()
-                if entry.leftSize != nil {
-                    Button(L("compare.menu.deleteLeft"), role: .destructive) {
-                        overrides[entry.relativePath] = .deleteLeft
-                    }
-                }
-                if entry.rightSize != nil {
-                    Button(L("compare.menu.deleteRight"), role: .destructive) {
-                        overrides[entry.relativePath] = .deleteRight
-                    }
-                }
-                if dir == .deleteLeft || dir == .deleteRight {
-                    Divider()
-                    Button(L("compare.menu.cancelDelete")) { overrides[entry.relativePath] = .none }
-                }
+            return menu
+        }
+        menu.addStyledItem(title: L("compare.menu.exclude"), symbolName: "eye.slash") {
+            excluded.insert(entry.relativePath)
+        }
+        menu.addItem(.separator())
+        // Deletions live here rather than in the click cycle: arming one has to be a
+        // deliberate act, not something a mis-click can do.
+        if entry.leftSize != nil {
+            menu.addStyledItem(title: L("compare.menu.moveRight"), symbolName: "arrow.right") {
+                overrides[entry.relativePath] = .moveRight
             }
         }
+        if entry.rightSize != nil {
+            menu.addStyledItem(title: L("compare.menu.moveLeft"), symbolName: "arrow.left") {
+                overrides[entry.relativePath] = .moveLeft
+            }
+        }
+        menu.addItem(.separator())
+        if entry.leftSize != nil {
+            menu.addStyledItem(title: L("compare.menu.deleteLeft"), symbolName: "trash", isDestructive: true) {
+                overrides[entry.relativePath] = .deleteLeft
+            }
+        }
+        if entry.rightSize != nil {
+            menu.addStyledItem(title: L("compare.menu.deleteRight"), symbolName: "trash", isDestructive: true) {
+                overrides[entry.relativePath] = .deleteRight
+            }
+        }
+        if dir == .deleteLeft || dir == .deleteRight {
+            menu.addItem(.separator())
+            menu.addStyledItem(title: L("compare.menu.cancelDelete"), symbolName: "arrow.uturn.backward") {
+                overrides[entry.relativePath] = .none
+            }
+        }
+        return menu
     }
 
     /// Highlights the newer copy, so the user can see at a glance which side the arrow favours.

@@ -430,6 +430,7 @@ let package = Package(
                 "Services/FileClipboard.swift",
                 "Views/Common/NetworkMenu.swift",
                 "Views/Common/MenuAnchorProbe.swift",
+                "Views/Common/ProgramMenu.swift",
                 "Views/Network/ConnectionManagerView.swift",
                 "Views/Network/NewConnectionDialogView.swift",
                 "Views/Network/ConnectNetworkDriveView.swift",

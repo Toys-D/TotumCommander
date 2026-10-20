@@ -684,9 +684,9 @@ final class TunnelDropHostingView: NSHostingView<CenterDividerView> {
     /// Папки из текущего переноса: буфер читается один раз при входе, не на каждый сдвиг.
     private var carried: [URL] = []
 
-    /// Правая кнопка: меню папки, операции или пустого места — по рамкам кнопок, которые
-    /// вид отдаёт наружу. Меню — AppKit со значками, как контекстное меню панели.
-    override func menu(for event: NSEvent) -> NSMenu? {
+    /// Меню по месту щелчка: папки, операции или пустого места — по рамкам кнопок, которые
+    /// вид отдаёт наружу. Пункты со значками, как в контекстном меню панели.
+    func tunnelMenu(for event: NSEvent) -> NSMenu {
         let local = convert(event.locationInWindow, from: nil)
         let fromTop = isFlipped ? local.y : bounds.height - local.y
         let geometry = TunnelDropState.shared
@@ -703,11 +703,20 @@ final class TunnelDropHostingView: NSHostingView<CenterDividerView> {
         return TunnelContextMenu.split(for: rootView)
     }
 
+    /// Системе — ничего: меню туннеля только своё, в окне меню программы. Отдай его здесь —
+    /// щелчок с Control открыл бы системное меню.
+    override func menu(for event: NSEvent) -> NSMenu? { nil }
+
     /// Правый щелчок показывает меню сам: NSHostingView ведёт события по-своему, и
     /// полагаться на то, что он спросит menu(for:), нельзя.
     override func rightMouseDown(with event: NSEvent) {
-        guard let menu = menu(for: event) else { return super.rightMouseDown(with: event) }
-        ContextPopupMenuController.shared.show(menu, for: event, in: self)
+        ContextPopupMenuController.shared.show(tunnelMenu(for: event), for: event, in: self)
+    }
+
+    /// Щелчок с Control — то же, что правый, и дальше к кнопкам не идёт.
+    override func mouseDown(with event: NSEvent) {
+        guard event.modifierFlags.contains(.control) else { return super.mouseDown(with: event) }
+        ContextPopupMenuController.shared.show(tunnelMenu(for: event), for: event, in: self)
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {

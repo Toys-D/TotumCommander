@@ -596,4 +596,107 @@ final class ContextMenuLayoutTests: XCTestCase {
         XCTAssertTrue(named.contains { $0.identifier?.rawValue == "context.mkdir" },
                       "имена — ключи строк: \(named.compactMap { $0.identifier?.rawValue })")
     }
+    /// Строки появляются на своих местах: проявляются и чуть опускаются — и всё. Раньше
+    /// появление начиналось до того, как окно меню разложилось на экране, и SwiftUI вёл
+    /// строки на место из предварительной раскладки (вокруг нулевой точки) — они влетали
+    /// по диагонали из угла. Снимки окна во время появления: левый край строк не ходит.
+    func test_строкиПоявляютсяНаМесте_НеВлетаютСбоку() throws {
+        let menu = NSMenu()
+        menu.addStyledItem(title: "Открыть в соседней панели", symbolName: "folder", id: "context.open") {}
+        menu.addStyledItem(title: "Свойства", symbolName: "info.circle", id: "context.properties") {}
+        let sub = NSMenu()
+        sub.addStyledItem(title: "Вложенный пункт", symbolName: "1.circle") {}
+        let tools = NSMenuItem(title: "Инструменты", action: nil, keyEquivalent: "")
+        tools.submenu = sub
+        menu.addItem(tools)
+        let popup = ContextPopupMenuController.shared
+        addTeardownBlock { MainActor.assumeIsolated { popup.dismiss() } }
+
+        // Первое меню после запуска собирается долго и успевает разложиться — гоняем ещё два.
+        popup.show(menu, at: NSPoint(x: 400, y: 600))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        for round in 0..<2 {
+            popup.show(menu, at: NSPoint(x: 420, y: 620))
+            let root = try XCTUnwrap(popup.openMenuWindow)
+            let left = Self.leftInkEdges(of: root)
+            XCTAssertGreaterThan(left.count, 3, "строки проявились (\(round))")
+            XCTAssertLessThanOrEqual((left.max() ?? 0) - (left.min() ?? 0), 3,
+                                     "левый край строк стоит на месте (\(round)): \(left)")
+
+            popup.openSubmenu(ofRow: 2)
+            let child = try XCTUnwrap(NSApp.windows.last { $0.isVisible && $0.level == .popUpMenu && $0 !== root })
+            let childLeft = Self.leftInkEdges(of: child)
+            XCTAssertGreaterThan(childLeft.count, 3, "подменю проявилось (\(round))")
+            XCTAssertLessThanOrEqual((childLeft.max() ?? 0) - (childLeft.min() ?? 0), 3,
+                                     "левый край подменю стоит на месте (\(round)): \(childLeft)")
+        }
+    }
+
+    /// Левый край нарисованного в окне (в точках снимка) — снимок за снимком, пока идёт
+    /// появление: от первого снимка, где строки уже видны, ещё треть секунды. Пустые снимки
+    /// (строки ещё прозрачны) пропускаются.
+    private static func leftInkEdges(of window: NSWindow) -> [Int] {
+        var edges: [Int] = []
+        let giveUp = Date().addingTimeInterval(2)
+        var end = giveUp
+        RunLoop.current.run(until: Date().addingTimeInterval(0.004))
+        while Date() < end {
+            if let edge = leftInkEdge(of: window) {
+                if edges.isEmpty { end = min(giveUp, Date().addingTimeInterval(0.35)) }
+                edges.append(edge)
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.006))
+        }
+        return edges
+    }
+
+    private static func leftInkEdge(of window: NSWindow) -> Int? {
+        guard let view = window.contentView,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        guard let data = rep.bitmapData, rep.bitsPerSample == 8, rep.samplesPerPixel >= 3 else { return nil }
+        let width = rep.pixelsWide, height = rep.pixelsHigh, stride = rep.bytesPerRow, step = rep.samplesPerPixel
+        func light(_ x: Int, _ y: Int) -> Int {
+            let p = data + y * stride + x * step
+            return Int(p[0]) + Int(p[1]) + Int(p[2])
+        }
+        let background = light(width - 8, height / 2)
+        let margin = 8   // рамка меню и её обводка — не строки
+        for x in margin..<(width - margin) {
+            for y in margin..<(height - margin) where abs(light(x, y) - background) > 230 {
+                return x
+            }
+        }
+        return nil
+    }
+
+    /// Все меню программы — в её окне меню. Системное меню (`.contextMenu {}` и `Menu {}` у
+    /// SwiftUI, NSPopUpButton и показ NSMenu самим AppKit) выглядит и появляется по-своему,
+    /// а на macOS 27 ещё и влетает сбоку. Такого в исходниках быть не должно.
+    func test_системныхМенюВКодеНет() throws {
+        let root = FileManager.default.currentDirectoryPath + "/app/TotumComXL"
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(atPath: root))
+        // Модификатор `.contextMenu` — в цепочке после вида или с начала строки; случай
+        // перечисления (`== .contextMenu {`) и свои функции (`self?.contextMenu(for:)`) — нет.
+        let patterns = [#"(^|[)\]\w])\.contextMenu\s*(\{|\(menuItems|\(forSelectionType)"#,
+                        #"(^|[^A-Za-z.])Menu\s*[{(]"#,
+                        #"NSPopUpButton\("#, #"popUp\(positioning"#, #"popUpContextMenu"#]
+            .map { try! NSRegularExpression(pattern: $0) }
+        var found: [String] = []
+        while let path = enumerator.nextObject() as? String {
+            guard path.hasSuffix(".swift"),
+                  let text = try? String(contentsOfFile: root + "/" + path, encoding: .utf8) else { continue }
+            for (number, line) in text.components(separatedBy: "\n").enumerated() {
+                let code = line.trimmingCharacters(in: .whitespaces)
+                guard !code.hasPrefix("//") else { continue }
+                let range = NSRange(code.startIndex..., in: code)
+                if patterns.contains(where: { $0.firstMatch(in: code, range: range) != nil }) {
+                    found.append("\(path):\(number + 1): \(code)")
+                }
+            }
+        }
+        XCTAssertGreaterThan(enumerator.level, -1)
+        XCTAssertTrue(found.isEmpty, "системные меню:\n" + found.joined(separator: "\n"))
+    }
+
 }

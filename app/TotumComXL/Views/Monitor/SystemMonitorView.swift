@@ -546,21 +546,25 @@ struct SystemMonitorView: View {
         }
         .font(.system(size: 10))
         .frame(height: 14)            // one text line — no column may make the header row grow
-        .contextMenu { columnMenu }   // right-click the header to choose columns, like Activity Monitor
+        // Right-click the header to choose columns, like Activity Monitor — in the program's
+        // own menu window, as every menu here.
+        .overlay { RightClickMenu { columnMenu() } }
     }
 
     /// The column chooser: every available column with a checkmark, plus "reset".
-    @ViewBuilder private var columnMenu: some View {
-        // Toggle (not Button+Label): AppKit draws a real checkmark for a menu Toggle, so the user
-        // can see at a glance which columns are on. A Label's systemImage is not rendered here.
-        ForEach(SystemMonitorService.ProcessColumn.allCases.filter { $0 != .name }, id: \.self) { col in
-            Toggle(columnTitle(col), isOn: Binding(
-                get: { service.visibleColumns.contains(col) },
-                set: { _ in service.toggleColumn(col) }
-            ))
+    private func columnMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for col in SystemMonitorService.ProcessColumn.allCases where col != .name {
+            menu.addChoiceItem(title: columnTitle(col), checked: service.visibleColumns.contains(col)) {
+                service.toggleColumn(col)
+            }
         }
-        Divider()
-        Button(L("monitor.columns.reset")) { service.resetColumns() }
+        menu.addItem(.separator())
+        menu.addStyledItem(title: L("monitor.columns.reset"), symbolName: "arrow.counterclockwise") {
+            service.resetColumns()
+        }
+        return menu
     }
 
     private func columnTitle(_ c: SystemMonitorService.ProcessColumn) -> String {
@@ -735,12 +739,24 @@ struct SystemMonitorView: View {
         .simultaneousGesture(TapGesture().onEnded {
             service.selectedPID = (service.selectedPID == p.pid ? nil : p.pid)
         })
-        .contextMenu {
-            Button(L("monitor.process.quit")) { service.terminate(pid: p.pid, force: false); onRestoreFocus?() }
-            Button(L("monitor.process.forceQuit"), role: .destructive) { service.terminate(pid: p.pid, force: true); onRestoreFocus?() }
-            Divider()
-            Button(L("monitor.inspect")) { service.selectedPID = p.pid; showInspector = true }
+        .overlay { RightClickMenu { processMenu(p) } }
+    }
+
+    /// Right-click on a process: quit it, force it, or look inside.
+    private func processMenu(_ p: ProcessSample) -> NSMenu {
+        let menu = NSMenu()
+        menu.addStyledItem(title: L("monitor.process.quit"), symbolName: "xmark.circle") {
+            service.terminate(pid: p.pid, force: false); onRestoreFocus?()
         }
+        menu.addStyledItem(title: L("monitor.process.forceQuit"), symbolName: "bolt.horizontal.circle",
+                           isDestructive: true) {
+            service.terminate(pid: p.pid, force: true); onRestoreFocus?()
+        }
+        menu.addItem(.separator())
+        menu.addStyledItem(title: L("monitor.inspect"), symbolName: "info.circle") {
+            service.selectedPID = p.pid; showInspector = true
+        }
+        return menu
     }
 
 

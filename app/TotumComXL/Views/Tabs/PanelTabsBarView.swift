@@ -141,9 +141,9 @@ struct PanelTabsBarView: View {
             // Правый щелчок — выбор: файловая вкладка или терминал. Левый — как всегда.
             .overlay {
                 if let onNewTerminal {
-                    TabContextMenuHelper(makeMenu: {
+                    RightClickMenu {
                         TabBarMenus.newTabMenu(onNewTab: onNewTab, onNewTerminal: onNewTerminal)
-                    })
+                    }
                 }
             }
             .frame(width: plusButtonWidth, height: barHeight)

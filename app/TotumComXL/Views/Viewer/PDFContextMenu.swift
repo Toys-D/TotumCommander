@@ -8,8 +8,12 @@ import PDFKit
 /// This one is built the way every other context menu here is, from styled items.
 final class FCXLPDFView: PDFView {
 
+    /// В окне меню программы, как всякое меню здесь, — и nil системе, чтобы она не открыла
+    /// ещё и своё.
     override func menu(for event: NSEvent) -> NSMenu? {
-        contextMenu(at: convert(event.locationInWindow, from: nil))
+        let menu = contextMenu(at: convert(event.locationInWindow, from: nil))
+        ContextPopupMenuController.shared.show(menu, for: event, in: self)
+        return nil
     }
 
     /// The menu for the view's current state — a function of its own so a test can read it.

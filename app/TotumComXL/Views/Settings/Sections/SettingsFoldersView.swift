@@ -143,8 +143,14 @@ extension SettingsFoldersView {
         .onHover { inside in
             if inside { hoveredCustom = entry.id } else if hoveredCustom == entry.id { hoveredCustom = nil }
         }
-        .contextMenu {
-            Button(L("folderStyles.delete")) { FolderStyleLibrary.remove(entry.id) }
+        .overlay {
+            RightClickMenu {
+                let menu = NSMenu()
+                menu.addStyledItem(title: L("folderStyles.delete"), symbolName: "trash", isDestructive: true) {
+                    FolderStyleLibrary.remove(entry.id)
+                }
+                return menu
+            }
         }
         .help(entry.name)
     }
