@@ -771,9 +771,15 @@ final class PanelViewModel: ObservableObject {
         let gateway = await Task.detached(priority: .utility) {
             LANDiscovery.defaultGateway()
         }.value
-        let state = await Task.detached(priority: .utility) {
+        var state = await Task.detached(priority: .utility) {
             LocalNetworkPermission.state(gateway: gateway)
         }.value
+        // Сырой стук молчит, а таблицы ARP, чтобы понять, жив ли шлюз, на macOS 27 нет. Тогда
+        // спросить саму систему: путь Network.framework называет запрет прямо — и отказ
+        // распознаётся одинаково на любом Маке.
+        if state == .unknown, let gateway {
+            state = await LocalNetworkPermission.check(host: gateway, port: 80)
+        }
         guard let advice = LocalNetworkPermission.adviceAfterEmptyScan(state),
               LocalNetworkPermission.shouldWarn(advice, afterScan: afterScan,
                                                 listIsEmpty: listIsEmpty),

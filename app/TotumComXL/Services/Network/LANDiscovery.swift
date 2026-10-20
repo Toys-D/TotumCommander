@@ -25,9 +25,9 @@ enum LANDiscovery {
     /// Windows (3389), общий экран Mac и VNC (5900).
     static let computerPorts: Set<UInt16> = [445, 139, 548, 22, 3389, 5900]
 
-    /// Двери для обхода вслепую, адрес за адресом (см. `sweepPlan`): только общие папки —
-    /// Windows и Samba (445, 139), Mac (548). Компьютер без общих папок открыть всё равно нечем.
-    static let blindPorts: [UInt16] = [445, 139, 548]
+    /// Двери обхода, адрес за адресом (см. `sweepPlan`): общие папки — Windows и Samba
+    /// (445, 139), Mac (548).
+    static let sharePorts: [UInt16] = [445, 139, 548]
 
     struct Found: Equatable {
         let ip: String
@@ -133,36 +133,6 @@ enum LANDiscovery {
         return byHost
     }
 
-    /// Толкнуть каждый адрес подсети одним UDP-байтом.
-    ///
-    /// Ответа не ждём и он не нужен: важно, что ради отправки система спрашивает «чей это
-    /// адрес» по ARP, и живые соседи отзываются — сами, на канальном уровне, независимо от
-    /// того, какая у них система и что у них закрыто брандмауэром. Через полсекунды все они
-    /// лежат в таблице ARP.
-    static func kick(prefixes: [String], selfIPs: Set<String>) {
-        let fd = socket(AF_INET, SOCK_DGRAM, 0)
-        guard fd >= 0 else { return }
-        defer { close(fd) }
-        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK)
-        var byte: UInt8 = 0
-        for prefix in prefixes {
-            for host in 1...254 {
-                let ip = "\(prefix).\(host)"
-                if selfIPs.contains(ip) { continue }
-                var addr = sockaddr_in()
-                addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-                addr.sin_family = sa_family_t(AF_INET)
-                addr.sin_port = UInt16(9).bigEndian   // discard
-                guard inet_pton(AF_INET, ip, &addr.sin_addr) == 1 else { continue }
-                _ = withUnsafePointer(to: &addr) {
-                    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                        sendto(fd, &byte, 1, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-                    }
-                }
-            }
-        }
-    }
-
     /// Таблица ARP: кто отозвался на канальном уровне.
     static func arpTable() -> String {
         let process = Process()
@@ -198,21 +168,11 @@ enum LANDiscovery {
         return result.sorted { $0.compare($1, options: .numeric) == .orderedAscending }
     }
 
-    /// Кто вообще есть в этих подсетях. Блокирует вызывающий поток на `settle`.
-    static func liveAddresses(prefixes: [String], selfIPs: Set<String>,
-                              settle: TimeInterval = 0.45) -> [String] {
-        kick(prefixes: prefixes, selfIPs: selfIPs)
-        Thread.sleep(forTimeInterval: settle)
-        return addresses(inArpOutput: arpTable(), prefixes: prefixes, selfIPs: selfIPs)
-    }
-
     /// Полный обход. Блокирует вызывающий поток — вызывать не с главного.
     ///
-    /// Два шага вместо одного. Сначала ARP: кто отозвался на канальном уровне — быстро
-    /// (доли секунды) и независимо от системы и брандмауэра. Потом стук в двери, но уже
-    /// только к живым: десяток адресов вместо двух с половиной сотен. Прежний способ — стук
-    /// во все двери подряд — заливал сеть полутора тысячами одновременных запросов, и живой
-    /// сосед терялся в этом шуме.
+    /// Один и тот же на любом Маке: каждый адрес подсетей без туннелей — в двери общих папок
+    /// (см. `sweepPlan`). Таблица ARP, по которой раньше выбирали, к кому стучаться, на разных
+    /// системах разная — macOS 27 её программе не отдаёт вовсе, — а обход от неё не зависит.
     /// - Parameter onHost: зовётся, как только про очередной компьютер всё известно, — чтобы
     ///   список наполнялся на глазах, а не появлялся целиком в конце.
     /// - Parameter directPrefixes: подсети без туннелей VPN — их обходят вслепую, когда
@@ -222,8 +182,7 @@ enum LANDiscovery {
                          timeout: TimeInterval = 0.8,
                          onHost: ((Found) -> Void)? = nil) -> [Found] {
         LANScanner.raiseDescriptorLimit()
-        let plan = sweepPlan(live: liveAddresses(prefixes: prefixes, selfIPs: selfIPs),
-                             directPrefixes: directPrefixes ?? prefixes, selfIPs: selfIPs)
+        let plan = sweepPlan(directPrefixes: directPrefixes ?? prefixes, selfIPs: selfIPs)
         let live = plan.addresses
         guard !live.isEmpty else { return [] }
 
@@ -243,20 +202,12 @@ enum LANDiscovery {
 
         var byHost = group(answers)
         // Первый обход после запуска программы медленнее остальных: пока macOS решает,
-        // пускать ли нас в локальную сеть, часть дверей не успевает ответить. Живых соседей
-        // мы уже знаем по ARP — переспросить их ещё раз стоит десятка сокетов.
-        //
-        // Но только когда не нашлось НИКОГО: в обычном обходе большинство живых адресов —
-        // это телефоны и телевизоры, у которых и правда нечего спрашивать, и второй заход
-        // по ним стоил бы двух секунд ожидания на ровном месте.
-        //
-        // Вслепую — не переспрашиваем: там «живых» — вся подсеть, и второй заход по двум
-        // с половиной сотням адресов стоил бы секунд на ровном месте.
+        // пускать ли нас в локальную сеть, часть дверей не успевает ответить. Не нашлось
+        // НИКОГО — переспросить ещё раз, с запасом времени: в обычном обходе этого нет.
         let anyComputer = byHost.contains { isComputer(ports: $0.value, isGateway: $0.key == gateway) }
-        let silent = anyComputer || plan.blind ? []
-            : live.filter { !isComputer(ports: byHost[$0] ?? [], isGateway: $0 == gateway) }
+        let silent = anyComputer ? [] : live
         if !silent.isEmpty {
-            let again = silent.flatMap { ip in probedPorts.map { (ip: ip, port: $0) } }
+            let again = silent.flatMap { ip in plan.ports.map { (ip: ip, port: $0) } }
             for batch in again.chunked(into: 512) {
                 for entry in openPorts(batch, timeout: max(timeout, 2.0)).open {
                     byHost[entry.ip, default: []].insert(entry.port)
@@ -283,21 +234,20 @@ enum LANDiscovery {
         return found.compactMap { $0 }
     }
 
-    /// Кого и в какие двери спрашивать.
+    /// Кого и в какие двери спрашивать — одинаково на любом Маке.
     ///
-    /// Обычно — живых по таблице ARP, во все двери из `probedPorts`. Но macOS 27 сторонней
+    /// Раньше живых брали из таблицы ARP и стучались только к ним. Но macOS 27 сторонней
     /// программе таблицу не отдаёт: и `arp -an`, запущенный из неё, и sysctl из её процесса
     /// возвращают пустоту, хотя соседи на месте и соединения до них проходят (замер: из
-    /// оболочки 63 строки, из программы — ноль). Обход тогда кончался, не начавшись, и
-    /// компьютер с Windows — он не объявляет себя по Bonjour — пропадал из списка. Молчит
-    /// ARP — спрашиваем каждый адрес подсетей без туннелей, но только в двери общих папок.
-    nonisolated static func sweepPlan(live: [String], directPrefixes: [String],
-                                      selfIPs: Set<String>)
-        -> (addresses: [String], ports: [UInt16], blind: Bool) {
-        guard live.isEmpty else { return (live, probedPorts, false) }
+    /// оболочки 63 строки, из программы — ноль), а прежние системы отдают. Один и тот же обход
+    /// находил на разных Маках разное, а на 27 — никого: компьютер с Windows не объявляет
+    /// себя по Bonjour. Теперь таблица не нужна: каждый адрес подсетей без туннелей VPN — в
+    /// двери общих папок. Компьютер без общих папок открыть всё равно нечем.
+    nonisolated static func sweepPlan(directPrefixes: [String], selfIPs: Set<String>)
+        -> (addresses: [String], ports: [UInt16]) {
         let everyone = directPrefixes.flatMap { prefix in (1...254).map { "\(prefix).\($0)" } }
             .filter { !selfIPs.contains($0) }
-        return (everyone, blindPorts, true)
+        return (everyone, sharePorts)
     }
 
     // MARK: - Имена

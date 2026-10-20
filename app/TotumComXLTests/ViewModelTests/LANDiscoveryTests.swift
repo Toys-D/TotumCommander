@@ -107,28 +107,22 @@ final class LANDiscoveryTests: XCTestCase {
     func testAZeroBudgetDoesNotLoseAnybody() {
         XCTAssertEqual([1, 2, 3].chunked(into: 0), [[1, 2, 3]])
     }
-    /// macOS 27 прячет таблицу ARP от сторонней программы: живых по ней нет. Тогда обход
-    /// идёт по всем адресам подсетей без туннелей — но только в двери общих папок, — и
-    /// компьютер с Windows, который не объявляет себя по Bonjour, снова находится.
-    func testSilentArpMeansSweepingTheWholeSubnetForShares() {
-        let blind = LANDiscovery.sweepPlan(live: [], directPrefixes: ["192.168.0"],
-                                           selfIPs: ["192.168.0.105"])
-        XCTAssertTrue(blind.blind)
-        XCTAssertEqual(blind.addresses.count, 253, "вся /24, кроме себя")
-        XCTAssertTrue(blind.addresses.contains("192.168.0.169"))
-        XCTAssertFalse(blind.addresses.contains("192.168.0.105"))
-        XCTAssertEqual(Set(blind.ports), [445, 139, 548], "только общие папки")
-
-        // Таблица ответила — как раньше: только живые и во все двери.
-        let seen = LANDiscovery.sweepPlan(live: ["192.168.0.169"], directPrefixes: ["192.168.0"],
-                                          selfIPs: [])
-        XCTAssertFalse(seen.blind)
-        XCTAssertEqual(seen.addresses, ["192.168.0.169"])
-        XCTAssertEqual(seen.ports, LANDiscovery.probedPorts)
+    /// Обход один и тот же на любом Маке: все адреса подсети, кроме своего, — в двери общих
+    /// папок. Таблица ARP (на macOS 27 программе её не дают) в нём не участвует.
+    func testTheSweepIsTheSameOnEveryMac() {
+        let plan = LANDiscovery.sweepPlan(directPrefixes: ["192.168.0"], selfIPs: ["192.168.0.105"])
+        XCTAssertEqual(plan.addresses.count, 253, "вся /24, кроме себя")
+        XCTAssertTrue(plan.addresses.contains("192.168.0.169"))
+        XCTAssertFalse(plan.addresses.contains("192.168.0.105"))
+        XCTAssertEqual(plan.addresses.first, "192.168.0.1")
+        XCTAssertEqual(plan.addresses.last, "192.168.0.254")
+        XCTAssertEqual(Set(plan.ports), [445, 139, 548], "только общие папки")
+        XCTAssertTrue(Set(plan.ports).isSubset(of: LANDiscovery.computerPorts),
+                      "ответ в любую из них делает адрес компьютером")
     }
 
-    /// Вслепую не обходят туннели VPN: двести с лишним проб в утун, где никого, — время,
-    /// отнятое у настоящей сети.
+    /// Туннели VPN не обходят: двести с лишним проб в утун, где никого, — время, отнятое у
+    /// настоящей сети.
     func testTunnelsAreLeftOutOfTheBlindSweep() {
         let interfaces = [(name: "en0", ip: "192.168.0.105"), (name: "utun4", ip: "100.89.19.2")]
         XCTAssertEqual(LANScanner.scanPrefixes(interfaces: interfaces), ["192.168.0", "100.89.19"])
