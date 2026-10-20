@@ -48,6 +48,38 @@ enum TerminalPalette {
     static let paneHeader = NSColor(srgbRed: 58 / 255, green: 64 / 255, blue: 78 / 255, alpha: 1)
 }
 
+/// Прокрутка терминала — та же, что у всех списков и текстов системы.
+///
+/// SwiftTerm крутит по `deltaY` — старому, грубому смещению, а NSScrollView везде в системе —
+/// по `scrollingDeltaY`. «Естественная» прокрутка учтена в обоих, но утилиты мыши (SteerMouse и
+/// подобные), переворачивая колесо, правят одно и не трогают другое — и в терминале текст шёл
+/// наоборот, чем во всей системе. Здесь — `scrollingDeltaY`, как у NSScrollView; тачпад и
+/// Magic Mouse ведут текст плавно, по точкам, а не рывками по строке.
+struct TerminalScroll {
+    /// В обратную сторону — флажок в Настройках ▸ Терминал: на случай устройства, которое
+    /// и так ведёт наоборот.
+    static let reverseKey = "terminalReverseScroll"
+
+    /// Недокрученная доля строки: тачпад шлёт смещения в точках, мелкими долями.
+    private(set) var pending: CGFloat = 0
+
+    /// Сколько строк прокрутить: больше нуля — к началу, меньше — к концу.
+    mutating func lines(deltaY: CGFloat, precise: Bool, lineHeight: CGFloat, reversed: Bool) -> Int {
+        guard deltaY != 0 else { return 0 }
+        var step = precise ? deltaY / max(lineHeight, 1) : deltaY
+        if reversed { step = -step }
+        // Щелчок колеса — хотя бы строка: иначе медленный поворот не сдвигал ничего.
+        if !precise, abs(step) < 1 { step = step < 0 ? -1 : 1 }
+        pending += step
+        let whole = pending.rounded(.towardZero)
+        pending -= whole
+        return Int(whole)
+    }
+
+    /// Новый жест — с чистого листа: остаток прошлого не должен дёрнуть текст.
+    mutating func reset() { pending = 0 }
+}
+
 @MainActor
 final class TerminalProcessRegistry {
     static let shared = TerminalProcessRegistry()
@@ -99,6 +131,10 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
     /// Меню правого щелчка (и ⌃-щелчка) по терминалу; nil — щелчок уходит дальше.
     var makeContextMenu: (() -> NSMenu?)?
     private var contextMenuMonitor: Any?
+    /// Прокрутка своя, по `scrollingDeltaY` (см. `TerminalScroll`): SwiftTerm свою
+    /// `scrollWheel` закрыл для наследников (`public`, не `open`), остаётся перехватчик.
+    private var scrollMonitor: Any?
+    private var scroll = TerminalScroll()
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -113,6 +149,7 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
     deinit {
         if let clickFocusMonitor { NSEvent.removeMonitor(clickFocusMonitor) }
         if let contextMenuMonitor { NSEvent.removeMonitor(contextMenuMonitor) }
+        if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
         let tv = localTermView
         MainActor.assumeIsolated {
             tv?.terminate()
@@ -245,6 +282,7 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
 
         installClickToFocus(on: tv)
         installContextMenu(on: tv)
+        installScroll(on: tv)
     }
 
     /// Clicking anywhere in the terminal hands it the keyboard. The event is passed on untouched,
@@ -276,6 +314,35 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
         if let contextMenuMonitor {
             NSEvent.removeMonitor(contextMenuMonitor)
             self.contextMenuMonitor = nil
+        }
+        if let scrollMonitor {
+            NSEvent.removeMonitor(scrollMonitor)
+            self.scrollMonitor = nil
+        }
+    }
+
+    /// Колесо и тачпад над терминалом — его прокрутка, в ту же сторону, что во всей системе.
+    private func installScroll(on tv: LocalProcessTerminalView) {
+        guard scrollMonitor == nil else { return }
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) {
+            [weak self, weak tv] event in
+            guard let self, let tv, let window = tv.window, event.window === window,
+                  !tv.isHiddenOrHasHiddenAncestor,
+                  tv.bounds.contains(tv.convert(event.locationInWindow, from: nil))
+            else { return event }
+            if event.phase == .began { self.scroll.reset() }
+            let rows = max(tv.getTerminal().rows, 1)
+            let lines = self.scroll.lines(
+                deltaY: event.scrollingDeltaY,
+                precise: event.hasPreciseScrollingDeltas,
+                lineHeight: tv.bounds.height / CGFloat(rows),
+                reversed: UserDefaults.standard.bool(forKey: TerminalScroll.reverseKey))
+            if lines > 0 {
+                tv.scrollUp(lines: lines)
+            } else if lines < 0 {
+                tv.scrollDown(lines: -lines)
+            }
+            return nil
         }
     }
 

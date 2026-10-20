@@ -43,6 +43,7 @@ enum SettingsSearchIndex {
             ("settings.cmdQToQuit", nil),
         ],
         .terminal: [
+            ("settings.terminal.reverseScroll", "settings.section.terminal"),
             ("settings.terminalPlacement", "settings.section.terminal"),
             ("settings.terminalToggleAction", "settings.section.terminal"),
             ("settings.externalTerminal", "settings.section.terminal"),

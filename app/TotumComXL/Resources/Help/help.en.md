@@ -456,6 +456,7 @@ The colours of the interface, cursor and tabs, the file-colour rules and the fol
 ### Terminal
 - **Open terminal in** — ask, the bottom of the window, the active, left or right panel.
 - **⌘` and terminal button** — hide the terminal (what runs in it keeps running) or close and stop it.
+- **Reverse scrolling** — the terminal scrolls the same way as everything else on the system; the switch is for a mouse or trackpad that still makes it go the other way.
 - **External terminal** — what opens "Open in Terminal"; only installed terminals are listed.
 - **Keys** — ⌘D and ⇧⌘D split the terminal, ⌥⌘ with the arrows moves to the neighbouring part, ⌘W closes a part, ⌘T opens a new terminal in a tab (section 10).
 

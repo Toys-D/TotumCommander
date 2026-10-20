@@ -63,4 +63,29 @@ final class TerminalToggleTests: XCTestCase {
         defaults.set("мусор", forKey: TerminalToggleMode.defaultsKey)
         XCTAssertEqual(TerminalToggleMode.current(defaults), .hide)
     }
+    /// Прокрутка терминала — по знаку системы: смещение больше нуля (пальцы вниз при
+    /// «естественной» прокрутке) ведёт к началу, как в любом списке macOS. Флажок переворачивает.
+    func test_прокруткаИдётВСторонуСистемы() {
+        var scroll = TerminalScroll()
+        XCTAssertGreaterThan(scroll.lines(deltaY: 3, precise: false, lineHeight: 15, reversed: false), 0)
+        XCTAssertLessThan(scroll.lines(deltaY: -3, precise: false, lineHeight: 15, reversed: false), 0)
+        XCTAssertLessThan(scroll.lines(deltaY: 3, precise: false, lineHeight: 15, reversed: true), 0,
+                          "флажок «в обратную сторону»")
+    }
+
+    /// Тачпад шлёт точки мелкими долями: строка набегает из нескольких смещений, без рывков и
+    /// без потерь. Щелчок колеса — всегда хотя бы строка.
+    func test_тачпадКопитДолиСтроки_КолесоНеМеньшеСтроки() {
+        var scroll = TerminalScroll()
+        XCTAssertEqual(scroll.lines(deltaY: 10, precise: true, lineHeight: 15, reversed: false), 0)
+        XCTAssertEqual(scroll.lines(deltaY: 10, precise: true, lineHeight: 15, reversed: false), 1,
+                       "двадцать точек — строка, остаток копится")
+        XCTAssertEqual(scroll.lines(deltaY: 40, precise: true, lineHeight: 15, reversed: false), 3)
+        scroll.reset()
+        XCTAssertEqual(scroll.pending, 0)
+        XCTAssertEqual(scroll.lines(deltaY: 0.2, precise: false, lineHeight: 15, reversed: false), 1)
+        XCTAssertEqual(scroll.lines(deltaY: -0.2, precise: false, lineHeight: 15, reversed: false), -1)
+        XCTAssertEqual(scroll.lines(deltaY: 0, precise: true, lineHeight: 15, reversed: false), 0)
+    }
+
 }

@@ -4,10 +4,16 @@ struct SettingsTerminalView: View {
     @AppStorage("terminalPlacement") private var terminalPlacement: String = "ask"
     @AppStorage(ExternalTerminal.defaultsKey) private var externalTerminal: String = ""
     @AppStorage(TerminalToggleMode.defaultsKey) private var toggleAction: String = TerminalToggleMode.hide.rawValue
+    @AppStorage(TerminalScroll.reverseKey) private var reverseScroll = false
 
     var body: some View {
         Form {
             Section(L("settings.section.terminal")) {
+                Toggle(L("settings.terminal.reverseScroll"), isOn: $reverseScroll)
+                    .settingAnchor("settings.terminal.reverseScroll")
+                Text(L("settings.terminal.reverseScroll.hint"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 LabeledContent(L("settings.terminalPlacement")) {
                     FCXLDialogMenuPicker(
                         items: ["ask", "bottom", "activePanel", "leftPanel", "rightPanel"],

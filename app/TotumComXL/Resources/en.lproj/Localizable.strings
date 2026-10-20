@@ -719,6 +719,8 @@
 "unit.pixels" = "px";
 "unit.milliseconds" = "ms";
 "archive.pkg.payloadBroken" = "The installer package contents are damaged: the Payload does not unpack.";
+"settings.terminal.reverseScroll" = "Reverse scrolling";
+"settings.terminal.reverseScroll.hint" = "The terminal scrolls the same way as everything else on the system. Turn this on if it still goes the other way with your mouse or trackpad.";
 "volume.eject.tooltip" = "Eject disk";
 "volume.eject.failed.title" = "Eject error";
 "volume.eject.failed.message" = "Failed to eject disk %@. Close files on the disk and try again.";
