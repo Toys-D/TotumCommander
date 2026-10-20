@@ -162,6 +162,8 @@ final class PanelViewModel: ObservableObject {
         case tarLz
         case tarLz4
         case iso
+        /// Пакет установки macOS (.pkg) — архив xar, только для чтения.
+        case xar
         case unknown
 
         var isIndexed: Bool {
@@ -2086,7 +2088,7 @@ final class PanelViewModel: ObservableObject {
         if insideArchive {
             if item.isDirectory {
                 navigateInsideArchive(to: item.path)
-            } else if isArchiveFile(item) {
+            } else if isArchiveFile(item) || isPackageArchiveEntry(item) {
                 // An archive inside an archive: extract it to temp and browse it right here,
                 // instead of handing it to the system, which unpacked it into Finder.
                 enterNestedArchive(item)
@@ -3625,15 +3627,30 @@ final class PanelViewModel: ObservableObject {
         }
     }
 
+    /// Payload и Scripts внутри пакета установки: архивы cpio без расширения — в них входят,
+    /// как во вложенный архив (там то, что пакет установит, и сценарии установки).
+    private func isPackageArchiveEntry(_ item: FileItem) -> Bool {
+        guard insideArchive, !item.isDirectory, let archivePath,
+              archiveFormat(for: archivePath) == .xar else { return false }
+        return InstallerPackage.isPackageArchiveEntry(name: item.name)
+    }
+
     /// Enter an archive that is itself an ENTRY of the archive being browsed.
     private func enterNestedArchive(_ item: FileItem) {
         guard let outerArchive = archivePath else { return }
         let entryPath = normalizeArchiveEntryPath(item.path)
         do {
             // Внешний архив с паролем спрашивает его и тут — как на всех дорогах распаковки.
-            let extracted = try operationsService.askingArchivePassword(archivePath: outerArchive) {
+            var extracted = try operationsService.askingArchivePassword(archivePath: outerArchive) {
                 try operationsService.extractArchiveEntryToTemp(
                     archivePath: outerArchive, entryPath: entryPath)
+            }
+            // Payload в упаковке pbzx (так пишут Apple и многие установщики) libarchive не
+            // читает — разворачиваем рядом в обычный cpio и входим в него.
+            if PackagePayload.isPBZX(atPath: extracted) {
+                let cpio = extracted + ".cpio"
+                try PackagePayload.unpack(atPath: extracted, to: cpio)
+                extracted = cpio
             }
             archiveReturnStack.append(
                 (archive: outerArchive, relative: archiveRelativePath, cursorEntry: entryPath))
@@ -3883,7 +3900,8 @@ final class PanelViewModel: ObservableObject {
 
         for entry in entries {
             let normalizedEntryPath = normalizeArchiveEntryPath(entry.path)
-            if normalizedEntryPath.isEmpty {
+            // cpio (Payload пакета установки) пишет корень записью «.» — это не файл.
+            if normalizedEntryPath.isEmpty || normalizedEntryPath == "." || normalizedEntryPath == ".." {
                 continue
             }
             if !prefix.isEmpty && !normalizedEntryPath.hasPrefix(prefix) {
@@ -4324,7 +4342,8 @@ final class PanelViewModel: ObservableObject {
 
         for entry in entries {
             let normalizedEntryPath = normalizeArchiveEntryPathStatic(entry.path)
-            if normalizedEntryPath.isEmpty {
+            // cpio (Payload пакета установки) пишет корень записью «.» — это не файл.
+            if normalizedEntryPath.isEmpty || normalizedEntryPath == "." || normalizedEntryPath == ".." {
                 continue
             }
 
@@ -4529,6 +4548,7 @@ final class PanelViewModel: ObservableObject {
         if lowercased.hasSuffix(".gz") { return .gz }
         if lowercased.hasSuffix(".bz2") { return .bz2 }
         if lowercased.hasSuffix(".xz") { return .xz }
+        if InstallerPackage.isPackagePath(lowercased) { return .xar }
         return .unknown
     }
 

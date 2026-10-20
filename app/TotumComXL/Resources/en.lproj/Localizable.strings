@@ -718,6 +718,7 @@
 "preview.mode.pdf" = "PDF";
 "unit.pixels" = "px";
 "unit.milliseconds" = "ms";
+"archive.pkg.payloadBroken" = "The installer package contents are damaged: the Payload does not unpack.";
 "volume.eject.tooltip" = "Eject disk";
 "volume.eject.failed.title" = "Eject error";
 "volume.eject.failed.message" = "Failed to eject disk %@. Close files on the disk and try again.";

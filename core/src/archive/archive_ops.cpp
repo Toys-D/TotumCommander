@@ -318,6 +318,23 @@ auto detect_magic_format(const std::array<unsigned char, 512>& header,
         return ArchiveFormat::TAR_LZ;
     }
 
+    if (bytes_read >= 4 && header[0] == 'x' && header[1] == 'a' &&
+        header[2] == 'r' && header[3] == '!') {
+        return ArchiveFormat::XAR;
+    }
+
+    // cpio: «070707» (переносимый, им пишет pkgbuild), «070701»/«070702» (newc и crc) или
+    // двоичный 0x71C7 в любом порядке байтов.
+    if (bytes_read >= 6 && header[0] == '0' && header[1] == '7' && header[2] == '0' &&
+        header[3] == '7' && header[4] == '0' &&
+        (header[5] == '7' || header[5] == '1' || header[5] == '2')) {
+        return ArchiveFormat::CPIO;
+    }
+    if (bytes_read >= 2 && ((header[0] == 0xC7 && header[1] == 0x71) ||
+                            (header[0] == 0x71 && header[1] == 0xC7))) {
+        return ArchiveFormat::CPIO;
+    }
+
     return std::nullopt;
 }
 

@@ -156,6 +156,34 @@ TEST_F(ArchiveOpsTest, should_detect_rar_format) {
     EXPECT_EQ(result.value(), archive::ArchiveFormat::RAR);
 }
 
+// Пакет установки macOS — xar; его Payload и Scripts — cpio. Узнаются как свои форматы
+// только для чтения, а не как TAR, в который можно писать.
+TEST_F(ArchiveOpsTest, should_detect_installer_package_formats_as_read_only) {
+    const auto write_header = [this](const char* name, std::string header) {
+        const auto path = test_dir_ / name;
+        std::ofstream ofs(path, std::ios::binary);
+        header.resize(1024, '\0');
+        ofs.write(header.data(), static_cast<std::streamsize>(header.size()));
+        return path;
+    };
+    archive::ArchiveOps ops;
+
+    const auto pkg = ops.detect_format(write_header("setup.pkg", "xar!\x00\x1c\x00\x01").string());
+    ASSERT_TRUE(pkg.has_value()) << pkg.error().message;
+    EXPECT_EQ(pkg.value(), archive::ArchiveFormat::XAR);
+
+    const auto odc = ops.detect_format(write_header("Payload", "070707000001").string());
+    ASSERT_TRUE(odc.has_value()) << odc.error().message;
+    EXPECT_EQ(odc.value(), archive::ArchiveFormat::CPIO);
+
+    const auto newc = ops.detect_format(write_header("Scripts", "070701000001").string());
+    ASSERT_TRUE(newc.has_value()) << newc.error().message;
+    EXPECT_EQ(newc.value(), archive::ArchiveFormat::CPIO);
+
+    EXPECT_FALSE(archive::is_writable_archive_format(archive::ArchiveFormat::XAR));
+    EXPECT_FALSE(archive::is_writable_archive_format(archive::ArchiveFormat::CPIO));
+}
+
 TEST_F(ArchiveOpsTest, should_test_integrity_of_valid_archive) {
     const auto archive_path = create_archive("valid.zip", archive::ArchiveFormat::ZIP);
 

@@ -3154,6 +3154,13 @@ final class PanelViewController: NSViewController,
             if flags.contains(.command) && flags.contains(.shift) {
                 // Cmd+Shift+Enter — calculate all folder sizes in current directory
                 viewModel.calculateAllFolderSizes()
+            } else if let item = viewModel.cursorItem,
+                      flags.contains(.shift), InstallerPackage.isFlatPackage(item),
+                      !viewModel.insideArchive, !viewModel.insideRemote,
+                      !viewModel.state.insideNetworkBrowser {
+                // Enter входит в пакет установки, как в архив; Shift+Enter — установщик, как
+                // двойной щелчок в Finder.
+                viewModel.operationsService.openWithSystem(item.path)
             } else if let item = viewModel.cursorItem {
                 // Shift+Enter on a disk image takes the road the setting did NOT choose: the
                 // panel when Finder is the default, Finder when the panel is. It changes

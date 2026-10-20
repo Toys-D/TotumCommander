@@ -218,7 +218,7 @@ macOS does not write to NTFS; the program can: on the first write it asks for th
 
 An archive opens with ↩ like an ordinary folder; inside you can browse, view and edit files (edits are offered to be written back), and copy out. A nested archive inside an archive is read-only.
 
-**Formats**: ZIP, TAR, TAR.GZ, 7Z, TAR.BZ2, TAR.XZ, TAR.ZST, TAR.LZ, TAR.LZ4, ISO, DMG.
+**Formats**: ZIP, TAR, TAR.GZ, 7Z, TAR.BZ2, TAR.XZ, TAR.ZST, TAR.LZ, TAR.LZ4, ISO, DMG; read-only — RAR and PKG installer packages.
 
 **Pack** (⌘F5, context menu): name and destination folder, archiver, compression level, preserve paths, include subfolders, delete source files after packing, separate archives for every file, **password (AES-256)** — for ZIP the contents are encrypted and the names stay visible; for DMG everything is encrypted. The progress shows the compression ratio and the estimated result.
 
@@ -229,6 +229,8 @@ An archive opens with ↩ like an ordinary folder; inside you can browse, view a
 **Editing an archive** — adding, deleting and renaming inside ZIP and other formats. If the format needs a full repack, you are warned with the archive size. Only ordinary local files can be added to an archive.
 
 The pack and unpack dialogs can be turned off in the "Confirmation dialogs" settings.
+
+**Installer packages (.pkg)**: ↩ enters a package like an archive: the Distribution file, the installer resources and the component packages. Inside a component, Payload holds what the package installs and Scripts the install scripts; both can be entered, a pbzx Payload as in Apple's packages too. Packages are read-only. ⇧↩ starts the installer, as a double-click in Finder does.
 
 **Disk images (.dmg, .cdr, .toast)**: by setting they open "as in Finder" (the installation window) or "in the panel" (mounted, and the panel goes inside). ⇧↩ always opens the other way; the same command is "Tools ▸ Open Disk Image the Other Way". An `.iso` file is judged by its contents: a real ISO opens as an archive, without mounting, while a DMG under an `.iso` name (programs are often handed out that way) takes the disk-image road.
 

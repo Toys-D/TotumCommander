@@ -733,6 +733,7 @@
 "preview.mode.pdf" = "PDF";
 "unit.pixels" = "пикс.";
 "unit.milliseconds" = "мс";
+"archive.pkg.payloadBroken" = "Содержимое пакета установки повреждено: Payload не разворачивается.";
 "volume.eject.tooltip" = "Извлечь диск";
 "volume.eject.failed.title" = "Ошибка извлечения";
 "volume.eject.failed.message" = "Не удалось извлечь диск %@. Закройте файлы на диске и повторите попытку.";

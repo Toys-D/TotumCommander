@@ -24,7 +24,10 @@ inline void ensure_utf8_ctype() {
     });
 }
 // Appended at the end on purpose: the bridge maps by name, but nothing may reorder cases.
-enum class ArchiveFormat { ZIP, TAR, TAR_GZ, TAR_BZ2, TAR_XZ, SevenZip, RAR, DMG, ISO, TAR_ZST, TAR_LZ, TAR_LZ4 };
+// XAR — плоский пакет установки macOS (.pkg); CPIO — его Payload и Scripts. Оба только для
+// чтения: пакет, переписанный архиватором, потерял бы подпись и оглавление установщика.
+enum class ArchiveFormat { ZIP, TAR, TAR_GZ, TAR_BZ2, TAR_XZ, SevenZip, RAR, DMG, ISO, TAR_ZST, TAR_LZ, TAR_LZ4,
+                           XAR, CPIO };
 
 [[nodiscard]] inline constexpr bool is_writable_archive_format(ArchiveFormat format) {
     switch (format) {
