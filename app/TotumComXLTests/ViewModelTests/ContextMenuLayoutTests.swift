@@ -553,19 +553,38 @@ final class ContextMenuLayoutTests: XCTestCase {
         }
     }
 
-    private func panelWithFile() async throws -> (PanelViewController, FileItem) {
+    private func panelWithFile(named name: String = "файл.txt") async throws -> (PanelViewController, FileItem) {
         let folder = NSTemporaryDirectory() + "ctx-\(UUID().uuidString)"
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: folder + "/файл.txt", contents: Data("текст".utf8))
+        FileManager.default.createFile(atPath: folder + "/" + name, contents: Data("текст".utf8))
         // Уборка папки записана раньше, чем панель, — значит, и выполнится после её слежки.
         addTeardownBlock { try? FileManager.default.removeItem(atPath: folder) }
         let vc = try panel()
         vc.viewModel.loadDirectory(at: folder)
         let срок = Date().addingTimeInterval(3)
-        while Date() < срок, !vc.viewModel.items.contains(where: { $0.name == "файл.txt" }) {
+        while Date() < срок, !vc.viewModel.items.contains(where: { $0.name == name }) {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
-        return (vc, try XCTUnwrap(vc.viewModel.items.first { $0.name == "файл.txt" }))
+        return (vc, try XCTUnwrap(vc.viewModel.items.first { $0.name == name }))
+    }
+
+    /// У пакета установки первым пунктом — «Открыть пакет»: Enter его ставит, а войти внутрь —
+    /// отсюда. У прочих файлов этого пункта нет.
+    func test_пакетУстановки_ПервымПунктомОткрытьПакет() async throws {
+        let saved = snapshot()
+        defer { restore(saved) }
+        ContextMenuLayout.shared.reset()
+
+        let (vc, package) = try await panelWithFile(named: "Установка.pkg")
+        let menu = NSMenu()
+        vc.populateContextMenu(menu, for: package)
+        XCTAssertEqual(menu.items.first?.identifier?.rawValue, "context.enterPackage")
+        XCTAssertEqual(menu.items.first?.title, L("context.enterPackage"))
+
+        let (other, file) = try await panelWithFile()
+        let plain = NSMenu()
+        other.populateContextMenu(plain, for: file)
+        XCTAssertFalse(plain.items.contains { $0.identifier?.rawValue == "context.enterPackage" })
     }
 
     private func panel() throws -> PanelViewController {

@@ -2,8 +2,8 @@ import Compression
 import XCTest
 @testable import TotumComXLApp
 
-/// Пакет установки (.pkg) — архив, в который входят: оглавление, вложенный пакет, Payload и
-/// Scripts. Payload бывает cpio в gzip (так пишет pkgbuild) и в pbzx (так пишут Apple и
+/// Пакет установки (.pkg) — архив, в который входят пунктом «Открыть пакет» (Enter запускает
+/// установщик): оглавление, вложенный пакет, Payload и Scripts. Payload бывает cpio в gzip (так пишет pkgbuild) и в pbzx (так пишут Apple и
 /// Tailscale) — в оба можно войти. Писать в пакет нельзя: он потерял бы подпись.
 @MainActor
 final class InstallerPackageTests: XCTestCase {
@@ -139,12 +139,20 @@ final class InstallerPackageTests: XCTestCase {
                       "внутри «\(name)» есть «\(expected)»: \(vm.items.map(\.name))", file: file, line: line)
     }
 
+    /// Войти в пакет так, как это делает пункт «Открыть пакет».
+    private func openPackage(_ package: String, in vm: PanelViewModel) async throws {
+        vm.loadDirectory(at: folder)
+        try await wait { vm.items.contains { $0.path == package } }
+        let item = try XCTUnwrap(vm.items.first { $0.path == package })
+        XCTAssertTrue(vm.canEnterPackage(item))
+        vm.enterPackage(item)
+        try await wait { vm.items.contains { $0.name == "comp.pkg" } }
+    }
+
     /// Вход до самого файла: пакет → вложенный пакет → Payload → приложение → файл.
     private func walkToTheFile(of package: String) async throws -> PanelViewModel {
         let vm = panel()
-        vm.loadDirectory(at: folder)
-        try await wait { vm.items.contains { $0.path == package } }
-        try await enter((package as NSString).lastPathComponent, in: vm, expecting: "comp.pkg")
+        try await openPackage(package, in: vm)
         XCTAssertTrue(vm.insideArchive)
         XCTAssertTrue(vm.items.contains { $0.name == "Distribution" })
         try await enter("comp.pkg", in: vm, expecting: "Payload")
@@ -158,8 +166,18 @@ final class InstallerPackageTests: XCTestCase {
 
     func test_вПакетВходятКакВАрхив_ИВPayload() async throws {
         let package = try makeDistributionPackage()
-        let vm = try await walkToTheFile(of: package)
-        _ = vm
+        _ = try await walkToTheFile(of: package)
+    }
+
+    /// Enter пакет не открывает: он уходит системе — установщику, как в Finder.
+    func test_EnterОтдаётПакетУстановщику() async throws {
+        let package = try makeDistributionPackage()
+        let vm = panel()
+        vm.loadDirectory(at: folder)
+        try await wait { vm.items.contains { $0.path == package } }
+        let item = try XCTUnwrap(vm.items.first { $0.path == package })
+        XCTAssertFalse(vm.open(item), "Enter — системе, а не внутрь")
+        XCTAssertFalse(vm.insideArchive)
     }
 
     func test_вPayloadВУпаковкеPbzxТожеВходят() async throws {
@@ -171,9 +189,7 @@ final class InstallerPackageTests: XCTestCase {
     func test_вScriptsВходят() async throws {
         let package = try makeDistributionPackage()
         let vm = panel()
-        vm.loadDirectory(at: folder)
-        try await wait { vm.items.contains { $0.path == package } }
-        try await enter((package as NSString).lastPathComponent, in: vm, expecting: "comp.pkg")
+        try await openPackage(package, in: vm)
         try await enter("comp.pkg", in: vm, expecting: "Scripts")
         try await enter("Scripts", in: vm, expecting: "postinstall")
     }

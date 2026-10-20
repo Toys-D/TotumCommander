@@ -163,6 +163,7 @@ enum ContextMenuCatalogue {
 
     /// Меню файлов и папок, как оно выглядит без правок человека, — с разделителями.
     static let defaultOrder: [String] = [
+        "context.enterPackage",
         "menu.selectSameType",
         ContextMenuLayout.separatorID,
         "context.open",
@@ -209,6 +210,7 @@ enum ContextMenuCatalogue {
 
     /// Значок пункта — тот же, что стоит в самом меню.
     static let symbols: [String: String] = [
+        "context.enterPackage": "shippingbox",
         "menu.selectSameType": "square.on.square.dashed",
         "context.open": "arrow.right.circle",
         "context.openWith": "arrow.up.forward.app",

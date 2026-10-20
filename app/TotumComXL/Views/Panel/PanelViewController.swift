@@ -3154,13 +3154,6 @@ final class PanelViewController: NSViewController,
             if flags.contains(.command) && flags.contains(.shift) {
                 // Cmd+Shift+Enter — calculate all folder sizes in current directory
                 viewModel.calculateAllFolderSizes()
-            } else if let item = viewModel.cursorItem,
-                      flags.contains(.shift), InstallerPackage.isFlatPackage(item),
-                      !viewModel.insideArchive, !viewModel.insideRemote,
-                      !viewModel.state.insideNetworkBrowser {
-                // Enter входит в пакет установки, как в архив; Shift+Enter — установщик, как
-                // двойной щелчок в Finder.
-                viewModel.operationsService.openWithSystem(item.path)
             } else if let item = viewModel.cursorItem {
                 // Shift+Enter on a disk image takes the road the setting did NOT choose: the
                 // panel when Finder is the default, Finder when the panel is. It changes
@@ -5225,6 +5218,15 @@ final class PanelViewController: NSViewController,
     }
 
     private func buildFileContextMenu(for item: FileItem, into menu: NSMenu) {
+        // Пакет установки: Enter запускает установщик, как в Finder, а войти внутрь — этот
+        // пункт, самым первым: за ним сюда и приходят.
+        if viewModel.canEnterPackage(item) {
+            menu.addStyledItem(title: L("context.enterPackage"), symbolName: "shippingbox",
+                               id: "context.enterPackage") { [weak self] in
+                self?.enterPackage(item)
+            }
+        }
+
         // Marking the file's own kind, at the very top: it is a step BEFORE the commands under
         // it — pick the group, then act on it — and everything below works on the selection.
         if item.name != ".." {
@@ -5637,6 +5639,15 @@ final class PanelViewController: NSViewController,
     func enterAppBundle(_ item: FileItem) {
         viewModel.pushHistory(from: viewModel.currentPath, to: item.path)
         _ = viewModel.open(item, forceFolder: true)
+    }
+
+    /// «Открыть пакет»: войти в пакет установки, как в архив, — с историей, как вход в папку.
+    func enterPackage(_ item: FileItem) {
+        guard viewModel.canEnterPackage(item) else { return }
+        if !viewModel.insideArchive {
+            viewModel.pushHistory(from: viewModel.currentPath, to: item.path)
+        }
+        viewModel.enterPackage(item)
     }
 
     func enterAppBundleAtCursor() {

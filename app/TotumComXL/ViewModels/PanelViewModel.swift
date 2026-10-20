@@ -4519,8 +4519,28 @@ final class PanelViewModel: ObservableObject {
         return true
     }
 
+    /// Архив, в который входит Enter. Пакет установки — не он: Enter его ставит, как в Finder,
+    /// а войти в него — пункт «Открыть пакет» (см. `enterPackage`).
     private func isArchivePath(_ path: String) -> Bool {
-        archiveFormat(for: path) != .unknown
+        let format = archiveFormat(for: path)
+        return format != .unknown && format != .xar
+    }
+
+    /// Можно ли войти в этот пакет установки: плоский (файл), не на сервере и не в обзоре сети.
+    func canEnterPackage(_ item: FileItem) -> Bool {
+        item.name != ".." && InstallerPackage.isFlatPackage(item)
+            && !insideRemote && !state.insideNetworkBrowser
+    }
+
+    /// Войти в пакет установки, как в архив: Distribution, ресурсы, вложенные пакеты, а в них
+    /// Payload и Scripts. Внутри архива пакет сначала извлекается, как всякий вложенный архив.
+    func enterPackage(_ item: FileItem) {
+        guard canEnterPackage(item) else { return }
+        if insideArchive {
+            enterNestedArchive(item)
+        } else {
+            enterArchive(at: item.path)
+        }
     }
 
     private func archiveFormat(for path: String) -> ArchiveFormat {

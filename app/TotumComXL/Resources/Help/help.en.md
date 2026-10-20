@@ -230,7 +230,7 @@ An archive opens with ↩ like an ordinary folder; inside you can browse, view a
 
 The pack and unpack dialogs can be turned off in the "Confirmation dialogs" settings.
 
-**Installer packages (.pkg)**: ↩ enters a package like an archive: the Distribution file, the installer resources and the component packages. Inside a component, Payload holds what the package installs and Scripts the install scripts; both can be entered, a pbzx Payload as in Apple's packages too. Packages are read-only. ⇧↩ starts the installer, as a double-click in Finder does.
+**Installer packages (.pkg)**: ↩ starts the installer, as in Finder. To go inside, use the first context menu item, "Open Package": the Distribution file, the installer resources and the component packages. Inside a component, Payload holds what the package installs and Scripts the install scripts; both can be entered, a pbzx Payload as in Apple's packages too. Packages are read-only.
 
 **Disk images (.dmg, .cdr, .toast)**: by setting they open "as in Finder" (the installation window) or "in the panel" (mounted, and the panel goes inside). ⇧↩ always opens the other way; the same command is "Tools ▸ Open Disk Image the Other Way". An `.iso` file is judged by its contents: a real ISO opens as an archive, without mounting, while a DMG under an `.iso` name (programs are often handed out that way) takes the disk-image road.
 
