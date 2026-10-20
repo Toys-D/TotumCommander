@@ -125,6 +125,12 @@ struct EmbeddedViewerPanel: View {
             refreshArchiveTemp()
             refreshDrawing()
         }
+        .onReceive(NotificationCenter.default.publisher(
+            for: ArchivePasswords.learnedForPreviewNotification)) { note in
+            // Пароль архива назван — файл под курсором теперь извлекается.
+            guard (note.object as? String) == viewModel.archivePath else { return }
+            refreshArchiveTemp()
+        }
     }
 
     @ViewBuilder

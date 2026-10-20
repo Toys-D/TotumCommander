@@ -1745,11 +1745,17 @@ final class FileOperationsService {
             return nil
         }
         do {
-            try bridgeService.extractArchiveEntry(
-                archivePath: archivePath,
-                entryPath: normalizedEntryPath,
-                destinationPath: temporaryRoot
-            )
+            do {
+                try bridgeService.extractArchiveEntry(
+                    archivePath: archivePath,
+                    entryPath: normalizedEntryPath,
+                    destinationPath: temporaryRoot
+                )
+            } catch where ArchivePasswords.isPasswordFailure(error) {
+                // Архив с паролем: просмотр спросит его сам, чуть позже, и перечитает файл.
+                ArchivePasswords.askForPreview(archivePath: archivePath)
+                throw error
+            }
             let extractedFilePath = (temporaryRoot as NSString).appendingPathComponent(normalizedEntryPath)
             guard FileManager.default.fileExists(atPath: extractedFilePath) else {
                 Self.cleanupTemporaryDirectory(temporaryRoot)
@@ -4594,6 +4600,7 @@ final class FileOperationsService {
         let source: EditorDocumentSource
     }
 
+    @MainActor
     private func resolveEditorTarget(for item: FileItem,
                                      archivePath: String?,
                                      insideArchive: Bool) throws -> EditorTarget {
@@ -4608,11 +4615,14 @@ final class FileOperationsService {
             let temporaryRoot = try Self.createTemporaryDirectory(prefix: "fcxl_archive_edit")
 
             do {
-                try bridgeService.extractArchiveEntry(
-                    archivePath: archivePath,
-                    entryPath: item.path,
-                    destinationPath: temporaryRoot
-                )
+                // Архив с паролем спрашивает его и здесь, как на всех дорогах распаковки.
+                try askingArchivePassword(archivePath: archivePath) {
+                    try bridgeService.extractArchiveEntry(
+                        archivePath: archivePath,
+                        entryPath: item.path,
+                        destinationPath: temporaryRoot
+                    )
+                }
             } catch {
                 Self.cleanupTemporaryDirectory(temporaryRoot)
                 throw error

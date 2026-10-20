@@ -431,6 +431,12 @@ struct UnifiedFileViewer: View {
             refreshArchiveTemp()
             refreshRemoteTemp()
         }
+        .onReceive(NotificationCenter.default.publisher(
+            for: ArchivePasswords.learnedForPreviewNotification)) { note in
+            // Пароль архива назван — файл под курсором теперь извлекается.
+            guard (note.object as? String) == viewModel.archivePath else { return }
+            refreshArchiveTemp()
+        }
         .onChange(of: previewIdentity) { _ in
             loadReaderMarks()
             book = nil

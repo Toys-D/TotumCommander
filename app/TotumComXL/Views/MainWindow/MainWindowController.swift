@@ -197,6 +197,17 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
             MainActor.assumeIsolated { self?.refreshSettingsButton() }
         }
 
+        // Пароль архива назван для просмотра — системный быстрый просмотр берёт файл заново.
+        NotificationCenter.default.addObserver(
+            forName: ArchivePasswords.learnedForPreviewNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.quickLookCurrentURL = nil
+                self.refreshQuickLookFromCursor(vm: self.quickLookViewModel)
+            }
+        }
+
         // Interface tint (per-theme) on the window chrome; re-apply when the theme or
         // the chosen interface colour changes.
         applyInterfaceBackground()
@@ -2454,6 +2465,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         // a folderPreview list of contents with size totals.
         let useNativeQL = !item.isDirectory && (quickViewMode == "native")
         let vm = splitVC.activePanelViewModel
+        // Человек сам открыл просмотр: если раньше он отказался назвать пароль этого архива,
+        // просмотр может спросить снова.
+        if vm.insideArchive, let archivePath = vm.archivePath {
+            ArchivePasswords.allowPreviewAsk(for: archivePath)
+        }
 
         // Files inside an archive aren't on disk — the viewers extract the file under the
         // cursor to a temp copy themselves (reactively, so preview follows the cursor). The

@@ -124,6 +124,15 @@ enum FCXLDialog {
         // switching while the dialog is up. A normal-level modal is still key & front but
         // lets the system gestures work.
         panel.level = .normal
+        // …but never UNDER a floating window of the program that is on screen: the F3 viewer
+        // and Quick Look float, both sit in the middle of the screen, and a centred dialog at
+        // normal level hid entirely behind them — the archive password asked from a viewer was
+        // a modal nobody could see. Level with the highest of them, it comes up in front.
+        if let floating = NSApp.windows
+            .filter({ $0.isVisible && $0.level > .normal && $0.level < .popUpMenu })
+            .map(\.level).max() {
+            panel.level = floating
+        }
         panel.hidesOnDeactivate = false
         panel.setContentSize(size)
         // Build the SwiftUI tree at full size BEFORE the grow animation (cold

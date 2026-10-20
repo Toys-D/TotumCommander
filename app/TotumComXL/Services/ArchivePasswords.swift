@@ -44,9 +44,49 @@ enum ArchivePasswords {
     /// Nil when the person changes their mind.
     @MainActor
     static func ask(archiveName: String) -> String? {
-        FCXLDialog.runModal(size: NSSize(width: 420, height: 210)) { session in
+        if let askOverride { return askOverride(archiveName) }
+        return FCXLDialog.runModal(size: NSSize(width: 420, height: 210)) { session in
             ArchivePasswordPromptView(session: session, archiveName: archiveName)
         }
+    }
+
+    /// Ответ вместо окна — для проверок: окно ждало бы человека.
+    @MainActor static var askOverride: ((String) -> String?)?
+
+    // MARK: - Просмотр
+
+    /// Просмотр узнал пароль архива: файл под курсором пора извлечь ещё раз.
+    static let learnedForPreviewNotification = Notification.Name("fcxl.archivePassword.learnedForPreview")
+
+    /// Архивы, где человек отказался назвать пароль просмотру. Просмотр идёт за курсором, и
+    /// без этой памяти окно вставало бы на каждом файле.
+    @MainActor private static var declinedForPreview: Set<String> = []
+    @MainActor private static var previewAskPending: Set<String> = []
+
+    /// Просмотр (F3, быстрый просмотр, панель просмотра) наткнулся на пароль. Спросить — один
+    /// раз и вне отрисовки: просмотры извлекают файл, пока SwiftUI обновляет вид, а окно с
+    /// собственным циклом посреди обновления — путь к зависанию. Узнали — просмотры
+    /// перечитают файл сами (`learnedForPreviewNotification`).
+    @MainActor
+    static func askForPreview(archivePath: String) {
+        guard !declinedForPreview.contains(archivePath),
+              previewAskPending.insert(archivePath).inserted else { return }
+        DispatchQueue.main.async {
+            defer { previewAskPending.remove(archivePath) }
+            forget(for: archivePath)
+            guard let entered = ask(archiveName: (archivePath as NSString).lastPathComponent) else {
+                declinedForPreview.insert(archivePath)
+                return
+            }
+            remember(entered, for: archivePath)
+            NotificationCenter.default.post(name: learnedForPreviewNotification, object: archivePath)
+        }
+    }
+
+    /// Человек сам открыл просмотр (F3) — отказ прошлого раза не в счёт: спросить можно снова.
+    @MainActor
+    static func allowPreviewAsk(for archivePath: String) {
+        declinedForPreview.remove(archivePath)
     }
 }
 

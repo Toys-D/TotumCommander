@@ -731,6 +731,7 @@ let package = Package(
                 "ViewModelTests/RcloneRulesTests.swift",
                 "ViewModelTests/ContextMenuShapeTests.swift",
                 "ViewModelTests/ArchiveExtractProgressTests.swift",
+                "ViewModelTests/ArchivePasswordRoadsTests.swift",
                 "ViewModelTests/HelpTopicsTests.swift",
                 "ViewModelTests/XattrInspectorTests.swift",
                 "ViewModelTests/VolumeUnmountTests.swift",

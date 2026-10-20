@@ -3630,8 +3630,11 @@ final class PanelViewModel: ObservableObject {
         guard let outerArchive = archivePath else { return }
         let entryPath = normalizeArchiveEntryPath(item.path)
         do {
-            let extracted = try operationsService.extractArchiveEntryToTemp(
-                archivePath: outerArchive, entryPath: entryPath)
+            // Внешний архив с паролем спрашивает его и тут — как на всех дорогах распаковки.
+            let extracted = try operationsService.askingArchivePassword(archivePath: outerArchive) {
+                try operationsService.extractArchiveEntryToTemp(
+                    archivePath: outerArchive, entryPath: entryPath)
+            }
             archiveReturnStack.append(
                 (archive: outerArchive, relative: archiveRelativePath, cursorEntry: entryPath))
             enterArchive(at: extracted)
