@@ -69,6 +69,8 @@ struct ProgramMenuButton<Label: View>: View {
         }
         // Без рамки — как системный `Menu` в стиле borderlessButton, который она заменяет.
         .buttonStyle(.borderless)
+        // Без синего кольца фокуса — как всё в программе.
+        .focusEffectDisabled()
         .background(MenuAnchorProbe(anchor))
     }
 }

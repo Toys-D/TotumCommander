@@ -128,8 +128,10 @@ enum FCXLDialog {
         // and Quick Look float, both sit in the middle of the screen, and a centred dialog at
         // normal level hid entirely behind them — the archive password asked from a viewer was
         // a modal nobody could see. Level with the highest of them, it comes up in front.
+        // Only real windows count — titled ones: a tooltip or a menu-bar item must not lift it.
         if let floating = NSApp.windows
-            .filter({ $0.isVisible && $0.level > .normal && $0.level < .popUpMenu })
+            .filter({ $0.isVisible && $0.styleMask.contains(.titled)
+                      && $0.level > .normal && $0.level < .mainMenu })
             .map(\.level).max() {
             panel.level = floating
         }
