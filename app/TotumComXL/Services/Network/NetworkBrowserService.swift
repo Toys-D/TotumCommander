@@ -151,7 +151,8 @@ final class NetworkBrowserService {
             let scope = LANScanner.scanScope()
             let gateway = LANDiscovery.defaultGateway()
             let found = LANDiscovery.discover(prefixes: scope.prefixes, selfIPs: scope.selfIPs,
-                                              gateway: gateway) { host in
+                                              gateway: gateway,
+                                              directPrefixes: scope.directPrefixes) { host in
                 // Каждый найденный — сразу в список, не дожидаясь конца обхода.
                 DispatchQueue.main.async { [weak self] in
                     self?.addScannedHost(ip: host.ip, name: host.name)

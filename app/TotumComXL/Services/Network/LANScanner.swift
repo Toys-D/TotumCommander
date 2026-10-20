@@ -227,12 +227,12 @@ enum LANScanner {
 
     /// Подсети для обхода и собственные адреса — то же самое, что считает `localScanTargets`,
     /// но без разворачивания в 254 адреса на каждую: новому обходчику нужны сами подсети.
-    static func scanScope() -> (prefixes: [String], selfIPs: Set<String>) {
+    static func scanScope() -> (prefixes: [String], selfIPs: Set<String>, directPrefixes: [String]) {
         var selfIPs = Set<String>()
         var interfaces: [(name: String, ip: String)] = []
 
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return ([], []) }
+        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return ([], [], []) }
         defer { freeifaddrs(ifaddr) }
 
         var ptr: UnsafeMutablePointer<ifaddrs>? = first
@@ -250,7 +250,8 @@ enum LANScanner {
             selfIPs.insert(ip)
             interfaces.append((String(cString: p.pointee.ifa_name), ip))
         }
-        return (scanPrefixes(interfaces: interfaces), selfIPs)
+        return (scanPrefixes(interfaces: interfaces), selfIPs,
+                scanPrefixes(interfaces: interfaces.filter { interfaceRank($0.name) < 2 }))
     }
 
     /// Какие /24 обходить и в каком порядке.

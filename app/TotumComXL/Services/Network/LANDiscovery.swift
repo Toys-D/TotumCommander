@@ -25,6 +25,10 @@ enum LANDiscovery {
     /// Windows (3389), общий экран Mac и VNC (5900).
     static let computerPorts: Set<UInt16> = [445, 139, 548, 22, 3389, 5900]
 
+    /// Двери для обхода вслепую, адрес за адресом (см. `sweepPlan`): только общие папки —
+    /// Windows и Samba (445, 139), Mac (548). Компьютер без общих папок открыть всё равно нечем.
+    static let blindPorts: [UInt16] = [445, 139, 548]
+
     struct Found: Equatable {
         let ip: String
         /// Порты, ответившие на этом адресе.
@@ -211,16 +215,21 @@ enum LANDiscovery {
     /// сосед терялся в этом шуме.
     /// - Parameter onHost: зовётся, как только про очередной компьютер всё известно, — чтобы
     ///   список наполнялся на глазах, а не появлялся целиком в конце.
+    /// - Parameter directPrefixes: подсети без туннелей VPN — их обходят вслепую, когда
+    ///   таблица ARP молчит (см. `sweepPlan`). По умолчанию — все `prefixes`.
     static func discover(prefixes: [String], selfIPs: Set<String>, gateway: String?,
+                         directPrefixes: [String]? = nil,
                          timeout: TimeInterval = 0.8,
                          onHost: ((Found) -> Void)? = nil) -> [Found] {
         LANScanner.raiseDescriptorLimit()
-        let live = liveAddresses(prefixes: prefixes, selfIPs: selfIPs)
+        let plan = sweepPlan(live: liveAddresses(prefixes: prefixes, selfIPs: selfIPs),
+                             directPrefixes: directPrefixes ?? prefixes, selfIPs: selfIPs)
+        let live = plan.addresses
         guard !live.isEmpty else { return [] }
 
         var answers: [(ip: String, port: UInt16)] = []
         var leftovers: [(ip: String, port: UInt16)] = []
-        let pairs = live.flatMap { ip in probedPorts.map { (ip: ip, port: $0) } }
+        let pairs = live.flatMap { ip in plan.ports.map { (ip: ip, port: $0) } }
         for batch in pairs.chunked(into: 512) {
             let result = openPorts(batch, timeout: timeout)
             answers.append(contentsOf: result.open)
@@ -240,8 +249,11 @@ enum LANDiscovery {
         // Но только когда не нашлось НИКОГО: в обычном обходе большинство живых адресов —
         // это телефоны и телевизоры, у которых и правда нечего спрашивать, и второй заход
         // по ним стоил бы двух секунд ожидания на ровном месте.
+        //
+        // Вслепую — не переспрашиваем: там «живых» — вся подсеть, и второй заход по двум
+        // с половиной сотням адресов стоил бы секунд на ровном месте.
         let anyComputer = byHost.contains { isComputer(ports: $0.value, isGateway: $0.key == gateway) }
-        let silent = anyComputer ? []
+        let silent = anyComputer || plan.blind ? []
             : live.filter { !isComputer(ports: byHost[$0] ?? [], isGateway: $0 == gateway) }
         if !silent.isEmpty {
             let again = silent.flatMap { ip in probedPorts.map { (ip: ip, port: $0) } }
@@ -269,6 +281,23 @@ enum LANDiscovery {
             onHost?(host)
         }
         return found.compactMap { $0 }
+    }
+
+    /// Кого и в какие двери спрашивать.
+    ///
+    /// Обычно — живых по таблице ARP, во все двери из `probedPorts`. Но macOS 27 сторонней
+    /// программе таблицу не отдаёт: и `arp -an`, запущенный из неё, и sysctl из её процесса
+    /// возвращают пустоту, хотя соседи на месте и соединения до них проходят (замер: из
+    /// оболочки 63 строки, из программы — ноль). Обход тогда кончался, не начавшись, и
+    /// компьютер с Windows — он не объявляет себя по Bonjour — пропадал из списка. Молчит
+    /// ARP — спрашиваем каждый адрес подсетей без туннелей, но только в двери общих папок.
+    nonisolated static func sweepPlan(live: [String], directPrefixes: [String],
+                                      selfIPs: Set<String>)
+        -> (addresses: [String], ports: [UInt16], blind: Bool) {
+        guard live.isEmpty else { return (live, probedPorts, false) }
+        let everyone = directPrefixes.flatMap { prefix in (1...254).map { "\(prefix).\($0)" } }
+            .filter { !selfIPs.contains($0) }
+        return (everyone, blindPorts, true)
     }
 
     // MARK: - Имена
