@@ -40,6 +40,21 @@ enum TerminalToggle {
         return .open
     }
 
+    /// Терминалы, которых касается ⌘` при размещении «в активной панели»: этой панели и нижней
+    /// полосы. Терминал в соседней панели живёт своей жизнью — раньше нажатие в активной панели
+    /// прятало его вместо того, чтобы открыть терминал здесь. При других размещениях — все.
+    static func relevant(_ spots: [TerminalSpot], placement: String,
+                         activeSide: MainSplitViewController.PanelSide) -> [TerminalSpot] {
+        guard placement == "activePanel" else { return spots }
+        return spots.filter { spot in
+            switch spot {
+            case .bottom: return true
+            case .left: return activeSide == .left
+            case .right: return activeSide == .right
+            }
+        }
+    }
+
     /// Спрятанные по порядку: последний спрятанный первым, если он ещё жив.
     static func hiddenOrder(all: [TerminalSpot], lastHidden: TerminalSpot?) -> [TerminalSpot] {
         guard let lastHidden, all.contains(lastHidden) else { return all }

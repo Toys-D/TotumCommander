@@ -23,6 +23,23 @@ final class TerminalToggleTests: XCTestCase {
         XCTAssertEqual(TerminalToggle.step(mode: .close, visible: [], hidden: [.bottom]), .show(.bottom))
     }
 
+    /// Размещение «в активной панели»: терминал соседней панели не в счёт — нажатие в правой
+    /// панели при терминале слева открывает терминал справа, а не прячет левый. Нижняя полоса
+    /// в счёт всегда; при других размещениях — всё как было.
+    func test_activePanelPlacementIgnoresTheOtherPanelsTerminal() {
+        let spots: [TerminalSpot] = [.left(one), .bottom, .right(two)]
+        XCTAssertEqual(TerminalToggle.relevant(spots, placement: "activePanel", activeSide: .right),
+                       [.bottom, .right(two)])
+        XCTAssertEqual(TerminalToggle.relevant(spots, placement: "activePanel", activeSide: .left),
+                       [.left(one), .bottom])
+        XCTAssertEqual(TerminalToggle.relevant(spots, placement: "bottom", activeSide: .right), spots)
+        XCTAssertEqual(TerminalToggle.relevant(spots, placement: "leftPanel", activeSide: .right), spots)
+
+        let visible = TerminalToggle.relevant([.left(one)], placement: "activePanel", activeSide: .right)
+        XCTAssertEqual(TerminalToggle.step(mode: .hide, visible: visible, hidden: []), .open,
+                       "в правой панели терминала нет — открыть, а не прятать левый")
+    }
+
     func test_whenNoTerminal_shouldOpen() {
         XCTAssertEqual(TerminalToggle.step(mode: .hide, visible: [], hidden: []), .open)
     }

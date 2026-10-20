@@ -3185,8 +3185,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
     /// настройках; спрятанный возвращается; нет ни одного — открывается по месту из настроек.
     private func handleTerminal() {
         let mode = TerminalToggleMode.current()
-        let hidden = TerminalToggle.hiddenOrder(all: hiddenTerminals(), lastHidden: lastHiddenTerminal)
-        switch TerminalToggle.step(mode: mode, visible: visibleTerminals(), hidden: hidden) {
+        let placement = UserDefaults.standard.string(forKey: "terminalPlacement") ?? "ask"
+        let side = splitVC.activePanel
+        let visible = TerminalToggle.relevant(visibleTerminals(), placement: placement, activeSide: side)
+        let hidden = TerminalToggle.relevant(
+            TerminalToggle.hiddenOrder(all: hiddenTerminals(), lastHidden: lastHiddenTerminal),
+            placement: placement, activeSide: side)
+        switch TerminalToggle.step(mode: mode, visible: visible, hidden: hidden) {
         case .hide(let spot): hideTerminal(spot)
         case .close(let spot): closeTerminal(spot)
         case .show(let spot): showTerminal(spot)

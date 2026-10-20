@@ -41,6 +41,13 @@ enum TerminalInputSourceHelper {
 
 /// Keeps track of every live terminal — a tab's (or the bottom strip's) split view with all its
 /// parts — so their shell processes stop when the owning tab is closed.
+/// Цвета терминала. Он всегда тёмный, в обеих темах; фон — по слову пользователя (rgb 45 50 61),
+/// полоска над частью чуть светлее фона.
+enum TerminalPalette {
+    static let background = NSColor(srgbRed: 45 / 255, green: 50 / 255, blue: 61 / 255, alpha: 1)
+    static let paneHeader = NSColor(srgbRed: 58 / 255, green: 64 / 255, blue: 78 / 255, alpha: 1)
+}
+
 @MainActor
 final class TerminalProcessRegistry {
     static let shared = TerminalProcessRegistry()
@@ -200,7 +207,7 @@ final class SwiftTermContainerView: NSView, LocalProcessTerminalViewDelegate {
         // Style: dark background, green text, monospace font
         let termFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         tv.font = termFont
-        tv.nativeBackgroundColor = NSColor(white: 0.08, alpha: 1.0)
+        tv.nativeBackgroundColor = TerminalPalette.background
         tv.nativeForegroundColor = NSColor(red: 0.8, green: 0.9, blue: 0.8, alpha: 1.0)
         tv.caretColor = NSColor.green
         tv.caretTextColor = NSColor.black

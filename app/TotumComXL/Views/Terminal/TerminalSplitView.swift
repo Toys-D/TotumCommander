@@ -41,7 +41,7 @@ final class TerminalSplitView: NSView {
         activePane = first
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = NSColor(white: 0.08, alpha: 1).cgColor
+        layer?.backgroundColor = TerminalPalette.background.cgColor
         addSubview(activeFrame)
         panes[first] = makePane(id: first)
     }
@@ -485,7 +485,7 @@ final class TerminalPaneHeader: NSView {
     private func updateColors() {
         layer?.backgroundColor = isActive
             ? PanelAppearanceSettings.accentNSColor.withAlphaComponent(0.28).cgColor
-            : NSColor(white: 0.13, alpha: 1).cgColor
+            : TerminalPalette.paneHeader.cgColor
     }
 
     override func layout() {
