@@ -8,6 +8,8 @@ protocol PanelActionDelegate: AnyObject {
     func panelDidRequestCopy(_ panel: PanelViewController, items: [FileItem])
     func panelDidRequestMove(_ panel: PanelViewController, items: [FileItem])
     func panelDidRequestCopy(_ panel: PanelViewController, items: [FileItem], to destination: String)
+    /// «Установить»: копия программы в папку программ (см. AppInstall).
+    func panelDidRequestInstallApp(_ panel: PanelViewController, app: FileItem)
     func panelDidRequestMove(_ panel: PanelViewController, items: [FileItem], to destination: String)
     func panelDidRequestDelete(_ panel: PanelViewController, items: [FileItem])
     /// Shift+Del / Shift+F8 — delete bypassing the Trash, after its own red confirmation.

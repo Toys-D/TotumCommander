@@ -5218,6 +5218,16 @@ final class PanelViewController: NSViewController,
     }
 
     private func buildFileContextMenu(for item: FileItem, into menu: NSMenu) {
+        // Программа не из «Программ» — в смонтированном образе, в «Загрузках»: самым первым
+        // «Установить», копия в папку программ одним щелчком, как перетаскивание в Finder.
+        if viewModel.isAppBundle(item), AppInstall.canInstall(item) {
+            menu.addStyledItem(title: L("context.installApp"), symbolName: "arrow.down.app",
+                               id: "context.installApp") { [weak self] in
+                guard let self else { return }
+                self.actionDelegate?.panelDidRequestInstallApp(self, app: item)
+            }
+        }
+
         // Пакет установки: Enter запускает установщик, как в Finder, а войти внутрь — этот
         // пункт, самым первым: за ним сюда и приходят.
         if viewModel.canEnterPackage(item) {

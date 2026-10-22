@@ -553,10 +553,16 @@ final class ContextMenuLayoutTests: XCTestCase {
         }
     }
 
-    private func panelWithFile(named name: String = "файл.txt") async throws -> (PanelViewController, FileItem) {
+    private func panelWithFile(named name: String = "файл.txt",
+                               isFolder: Bool = false) async throws -> (PanelViewController, FileItem) {
         let folder = NSTemporaryDirectory() + "ctx-\(UUID().uuidString)"
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: folder + "/" + name, contents: Data("текст".utf8))
+        if isFolder {
+            try FileManager.default.createDirectory(atPath: folder + "/" + name + "/Contents",
+                                                    withIntermediateDirectories: true)
+        } else {
+            FileManager.default.createFile(atPath: folder + "/" + name, contents: Data("текст".utf8))
+        }
         // Уборка папки записана раньше, чем панель, — значит, и выполнится после её слежки.
         addTeardownBlock { try? FileManager.default.removeItem(atPath: folder) }
         let vc = try panel()
@@ -566,6 +572,50 @@ final class ContextMenuLayoutTests: XCTestCase {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         return (vc, try XCTUnwrap(vc.viewModel.items.first { $0.name == name }))
+    }
+
+    /// Программа не из «Программ» — первым пунктом «Установить». Уже установленной — нет.
+    func test_программа_ПервымПунктомУстановить() async throws {
+        let saved = snapshot()
+        defer { restore(saved) }
+        ContextMenuLayout.shared.reset()
+
+        let (vc, app) = try await panelWithFile(named: "Голос.app", isFolder: true)
+        XCTAssertTrue(app.isAppBundle)
+        let menu = NSMenu()
+        vc.populateContextMenu(menu, for: app)
+        XCTAssertEqual(menu.items.first?.identifier?.rawValue, "context.installApp")
+        XCTAssertEqual(menu.items.first?.title, L("context.installApp"))
+
+        // Та же программа, но папка программ — её собственная: ставить некуда, пункта нет.
+        let real = AppInstall.applicationsFolder
+        AppInstall.applicationsFolder = (app.path as NSString).deletingLastPathComponent
+        defer { AppInstall.applicationsFolder = real }
+        let installed = NSMenu()
+        vc.populateContextMenu(installed, for: app)
+        XCTAssertFalse(installed.items.contains { $0.identifier?.rawValue == "context.installApp" })
+    }
+
+    /// Где «Установить» уместно: программа вне папок программ. Вложенная в установленную, папка
+    /// без .app и файл с именем .app — нет.
+    func test_установитьПредлагаетсяТолькоПрограммеВнеПрограмм() {
+        func item(_ path: String, folder: Bool = true) -> FileItem {
+            FileItem(path: path, name: (path as NSString).lastPathComponent,
+                     fileExtension: "." + (path as NSString).pathExtension, size: 0,
+                     isDirectory: folder, isHidden: false, isSymlink: false,
+                     permissions: "", dateModified: Date())
+        }
+        XCTAssertTrue(AppInstall.canInstall(item("/Volumes/Qalam Voice 1.1.3/Qalam Voice.app")))
+        XCTAssertTrue(AppInstall.canInstall(item(NSHomeDirectory() + "/Downloads/Голос.app")))
+        XCTAssertFalse(AppInstall.canInstall(item("/Applications/Safari.app")))
+        XCTAssertFalse(AppInstall.canInstall(item("/Applications/Utilities/Terminal.app")))
+        XCTAssertFalse(AppInstall.canInstall(item("/Applications/Xcode.app/Contents/Applications/Simulator.app")))
+        XCTAssertFalse(AppInstall.canInstall(item(NSHomeDirectory() + "/Applications/Своя.app")))
+        XCTAssertFalse(AppInstall.canInstall(item("/System/Applications/Calculator.app")))
+        XCTAssertFalse(AppInstall.canInstall(item("/Volumes/Диск/Папка")), "не программа")
+        XCTAssertFalse(AppInstall.canInstall(item("/Volumes/Диск/Странный.app", folder: false)),
+                       "файл с именем .app — не программа")
+        XCTAssertFalse(AppInstall.canInstall(item("/Applications")), "сама папка программ")
     }
 
     /// У пакета установки первым пунктом — «Открыть пакет»: Enter его ставит, а войти внутрь —

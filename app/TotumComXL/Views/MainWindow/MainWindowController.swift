@@ -3882,6 +3882,15 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
                         destination: destination, destinationVM: panel.viewModel)
     }
 
+    /// «Установить»: копия программы в папку программ — той же дорогой, что F5: окно хода,
+    /// вопрос при совпадении имени, отмена по ⌘Z. Без окна выбора папки: она одна. Получатель —
+    /// сама эта панель, местная: соседняя может стоять на сервере, и копия ушла бы туда.
+    func panelDidRequestInstallApp(_ panel: PanelViewController, app: FileItem) {
+        performTransfer(items: [app], sourceVM: panel.viewModel, isCopy: true,
+                        destination: AppInstall.applicationsFolder,
+                        destinationVM: panel.viewModel, skipConfirmation: true)
+    }
+
     func panelDidRequestMove(_ panel: PanelViewController, items: [FileItem], to destination: String) {
         let sourceVM = sourceVMForDroppedItems(items, dropTarget: panel)
         performTransfer(items: items, sourceVM: sourceVM, isCopy: false,

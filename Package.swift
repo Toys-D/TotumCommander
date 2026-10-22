@@ -249,6 +249,7 @@ let package = Package(
                 "Services/FKeyAvailability.swift",
                 "Services/ArchivePasswords.swift",
                 "Services/PackagePayload.swift",
+                "Services/AppInstall.swift",
                 "Services/MaskPresets.swift",
                 "Services/UndoJournal.swift",
                 "Services/FileOperationsService+Undo.swift",

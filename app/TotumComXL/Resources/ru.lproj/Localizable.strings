@@ -736,6 +736,7 @@
 "archive.pkg.payloadBroken" = "Содержимое пакета установки повреждено: Payload не разворачивается.";
 "settings.terminal.reverseScroll" = "Прокрутка в обратную сторону";
 "settings.terminal.reverseScroll.hint" = "Терминал прокручивается в ту же сторону, что всё в системе. Включите, если с вашей мышью или тачпадом он всё равно идёт наоборот.";
+"context.installApp" = "Установить";
 "context.enterPackage" = "Открыть пакет";
 "volume.eject.tooltip" = "Извлечь диск";
 "volume.eject.failed.title" = "Ошибка извлечения";

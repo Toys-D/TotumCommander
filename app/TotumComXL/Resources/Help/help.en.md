@@ -104,6 +104,7 @@ The default sorting (field and direction) is set in the "List view" settings. Th
 | Home, Desktop, Documents, Downloads, Applications, Pictures, Music, Movies, Root of the disk | The "Go" menu (⇧⌘H, ⇧⌘D, ⇧⌘O, ⌥⌘L, ⇧⌘A, ⇧⌘C) or the quick links in the tunnel. |
 | Favorite folders | ⌘D — the list of favourite folders. Add and remove the current one there and in the context menu. |
 | Browse .app as a folder | Context menu or "Go". |
+| Install an app | For an .app outside Applications — on a mounted disk image, in Downloads — the first context menu item "Install": a copy into Applications, like dragging it there in Finder. If the name is taken, you are asked whether to replace it; ⌘Z undoes it. |
 | Follow Symlink | For a symbolic link — into the target's folder, cursor on the target. |
 | Breadcrumbs | Click a segment to go there. Right-click: edit the path, copy the path, paste a path and go. Setting "Select all text when editing path". |
 | Refresh | ⌘R |
