@@ -1148,6 +1148,13 @@ auto ArchiveWriter::create(std::string_view path,
         return configure_result.error();
     }
 
+    // На диск — кусками по мегабайту, а не по 10 КБ, как libarchive пишет по умолчанию: на exFAT
+    // и FAT, которые macOS обслуживает через FSKit, каждый write() — отдельный дорогой вызов, и
+    // упаковка на внешний диск шла на выходе около 3 МБ/с, большую часть времени стоя в write().
+    // Последний кусок — без добивки нулями: иначе маленький tar вырос бы до мегабайта.
+    archive_write_set_bytes_per_block(writer, 1 << 20);
+    archive_write_set_bytes_in_last_block(writer, 1);
+
     if (archive_write_open_filename(writer, archive_path.c_str()) < ARCHIVE_OK) {
         const common::Error error =
             to_archive_error("Failed to open output archive", archive_path, writer);

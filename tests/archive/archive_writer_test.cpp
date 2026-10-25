@@ -340,3 +340,25 @@ TEST_F(ArchiveWriterTest, should_stop_measuring_on_cancel) {
     ASSERT_FALSE(totals.has_value());
     EXPECT_EQ(totals.error().code, common::ErrorCode::Cancelled);
 }
+
+// Пишется кусками по мегабайту, но маленький архив не дополняется нулями до мегабайта.
+TEST_F(ArchiveWriterTest, should_not_pad_small_archive_to_write_block) {
+    for (const auto format : {archive::ArchiveFormat::TAR, archive::ArchiveFormat::TAR_GZ,
+                              archive::ArchiveFormat::ZIP}) {
+        const auto source_dir = create_source_files({{"tiny.txt", "x"}});
+        const auto archive_path = test_dir_ / ("tiny" + std::to_string(static_cast<int>(format)));
+        archive::ArchiveWriter writer;
+        ASSERT_TRUE(writer.create(archive_path.string(), format, "", -1, true,
+                                  [](const std::string&, int64_t, int64_t, int, int, int64_t) {})
+                        .has_value());
+        ASSERT_TRUE(writer.add_sources({source_dir.string()}, true).has_value());
+        ASSERT_TRUE(writer.finalize().has_value());
+        EXPECT_LT(stdfs::file_size(archive_path), 64u * 1024u);
+
+        archive::ArchiveReader reader;
+        ASSERT_TRUE(reader.open(archive_path.string()).has_value());
+        const auto entries = reader.list_entries();
+        ASSERT_TRUE(entries.has_value());
+        EXPECT_FALSE(entries.value().empty());
+    }
+}
