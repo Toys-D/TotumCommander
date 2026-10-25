@@ -308,3 +308,35 @@ TEST_F(ArchiveWriterTest, should_report_real_progress_from_libarchive_positions)
     EXPECT_GE(std::get<1>(last_event), total_bytes);
     EXPECT_GE(std::get<3>(last_event), total_files);
 }
+
+// Итоги хода считает тот же обход, что пишет: через ссылку, которую кладут тем, на что она ведёт,
+// приходят и её байты.
+TEST_F(ArchiveWriterTest, should_measure_what_links_bring_by_mode) {
+    const auto source_dir = create_source_files({{"own.txt", "x"}});
+    write_file(test_dir_ / "outside.bin", std::string(1000, 'o'));
+    stdfs::create_symlink("../outside.bin", source_dir / "big");
+
+    const std::vector<std::string> sources{source_dir.string()};
+    const auto keep = archive::ArchiveWriter::measure_sources(sources, true, archive::SymlinkMode::Keep);
+    ASSERT_TRUE(keep.has_value());
+    EXPECT_EQ(keep.value().bytes, 1);
+    EXPECT_EQ(keep.value().files, 1);
+
+    const auto follow =
+        archive::ArchiveWriter::measure_sources(sources, true, archive::SymlinkMode::FollowOutside);
+    ASSERT_TRUE(follow.has_value());
+    EXPECT_EQ(follow.value().bytes, 1001);
+    EXPECT_EQ(follow.value().files, 2);
+}
+
+// Подсчёт идёт по всему дереву до записи — и слушает «Отмену», иначе большая папка на
+// «Подготовке» не отменялась минутами.
+TEST_F(ArchiveWriterTest, should_stop_measuring_on_cancel) {
+    const auto source_dir = create_source_files({{"a/one.txt", "1"}, {"b/two.txt", "2"}});
+    archive::ArchiveWriter::cancel_current_operation();
+    const auto totals =
+        archive::ArchiveWriter::measure_sources({source_dir.string()}, true, archive::SymlinkMode::Keep);
+    archive::ArchiveWriter::reset_cancelled();
+    ASSERT_FALSE(totals.has_value());
+    EXPECT_EQ(totals.error().code, common::ErrorCode::Cancelled);
+}

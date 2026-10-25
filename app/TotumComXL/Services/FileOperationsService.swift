@@ -2761,8 +2761,14 @@ final class FileOperationsService {
 
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    // Calculate stats
-                    let sourceStats = items.map { self.calculatePathStats(path: $0.path) }
+                    // Итоги для хода. Архиву их считает ядро — тем же обходом, что пишет, и с
+                    // оглядкой на «Отмену». Свой обход здесь был вторым по всему дереву и кнопку
+                    // не слышал: папка в 167 ГБ на «Подготовке» не отменялась минутами. Образу
+                    // DMG итоги считаем сами (hdiutil их не даёт), но тоже слушая отмену.
+                    let sourceStats = format.isBuiltByHdiutil
+                        ? items.map { self.calculatePathStats(path: $0.path,
+                                                              isCancelled: { swappable.isCancelled }) }
+                        : []
                     let totalBytes = max(sourceStats.reduce(Int64(0)) { $0 + $1.bytes }, 1)
                     let totalFiles = max(sourceStats.reduce(0) { $0 + max(1, $1.fileCount) }, 1)
 
@@ -2772,18 +2778,24 @@ final class FileOperationsService {
                         return
                     }
 
-                    DispatchQueue.main.async {
-                        progressController.setIndeterminate(false)
-                        let currentFile = (archivePath as NSString).lastPathComponent
-                        progressController.update(
-                            currentFile: currentFile,
-                            progress: 0.01,
-                            bytesDone: 0,
-                            bytesTotal: totalBytes,
-                            filesDone: 0,
-                            filesTotal: totalFiles
-                        )
+                    // Числа хода — как только они известны: для образа уже сейчас, для архива — с
+                    // первым отчётом ядра; до него окно честно говорит «Подготовка».
+                    let showCounts = {
+                        DispatchQueue.main.async {
+                            progressController.setIndeterminate(false)
+                            if format.isBuiltByHdiutil {
+                                progressController.update(
+                                    currentFile: (archivePath as NSString).lastPathComponent,
+                                    progress: 0.01,
+                                    bytesDone: 0,
+                                    bytesTotal: totalBytes,
+                                    filesDone: 0,
+                                    filesTotal: totalFiles
+                                )
+                            }
+                        }
                     }
+                    if format.isBuiltByHdiutil { showCounts() }
 
                     let monotonic = MonotonicProgress()
 
@@ -2795,6 +2807,14 @@ final class FileOperationsService {
                             password: password,
                             reporter: swappable)
                     } else if let bridgeFormat = format.bridgeFormat {
+                        let report = self.makeArchiveProgressHandler(
+                            progressController: swappable,
+                            overrideTotalBytes: totalBytes,
+                            overrideTotalFiles: totalFiles,
+                            monotonicProgress: monotonic,
+                            packDetail: (format: format, level: compressionLevel)
+                        )
+                        var counted = false
                         try self.bridgeService.createArchive(
                             archivePath: buildPath,
                             format: bridgeFormat,
@@ -2804,13 +2824,13 @@ final class FileOperationsService {
                             compressionLevel: compressionLevel,
                             password: password,
                             links: links,
-                            progress: self.makeArchiveProgressHandler(
-                                progressController: swappable,
-                                overrideTotalBytes: totalBytes,
-                                overrideTotalFiles: totalFiles,
-                                monotonicProgress: monotonic,
-                                packDetail: (format: format, level: compressionLevel)
-                            )
+                            progress: { file, done, total, filesDone, filesTotal, compressed in
+                                if !counted {
+                                    counted = true
+                                    showCounts()
+                                }
+                                report(file, done, total, filesDone, filesTotal, compressed)
+                            }
                         )
                     }
 
@@ -2822,13 +2842,16 @@ final class FileOperationsService {
                                 queueService?.markOperationCompleted(id)
                             }
                         } else {
+                            // Итоги ядра пришли с отчётами хода — они и есть «всё сделано».
+                            let doneBytes = max(totalBytes, progressController.lastBytesTotalValue)
+                            let doneFiles = max(totalFiles, progressController.lastFilesTotalValue)
                             progressController.update(
                                 currentFile: L("progress.done"),
                                 progress: 1.0,
-                                bytesDone: totalBytes,
-                                bytesTotal: totalBytes,
-                                filesDone: totalFiles,
-                                filesTotal: totalFiles
+                                bytesDone: doneBytes,
+                                bytesTotal: doneBytes,
+                                filesDone: doneFiles,
+                                filesTotal: doneFiles
                             )
                             progressController.close()
                         }
@@ -3185,24 +3208,32 @@ final class FileOperationsService {
                                      password: String = "",
                                      links: ArchiveLinkMode,
                                      reporter: OperationProgressReporter) throws {
-        let sourceStats = items.map { self.calculatePathStats(path: $0.path) }
+        // Как в packSingleArchive: архиву итоги считает ядро, свой обход — только образу.
+        let sourceStats = format.isBuiltByHdiutil
+            ? items.map { self.calculatePathStats(path: $0.path, isCancelled: { reporter.isCancelled }) }
+            : []
         let totalBytes = max(sourceStats.reduce(Int64(0)) { $0 + $1.bytes }, 1)
         let totalFiles = max(sourceStats.reduce(0) { $0 + max(1, $1.fileCount) }, 1)
 
         if reporter.isCancelled { throw userCancelledError() }
 
-        DispatchQueue.main.async {
-            reporter.update(
-                currentFile: (archivePath as NSString).lastPathComponent,
-                progress: 0.01,
-                bytesDone: 0,
-                bytesTotal: totalBytes,
-                filesDone: 0,
-                filesTotal: totalFiles
-            )
+        if format.isBuiltByHdiutil {
+            DispatchQueue.main.async {
+                reporter.update(
+                    currentFile: (archivePath as NSString).lastPathComponent,
+                    progress: 0.01,
+                    bytesDone: 0,
+                    bytesTotal: totalBytes,
+                    filesDone: 0,
+                    filesTotal: totalFiles
+                )
+            }
         }
 
         let monotonic = MonotonicProgress()
+        // Итоги ядра приходят с отчётами хода — ими и закончим.
+        var doneBytes = totalBytes
+        var doneFiles = totalFiles
 
         if format.isBuiltByHdiutil {
             try createDMGImage(sources: items.map(\.path), to: archivePath,
@@ -3211,6 +3242,13 @@ final class FileOperationsService {
                                password: password,
                                reporter: reporter)
         } else if let bridgeFormat = format.bridgeFormat {
+            let report = makeArchiveProgressHandler(
+                progressController: reporter,
+                overrideTotalBytes: totalBytes,
+                overrideTotalFiles: totalFiles,
+                monotonicProgress: monotonic,
+                packDetail: (format: format, level: compressionLevel)
+            )
             try bridgeService.createArchive(
                 archivePath: archivePath,
                 format: bridgeFormat,
@@ -3220,26 +3258,26 @@ final class FileOperationsService {
                 compressionLevel: compressionLevel,
                 password: password,
                 links: links,
-                progress: makeArchiveProgressHandler(
-                    progressController: reporter,
-                    overrideTotalBytes: totalBytes,
-                    overrideTotalFiles: totalFiles,
-                    monotonicProgress: monotonic,
-                    packDetail: (format: format, level: compressionLevel)
-                )
+                progress: { file, done, total, filesDone, filesTotal, compressed in
+                    doneBytes = max(doneBytes, total)
+                    doneFiles = max(doneFiles, filesTotal)
+                    report(file, done, total, filesDone, filesTotal, compressed)
+                }
             )
         }
 
         if reporter.isCancelled { throw userCancelledError() }
 
+        let finalBytes = doneBytes
+        let finalFiles = doneFiles
         DispatchQueue.main.async {
             reporter.update(
                 currentFile: L("progress.done"),
                 progress: 1.0,
-                bytesDone: totalBytes,
-                bytesTotal: totalBytes,
-                filesDone: totalFiles,
-                filesTotal: totalFiles
+                bytesDone: finalBytes,
+                bytesTotal: finalBytes,
+                filesDone: finalFiles,
+                filesTotal: finalFiles
             )
         }
     }
@@ -4005,7 +4043,8 @@ final class FileOperationsService {
         return (attributes?[.size] as? NSNumber)?.int64Value ?? 0
     }
 
-    private func calculatePathStats(path: String, timeBudget: TimeInterval = 0) -> PathStats {
+    private func calculatePathStats(path: String, timeBudget: TimeInterval = 0,
+                                    isCancelled: () -> Bool = { false }) -> PathStats {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
             return PathStats(bytes: 0, fileCount: 0)
@@ -4032,7 +4071,7 @@ final class FileOperationsService {
         ) {
             for case let entryURL as URL in enumerator {
                 entryCount += 1
-                if Task.isCancelled { break }
+                if Task.isCancelled || (entryCount & 0x3F == 0 && isCancelled()) { break }
                 if deadline > 0, entryCount & 0x3F == 0, CFAbsoluteTimeGetCurrent() > deadline { break }
                 let values = try? entryURL.resourceValues(forKeys: keys)
                 let isRegular = values?.isRegularFile ?? false
