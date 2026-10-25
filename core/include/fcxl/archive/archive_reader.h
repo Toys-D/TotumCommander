@@ -33,6 +33,10 @@ public:
                                    bool overwrite_existing,
                                    ExtractProgressCallback progress_callback) const -> common::Result<void>;
     [[nodiscard]] auto extract_entry(std::string_view entry_path, std::string_view dest_path) -> common::Result<void>;
+    /// Сколько байт выйдет по каждому пути (папка — всё, что под ней): для хода извлечения, из
+    /// списка архива, а не переводом сотен тысяч записей наверх по одной.
+    [[nodiscard]] auto planned_bytes(const std::vector<std::string>& targets) const
+        -> common::Result<std::vector<uint64_t>>;
     static void cancel_current_operation();
     static void reset_cancelled();
     [[nodiscard]] static auto debug_data_skip_call_count() -> size_t;

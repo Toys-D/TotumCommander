@@ -56,6 +56,9 @@ struct ArchiveEntry {
     bool is_directory = false;
     bool is_encrypted = false;
     std::string method;
+    /// Zip: где в файле лежит запись оглавления — по ней извлечение встаёт прямо на запись,
+    /// а не перебирает архив с начала.
+    uint64_t zip_header_offset = 0;
 };
 struct ArchiveInfo {
     ArchiveFormat format;

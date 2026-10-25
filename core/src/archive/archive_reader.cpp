@@ -54,7 +54,9 @@ std::atomic_size_t g_data_skip_call_count{0};
 struct GlobalEntriesCache {
     std::string path;
     std::time_t mtime = 0;
-    std::vector<ArchiveEntry> entries;
+    // Общий, а не копия: извлечению из архива на полмиллиона записей его список нужен
+    // целиком, и копировать его на каждый вытаскиваемый файл — лишние доли секунды.
+    std::shared_ptr<const std::vector<ArchiveEntry>> entries;
 };
 std::mutex g_entries_cache_mutex;
 std::optional<GlobalEntriesCache> g_entries_cache;
@@ -591,6 +593,7 @@ auto read_zip_central_directory(const std::string& path)
 
         if (!raw.empty()) {
             ArchiveEntry entry;
+            entry.zip_header_offset = cd_offset + pos;
             entry.path             = normalize_entry_path(raw);
             entry.compressed_size  = comp_size;
             entry.uncompressed_size = uncomp_size;
@@ -604,6 +607,29 @@ auto read_zip_central_directory(const std::string& path)
         pos += rec_size;
     }
 
+    return entries;
+}
+
+// Оглавление zip — из общего списка, если архив с тех пор не менялся (панель его уже прочла),
+// иначе прочесть и запомнить. Нет оглавления — nullptr, и извлечение идёт перебором, как раньше.
+auto zip_listing(const std::string& path) -> std::shared_ptr<const std::vector<ArchiveEntry>> {
+    const auto mtime = archive_mtime(path);
+    if (mtime.has_value()) {
+        std::lock_guard<std::mutex> lock(g_entries_cache_mutex);
+        if (g_entries_cache.has_value() && g_entries_cache->path == path &&
+            g_entries_cache->mtime == mtime.value()) {
+            return g_entries_cache->entries;
+        }
+    }
+    auto read = read_zip_central_directory(path);
+    if (!read.has_value()) {
+        return nullptr;
+    }
+    auto entries = std::make_shared<const std::vector<ArchiveEntry>>(std::move(read.value()));
+    if (mtime.has_value()) {
+        std::lock_guard<std::mutex> lock(g_entries_cache_mutex);
+        g_entries_cache = GlobalEntriesCache{path, mtime.value(), entries};
+    }
     return entries;
 }
 
@@ -877,14 +903,24 @@ auto extract_single_zip_entry_with_minizip(
         mz_zip_reader_set_password(reader.handle, session.password.c_str());
     }
 
-    // Итоги — по всем записям под целью: папка выходит целиком, и ход показывают по ней.
+    // Итоги — по всем записям под целью: папка выходит целиком, и ход показывают по ней. Из того
+    // же списка — где первая из них и сколько их всего: в архиве на полмиллиона записей перебор
+    // от начала до нужной занимал секунды, а после последней нужной идти дальше незачем.
     uint64_t total_bytes = 0;
     int files_total = 0;
-    const auto list_result = read_zip_central_directory(session.path);
-    if (list_result.has_value()) {
-        for (const auto& entry : list_result.value()) {
+    std::size_t first_wanted = SIZE_MAX;
+    std::size_t wanted_left = 0;
+    const auto listing = zip_listing(session.path);
+    if (listing != nullptr) {
+        for (std::size_t index = 0; index < listing->size(); ++index) {
+            const auto& entry = (*listing)[index];
             const std::string comparable = trim_trailing_slash(normalize_zip_entry_path(entry.path));
-            if (entry_belongs_to_target(comparable, normalized_target) && !entry.is_directory) {
+            if (!entry_belongs_to_target(comparable, normalized_target)) {
+                continue;
+            }
+            first_wanted = std::min(first_wanted, index);
+            ++wanted_left;
+            if (!entry.is_directory) {
                 total_bytes += entry.uncompressed_size;
                 ++files_total;
             }
@@ -892,7 +928,38 @@ auto extract_single_zip_entry_with_minizip(
     }
     files_total = std::max(files_total, 1);
 
-    mz_status = mz_zip_reader_goto_first_entry(reader.handle);
+    // На первую нужную запись — прямо по её месту в оглавлении: встать на предыдущую и сделать
+    // обычный шаг читателя, чтобы его сведения о записи были её. Не та запись — с начала, как раньше.
+    const auto stand_on_first_wanted = [&]() -> bool {
+        if (first_wanted == SIZE_MAX) {
+            return false;
+        }
+        if (first_wanted == 0) {
+            if (mz_zip_reader_goto_first_entry(reader.handle) != MZ_OK) {
+                return false;
+            }
+        } else {
+            void* zip_handle = nullptr;
+            const auto previous = static_cast<int64_t>((*listing)[first_wanted - 1].zip_header_offset);
+            if (mz_zip_reader_get_zip_handle(reader.handle, &zip_handle) != MZ_OK ||
+                mz_zip_goto_entry(zip_handle, previous) != MZ_OK ||
+                mz_zip_reader_goto_next_entry(reader.handle) != MZ_OK) {
+                return false;
+            }
+        }
+        mz_zip_file* info = nullptr;
+        if (mz_zip_reader_entry_get_info(reader.handle, &info) != MZ_OK || info == nullptr) {
+            return false;
+        }
+        return trim_trailing_slash(normalize_zip_entry_path(info->filename == nullptr ? "" : info->filename)) ==
+            trim_trailing_slash(normalize_zip_entry_path((*listing)[first_wanted].path));
+    };
+    if (!stand_on_first_wanted()) {
+        wanted_left = 0;  // список и архив разошлись — идём до конца, как раньше
+        mz_status = mz_zip_reader_goto_first_entry(reader.handle);
+    } else {
+        mz_status = MZ_OK;
+    }
     if (mz_status == MZ_END_OF_LIST) {
         return make_error(common::ErrorCode::NotFound,
                           "Archive entry not found",
@@ -1051,8 +1118,9 @@ auto extract_single_zip_entry_with_minizip(
                 }
             }
 
-            // Одиночный файл — дальше искать нечего. Папка же продолжается следующими записями.
-            if (is_the_target_itself && !is_directory) {
+            // Одиночный файл — дальше искать нечего. Папка же продолжается следующими записями
+            // — до последней из них по списку.
+            if ((is_the_target_itself && !is_directory) || (wanted_left > 0 && --wanted_left == 0)) {
                 break;
             }
         }
@@ -1682,7 +1750,7 @@ auto ArchiveReader::list_entries(std::atomic<bool>* cancelled) const
         if (g_entries_cache.has_value() &&
             g_entries_cache->path  == session->path &&
             g_entries_cache->mtime == current_mtime) {
-            return g_entries_cache->entries;
+            return *g_entries_cache->entries;
         }
     }
 
@@ -1705,7 +1773,9 @@ auto ArchiveReader::list_entries(std::atomic<bool>* cancelled) const
         if (zip_result.has_value()) {
             {
                 std::lock_guard<std::mutex> lock(g_entries_cache_mutex);
-                g_entries_cache = GlobalEntriesCache{session->path, current_mtime, zip_result.value()};
+                g_entries_cache = GlobalEntriesCache{
+                    session->path, current_mtime,
+                    std::make_shared<const std::vector<ArchiveEntry>>(zip_result.value())};
             }
             {
                 std::lock_guard<std::mutex> lock(entries_cache_mutex_);
@@ -1783,7 +1853,8 @@ auto ArchiveReader::list_entries(std::atomic<bool>* cancelled) const
 
     {
         std::lock_guard<std::mutex> lock(g_entries_cache_mutex);
-        g_entries_cache = GlobalEntriesCache{session->path, current_mtime, entries};
+        g_entries_cache = GlobalEntriesCache{
+            session->path, current_mtime, std::make_shared<const std::vector<ArchiveEntry>>(entries)};
     }
     {
         std::lock_guard<std::mutex> lock(entries_cache_mutex_);
@@ -1794,6 +1865,41 @@ auto ArchiveReader::list_entries(std::atomic<bool>* cancelled) const
     }
 
     return entries;
+}
+
+auto ArchiveReader::planned_bytes(const std::vector<std::string>& targets) const
+    -> common::Result<std::vector<uint64_t>> {
+    const auto session = current_reader_session(this);
+    if (!session.has_value()) {
+        return make_error(common::ErrorCode::ArchiveError, "Archive is not opened");
+    }
+    auto entries = has_zip_extension(session->path) ? zip_listing(session->path) : nullptr;
+    if (entries == nullptr) {
+        auto listed = list_entries();
+        if (!listed.has_value()) {
+            return listed.error();
+        }
+        entries = std::make_shared<const std::vector<ArchiveEntry>>(std::move(listed.value()));
+    }
+
+    std::vector<std::string> roots;
+    roots.reserve(targets.size());
+    for (const auto& target : targets) {
+        roots.push_back(trim_trailing_slash(normalize_zip_entry_path(target)));
+    }
+    std::vector<uint64_t> sums(targets.size(), 0);
+    for (const auto& entry : *entries) {
+        if (entry.is_directory) {
+            continue;
+        }
+        const std::string path = trim_trailing_slash(normalize_zip_entry_path(entry.path));
+        for (std::size_t index = 0; index < roots.size(); ++index) {
+            if (entry_belongs_to_target(path, roots[index])) {
+                sums[index] += entry.uncompressed_size;
+            }
+        }
+    }
+    return sums;
 }
 
 auto ArchiveReader::get_info() const -> common::Result<ArchiveInfo> {

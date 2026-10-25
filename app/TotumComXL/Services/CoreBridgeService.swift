@@ -205,6 +205,16 @@ final class CoreBridgeService {
         }
     }
 
+    /// Сколько байт выйдет по каждому пути архива (папка — всё под ней): для хода извлечения.
+    /// Считает ядро по своему списку — без перевода сюда всех записей огромного архива.
+    func plannedArchiveBytes(archivePath: String, entries: [String]) -> [String: Int64] {
+        let password = ArchivePasswords.remembered(for: archivePath) ?? ""
+        guard let sums = try? archiveBridge.plannedBytes(forEntries: entries, inArchive: archivePath,
+                                                          password: password),
+              sums.count == entries.count else { return [:] }
+        return Dictionary(zip(entries, sums.map(\.int64Value)), uniquingKeysWith: { first, _ in first })
+    }
+
     func extractArchiveEntry(archivePath: String,
                              entryPath: String,
                              destinationPath: String) throws {

@@ -902,15 +902,28 @@ extension FileOperationsServiceTests {
         XCTAssertFalse(exists(out + "/docs/old.txt"))
     }
 
-    func test_plannedArchiveBytes_weighsFolderByItsFiles() {
-        let files: [(path: String, size: Int64)] = [
-            ("docs/a.txt", 10), ("docs/sub/b.txt", 5), ("./docs/d.txt", 1),
-            ("docs2/c.txt", 100), ("docs.txt", 7)
-        ]
-        let planned = FileOperationsService.plannedArchiveBytes(
-            for: ["docs", "docs/", "docs.txt", "missing"], files: files)
-        XCTAssertEqual(planned["docs"], 16)
-        XCTAssertEqual(planned["docs/"], 16)
+    /// Байты для хода извлечения: файл — свой размер, папка — всё под ней, соседняя папка с
+    /// похожим именем — нет. Считает ядро; сюда приходят суммы по тем же строкам, что спрошены.
+    func test_plannedArchiveBytes_weighsFolderByItsFiles() throws {
+        let root = NSTemporaryDirectory() + "planned-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: root + "/docs/sub", withIntermediateDirectories: true)
+        try fm.createDirectory(atPath: root + "/docs2", withIntermediateDirectories: true)
+        try String(repeating: "a", count: 10).write(toFile: root + "/docs/a.txt", atomically: true, encoding: .utf8)
+        try String(repeating: "b", count: 5).write(toFile: root + "/docs/sub/b.txt", atomically: true, encoding: .utf8)
+        try String(repeating: "c", count: 100).write(toFile: root + "/docs2/c.txt", atomically: true, encoding: .utf8)
+        try String(repeating: "d", count: 7).write(toFile: root + "/docs.txt", atomically: true, encoding: .utf8)
+        let archive = root + "/plan.zip"
+        let bridge = CoreBridgeService()
+        try bridge.createArchive(archivePath: archive, format: .zip,
+                                 sources: [root + "/docs", root + "/docs2", root + "/docs.txt"],
+                                 includeSubfolders: true, preservePaths: true, compressionLevel: 6)
+
+        let planned = bridge.plannedArchiveBytes(archivePath: archive,
+                                                 entries: ["docs", "docs/", "docs.txt", "missing"])
+        XCTAssertEqual(planned["docs"], 15)
+        XCTAssertEqual(planned["docs/"], 15)
         XCTAssertEqual(planned["docs.txt"], 7)
         XCTAssertEqual(planned["missing"], 0)
     }

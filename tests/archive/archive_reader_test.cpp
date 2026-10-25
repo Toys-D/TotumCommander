@@ -840,3 +840,77 @@ TEST_F(ArchiveReaderTest, should_keep_existing_file_when_refused_entry_was_skipp
         EXPECT_EQ(read_file(out / "secret.txt"), "mine");
     }
 }
+
+// Один файл из большого zip — прямо по его месту в оглавлении, а не перебором с начала:
+// любой — первый, из середины, последний — выходит целым; папка — вся и только она.
+TEST_F(ArchiveReaderTest, should_extract_entries_from_large_zip_by_position) {
+    const auto source = test_dir_ / "source";
+    for (int dir = 0; dir < 30; ++dir) {
+        for (int file = 0; file < 20; ++file) {
+            write_file(source / ("d" + std::to_string(dir)) / ("f" + std::to_string(file) + ".txt"),
+                       "content " + std::to_string(dir) + "/" + std::to_string(file));
+        }
+    }
+    const auto archive_path = test_dir_ / "big.zip";
+    {
+        archive::ArchiveWriter writer;
+        ASSERT_TRUE(writer.create(archive_path.string(), archive::ArchiveFormat::ZIP).has_value());
+        ASSERT_TRUE(writer.add_sources({source.string()}, true).has_value());
+        ASSERT_TRUE(writer.finalize().has_value());
+    }
+
+    archive::ArchiveReader reader;
+    ASSERT_TRUE(reader.open(archive_path.string()).has_value());
+    const auto listed = reader.list_entries();
+    ASSERT_TRUE(listed.has_value());
+    std::vector<std::string> files;
+    for (const auto& entry : listed.value()) {
+        if (!entry.is_directory) {
+            files.push_back(entry.path);
+        }
+    }
+    ASSERT_GE(files.size(), 600u);
+
+    for (const auto& wanted : {files.front(), files[files.size() / 2], files.back()}) {
+        const auto out = test_dir_ / ("out-" + std::to_string(std::hash<std::string>{}(wanted)));
+        ASSERT_TRUE(reader.extract_entry(wanted, out.string()).has_value()) << wanted;
+        const auto relative = stdfs::path(wanted).lexically_relative("source");
+        EXPECT_EQ(read_file(out / wanted), "content " +
+                  relative.begin()->string().substr(1) + "/" +
+                  relative.filename().stem().string().substr(1)) << wanted;
+    }
+
+    const auto folder_out = test_dir_ / "folder-out";
+    ASSERT_TRUE(reader.extract_entry("source/d17", folder_out.string()).has_value());
+    int extracted = 0;
+    for (const auto& item : stdfs::recursive_directory_iterator(folder_out)) {
+        if (item.is_regular_file()) {
+            ++extracted;
+        }
+    }
+    EXPECT_EQ(extracted, 20);
+    EXPECT_FALSE(stdfs::exists(folder_out / "source" / "d16"));
+    EXPECT_FALSE(stdfs::exists(folder_out / "source" / "d18"));
+}
+
+// Сколько байт выйдет по каждому пути: папка — всё, что под ней; соседняя с похожим именем — нет.
+TEST_F(ArchiveReaderTest, should_plan_bytes_per_entry) {
+    const auto source = test_dir_ / "src";
+    write_file(source / "docs" / "a.txt", std::string(10, 'a'));
+    write_file(source / "docs" / "sub" / "b.txt", std::string(5, 'b'));
+    write_file(source / "docs2" / "c.txt", std::string(100, 'c'));
+    write_file(source / "docs.txt", std::string(7, 'd'));
+    const auto archive_path = test_dir_ / "plan.zip";
+    {
+        archive::ArchiveWriter writer;
+        ASSERT_TRUE(writer.create(archive_path.string(), archive::ArchiveFormat::ZIP).has_value());
+        ASSERT_TRUE(writer.add_sources({(source / "docs").string(), (source / "docs2").string(),
+                                        (source / "docs.txt").string()}, true).has_value());
+        ASSERT_TRUE(writer.finalize().has_value());
+    }
+    archive::ArchiveReader reader;
+    ASSERT_TRUE(reader.open(archive_path.string()).has_value());
+    const auto planned = reader.planned_bytes({"docs", "docs/", "./docs.txt", "missing"});
+    ASSERT_TRUE(planned.has_value());
+    EXPECT_EQ(planned.value(), (std::vector<uint64_t>{15, 15, 7, 0}));
+}

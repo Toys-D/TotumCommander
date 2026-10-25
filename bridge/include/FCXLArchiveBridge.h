@@ -54,6 +54,12 @@ typedef NS_ENUM(NSInteger, FCXLArchiveLinks) {
               destinationPath:(NSString *)destinationPath
                      password:(NSString *)password
                         error:(NSError**)error;
+/// Bytes that come out for each path (a folder: everything under it), in the order of
+/// `entries` — summed inside, without bridging every entry of an archive of half a million.
+- (nullable NSArray<NSNumber*>*)plannedBytesForEntries:(NSArray<NSString*>*)entries
+                                             inArchive:(NSString *)archivePath
+                                              password:(NSString *)password
+                                                 error:(NSError**)error;
 - (BOOL)createArchiveAtPath:(NSString *)archivePath
                      format:(NSString *)format
                     sources:(NSArray<NSString*>*)sources

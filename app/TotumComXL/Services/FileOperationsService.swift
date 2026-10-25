@@ -599,14 +599,9 @@ final class FileOperationsService {
         _ = try preflightCheck(items: [], destinationPath: destinationPath, requireWriteAccess: false)
         var extractedItems: [FileItem] = []
         // A folder's own size is nothing; what comes out is everything beneath it.
-        var planned: [String: Int64] = [:]
-        if items.contains(where: \.isDirectory),
-           let listed = try? bridgeService.listArchiveEntries(archivePath: archivePath) {
-            planned = Self.plannedArchiveBytes(
-                for: items.map(\.path),
-                files: listed.filter { !$0.isDirectory }
-                    .map { (path: $0.path, size: Int64($0.uncompressedSize)) })
-        }
+        let planned = items.contains(where: \.isDirectory)
+            ? bridgeService.plannedArchiveBytes(archivePath: archivePath, entries: items.map(\.path))
+            : [:]
         let weight: (FileItem) -> Int64 = { max(Int64($0.size), planned[$0.path] ?? 0) }
         let totalBytes = max(items.reduce(Int64(0)) { $0 + weight($1) }, 1)
         let totalFiles = max(items.count, 1)
@@ -2940,12 +2935,10 @@ final class FileOperationsService {
                                       _ bytesDone: Int64, _ bytesTotal: Int64,
                                       _ filesDone: Int, _ filesTotal: Int) -> Void)? = nil,
                         shouldCancel: (() -> Bool)? = nil) throws {
-        var files: [(path: String, size: Int64)] = []
-        if onProgress != nil, let listed = try? bridgeService.listArchiveEntries(archivePath: archivePath) {
-            files = listed.filter { !$0.isDirectory }
-                .map { (path: $0.path, size: Int64($0.uncompressedSize)) }
-        }
-        let planned = Self.plannedArchiveBytes(for: entryPaths, files: files)
+        // Байты для хода — из ядра: полный список архива на полмиллиона записей переводился
+        // сюда целиком ради одной суммы, и это была добрая половина времени извлечения.
+        let planned = onProgress == nil
+            ? [:] : bridgeService.plannedArchiveBytes(archivePath: archivePath, entries: entryPaths)
         let total = max(planned.values.reduce(Int64(0), +), 1)
         var done: Int64 = 0
 
@@ -4766,27 +4759,5 @@ final class FileOperationsService {
             normalized.removeLast()
         }
         return normalized
-    }
-
-    /// Bytes each requested entry brings out: a file its own size, a folder everything
-    /// beneath it. Weighed by the exact path alone, a folder counted as nothing and the bar
-    /// stood still for the whole minute the folder took.
-    nonisolated static func plannedArchiveBytes(
-        for entries: [String],
-        files: [(path: String, size: Int64)]
-    ) -> [String: Int64] {
-        var planned: [String: Int64] = [:]
-        for entry in entries {
-            let root = normalizedArchiveEntryPath(entry)
-            var sum: Int64 = 0
-            if !root.isEmpty {
-                for file in files {
-                    let path = normalizedArchiveEntryPath(file.path)
-                    if path == root || path.hasPrefix(root + "/") { sum += file.size }
-                }
-            }
-            planned[entry] = sum
-        }
-        return planned
     }
 }

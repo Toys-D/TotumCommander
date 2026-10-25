@@ -310,6 +310,33 @@ auto make_archive_modify_progress_callback(
     return assign_void_result(extract_result, error);
 }
 
+- (nullable NSArray<NSNumber*>*)plannedBytesForEntries:(NSArray<NSString*>*)entries
+                                             inArchive:(NSString *)archivePath
+                                              password:(NSString *)password
+                                                 error:(NSError**)error {
+    fcxl::archive::ArchiveReader reader;
+    const auto open_result = reader.open(archivePath.UTF8String, password.UTF8String);
+    if (!open_result.has_value()) {
+        if (error != nullptr) {
+            *error = make_nserror(open_result.error());
+        }
+        return nil;
+    }
+    const auto planned = reader.planned_bytes(source_path_list(entries));
+    reader.close();
+    if (!planned.has_value()) {
+        if (error != nullptr) {
+            *error = make_nserror(planned.error());
+        }
+        return nil;
+    }
+    NSMutableArray<NSNumber*>* sums = [NSMutableArray arrayWithCapacity:planned.value().size()];
+    for (const uint64_t bytes : planned.value()) {
+        [sums addObject:@(bytes)];
+    }
+    return sums;
+}
+
 - (BOOL)createArchiveAtPath:(NSString *)archivePath
                      format:(NSString *)format
                     sources:(NSArray<NSString*>*)sources
