@@ -7,6 +7,7 @@
 #include "mz_strm.h"
 #include "mz_zip.h"
 #include "mz_zip_rw.h"
+#include "mz_os.h"
 
 #include <algorithm>
 #include <array>
@@ -21,6 +22,8 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+
+#include <sys/stat.h>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -701,6 +704,112 @@ auto mz_file_write_callback(void* stream, const void* buf, int32_t len) -> int32
     return static_cast<int32_t>(written);
 }
 
+// ─── Запись zip на диск такой, какой её задумал архив ─────────────────────────────
+// Ссылка — ссылкой, у файла — права и дата из архива. Раньше ссылка выходила файлом с путём
+// цели внутри, у исполняемого файла пропадало право на запуск, а дата становилась сегодняшней:
+// программа из zip не запускалась, а свой же архив не возвращался таким, каким его сложили.
+
+auto zip_entry_is_symlink(const mz_zip_file* info) -> bool {
+    return info != nullptr &&
+           mz_zip_attrib_is_symlink(info->external_fa, info->version_madeby) == MZ_OK;
+}
+
+auto mz_string_write_callback(void* stream, const void* buf, int32_t len) -> int32_t {
+    auto* text = static_cast<std::string*>(stream);
+    if (text == nullptr || buf == nullptr || len < 0) {
+        return MZ_PARAM_ERROR;
+    }
+    // Путь цели короток; длинное «содержимое ссылки» — не ссылка, а подделка.
+    if (text->size() + static_cast<size_t>(len) > 64 * 1024) {
+        return MZ_WRITE_ERROR;
+    }
+    text->append(static_cast<const char*>(buf), static_cast<size_t>(len));
+    return len;
+}
+
+auto read_zip_symlink_target(void* reader, const mz_zip_file* info, std::string* target) -> int32_t {
+    if (info->linkname != nullptr && *info->linkname != 0) {
+        *target = info->linkname;
+        return MZ_OK;
+    }
+    for (;;) {
+        const int32_t status = mz_zip_reader_entry_save_process(reader, target, mz_string_write_callback);
+        if (status == MZ_END_OF_STREAM) {
+            return MZ_OK;
+        }
+        if (status < 0) {
+            return status;
+        }
+    }
+}
+
+// Дата и права из архива. Права — только у архивов из UNIX и macOS (у Windows там другое), и
+// без права записи для группы и всех: файл из архива не должен стать общим для записи.
+void apply_zip_entry_metadata(const stdfs::path& path, const mz_zip_file* info) {
+    if (info == nullptr) {
+        return;
+    }
+    if (info->modified_date > 0) {
+        mz_os_set_file_date(path.c_str(), info->modified_date, info->accessed_date,
+                            info->creation_date);
+    }
+    const uint8_t host = MZ_HOST_SYSTEM(info->version_madeby);
+    if (host == MZ_HOST_SYSTEM_UNIX || host == MZ_HOST_SYSTEM_OSX_DARWIN) {
+        const mode_t mode = static_cast<mode_t>((info->external_fa >> 16) & 0777);
+        if (mode != 0) {
+            ::chmod(path.c_str(), mode & ~static_cast<mode_t>(022));
+        }
+    }
+}
+
+// Не ведёт ли путь записи сквозь ссылку, уже созданную распаковкой, наружу: запись «a» —
+// ссылка на «/etc», следом запись «a/passwd» — и файл лёг бы вне папки распаковки.
+// Проверяется до создания папок: иначе папки создались бы уже там.
+auto zip_path_escapes(const stdfs::path& directory, const stdfs::path& root) -> bool {
+    return mz_dir_has_unsafe_symlink(directory.c_str(), root.c_str()) != MZ_OK;
+}
+
+// Что-то уже лежит на месте записи — смотрим саму вещь, не её цель: битая ссылка тоже «лежит».
+auto zip_output_occupied(const stdfs::path& path) -> bool {
+    std::error_code ec;
+    return stdfs::symlink_status(path, ec).type() != stdfs::file_type::not_found;
+}
+
+// Ссылку на месте файла сначала убрать: иначе запись прошла бы сквозь неё в её цель.
+void remove_symlink_in_the_way(const stdfs::path& path) {
+    std::error_code ec;
+    if (stdfs::symlink_status(path, ec).type() == stdfs::file_type::symlink) {
+        stdfs::remove(path, ec);
+    }
+}
+
+auto extract_zip_symlink(void* reader, const mz_zip_file* info, const stdfs::path& output_path,
+                         const std::string& entry_path) -> common::Result<void> {
+    std::string target;
+    const int32_t status = read_zip_symlink_target(reader, info, &target);
+    if (status != MZ_OK || target.empty()) {
+        return minizip_error_to_result(status == MZ_OK ? MZ_FORMAT_ERROR : status,
+                                       "Extract ZIP link", entry_path,
+                                       (info->flag & MZ_ZIP_FLAG_ENCRYPTED) != 0);
+    }
+    std::error_code ec;
+    if (zip_output_occupied(output_path)) {
+        stdfs::remove(output_path, ec);
+        if (ec) {
+            return make_error(common::ErrorCode::IOError,
+                              "Failed to replace existing entry",
+                              output_path.string());
+        }
+    }
+    stdfs::create_symlink(target, output_path, ec);
+    if (ec) {
+        return make_error(common::ErrorCode::IOError,
+                          "Failed to create symbolic link",
+                          output_path.string());
+    }
+    return {};
+}
+
 auto extract_single_zip_entry_with_minizip(
     const ReaderSession& session,
     std::string_view destination,
@@ -729,7 +838,7 @@ auto extract_single_zip_entry_with_minizip(
                           normalized_target);
     }
 
-    const stdfs::path destination_root(destination);
+    stdfs::path destination_root(destination);
     std::error_code ec;
     stdfs::create_directories(destination_root, ec);
     if (ec) {
@@ -737,6 +846,11 @@ auto extract_single_zip_entry_with_minizip(
                           "Failed to create destination directory",
                           destination_root.string());
     }
+    // Настоящий путь корня: проверка ссылок сравнивает пути, а /tmp и /var — сами ссылки.
+    if (auto canonical_root = stdfs::canonical(destination_root, ec); !ec) {
+        destination_root = canonical_root;
+    }
+    ec.clear();
 
     struct MinizipReaderGuard {
         void* handle = nullptr;
@@ -818,6 +932,11 @@ auto extract_single_zip_entry_with_minizip(
             }
 
             const stdfs::path output_path = destination_root / stdfs::path(entry_path);
+            if (zip_path_escapes(output_path.parent_path(), destination_root)) {
+                return make_error(common::ErrorCode::InvalidArgument,
+                                  "Unsafe entry path in archive",
+                                  entry_path);
+            }
             stdfs::create_directories(output_path.parent_path(), ec);
             if (ec) {
                 return make_error(common::ErrorCode::IOError,
@@ -825,7 +944,9 @@ auto extract_single_zip_entry_with_minizip(
                                   output_path.parent_path().string());
             }
 
-            const bool is_directory = mz_zip_reader_entry_is_dir(reader.handle) == MZ_OK;
+            const bool is_symlink = zip_entry_is_symlink(file_info);
+            const bool is_directory = !is_symlink &&
+                mz_zip_reader_entry_is_dir(reader.handle) == MZ_OK;
             const bool is_the_target_itself = comparable_entry == normalized_target;
             if (is_directory) {
                 // Запись-каталог — только папка на диске; её файлы идут отдельными записями
@@ -836,11 +957,21 @@ auto extract_single_zip_entry_with_minizip(
                                       "Failed to create output directory",
                                       output_path.string());
                 }
-            } else if (!overwrite_existing && stdfs::exists(output_path, ec)) {
-                if (ec) {
-                    return make_error(common::ErrorCode::IOError,
-                                      "Failed to inspect output path",
-                                      output_path.string());
+            } else if (!overwrite_existing && zip_output_occupied(output_path)) {
+                ++files_done;
+                if (progress_callback) {
+                    progress_callback(entry_path, bytes_done, std::max<uint64_t>(total_bytes, 1),
+                                      files_done, files_total);
+                }
+            } else if (is_symlink) {
+                if (encrypted_entry_without_password(session, file_info)) {
+                    return minizip_error_to_result(
+                        MZ_PASSWORD_ERROR, "Extract ZIP entry", entry_path);
+                }
+                const auto link_result = extract_zip_symlink(reader.handle, file_info, output_path,
+                                                             entry_path);
+                if (!link_result.has_value()) {
+                    return link_result.error();
                 }
                 ++files_done;
                 if (progress_callback) {
@@ -852,6 +983,7 @@ auto extract_single_zip_entry_with_minizip(
                     return minizip_error_to_result(
                         MZ_PASSWORD_ERROR, "Extract ZIP entry", entry_path);
                 }
+                remove_symlink_in_the_way(output_path);
                 std::FILE* output = std::fopen(output_path.string().c_str(), "wb");
                 if (output == nullptr) {
                     return make_error(common::ErrorCode::IOError,
@@ -909,6 +1041,7 @@ auto extract_single_zip_entry_with_minizip(
                                       output_path.string());
                 }
 
+                apply_zip_entry_metadata(output_path, file_info);
                 bytes_done = std::max(bytes_done, entry_started_at + entry_size);
                 ++files_done;
                 if (progress_callback) {
@@ -955,7 +1088,7 @@ auto extract_all_zip_entries_with_minizip(
                           session.path);
     }
 
-    const stdfs::path destination_root(destination);
+    stdfs::path destination_root(destination);
     std::error_code ec;
     stdfs::create_directories(destination_root, ec);
     if (ec) {
@@ -963,6 +1096,11 @@ auto extract_all_zip_entries_with_minizip(
                           "Failed to create destination directory",
                           destination_root.string());
     }
+    // Настоящий путь корня: проверка ссылок сравнивает пути, а /tmp и /var — сами ссылки.
+    if (auto canonical_root = stdfs::canonical(destination_root, ec); !ec) {
+        destination_root = canonical_root;
+    }
+    ec.clear();
 
     uint64_t bytes_total = 0;
     int files_total = 0;
@@ -1034,6 +1172,11 @@ auto extract_all_zip_entries_with_minizip(
             }
 
             const stdfs::path output_path = destination_root / stdfs::path(entry_path);
+            if (zip_path_escapes(output_path.parent_path(), destination_root)) {
+                return make_error(common::ErrorCode::InvalidArgument,
+                                  "Unsafe entry path in archive",
+                                  entry_path);
+            }
             stdfs::create_directories(output_path.parent_path(), ec);
             if (ec) {
                 return make_error(common::ErrorCode::IOError,
@@ -1041,7 +1184,9 @@ auto extract_all_zip_entries_with_minizip(
                                   output_path.parent_path().string());
             }
 
-            const bool is_directory = mz_zip_reader_entry_is_dir(reader.handle) == MZ_OK;
+            const bool is_symlink = zip_entry_is_symlink(file_info);
+            const bool is_directory = !is_symlink &&
+                mz_zip_reader_entry_is_dir(reader.handle) == MZ_OK;
             if (is_directory) {
                 stdfs::create_directories(output_path, ec);
                 if (ec) {
@@ -1051,12 +1196,7 @@ auto extract_all_zip_entries_with_minizip(
                 }
             } else {
                 bool shouldExtractFile = true;
-                if (!overwrite_existing && stdfs::exists(output_path, ec)) {
-                    if (ec) {
-                        return make_error(common::ErrorCode::IOError,
-                                          "Failed to inspect output path",
-                                          output_path.string());
-                    }
+                if (!overwrite_existing && zip_output_occupied(output_path)) {
                     shouldExtractFile = false;
                     ++files_done;
                     if (progress_callback) {
@@ -1069,11 +1209,27 @@ auto extract_all_zip_entries_with_minizip(
                     }
                 }
 
-                if (shouldExtractFile) {
+                if (shouldExtractFile && is_symlink) {
                     if (encrypted_entry_without_password(session, file_info)) {
                         return minizip_error_to_result(
                             MZ_PASSWORD_ERROR, "Extract ZIP entry", entry_path);
                     }
+                    const auto link_result = extract_zip_symlink(reader.handle, file_info,
+                                                                 output_path, entry_path);
+                    if (!link_result.has_value()) {
+                        return link_result.error();
+                    }
+                    ++files_done;
+                    if (progress_callback) {
+                        progress_callback(entry_path, bytes_done, std::max(bytes_total, bytes_done),
+                                          files_done, std::max(files_total, files_done));
+                    }
+                } else if (shouldExtractFile) {
+                    if (encrypted_entry_without_password(session, file_info)) {
+                        return minizip_error_to_result(
+                            MZ_PASSWORD_ERROR, "Extract ZIP entry", entry_path);
+                    }
+                    remove_symlink_in_the_way(output_path);
                     std::FILE* output = std::fopen(output_path.string().c_str(), "wb");
                     if (output == nullptr) {
                         return make_error(common::ErrorCode::IOError,
@@ -1121,6 +1277,7 @@ auto extract_all_zip_entries_with_minizip(
                                           output_path.string());
                     }
 
+                    apply_zip_entry_metadata(output_path, file_info);
                     ++files_done;
                     if (progress_callback) {
                         progress_callback(

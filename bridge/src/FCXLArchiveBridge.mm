@@ -166,6 +166,10 @@ auto calculate_archive_source_totals(NSArray<NSString*>* sources,
         const stdfs::path source_fs_path(source_path);
 
         std::error_code ec;
+        // Ссылка, выбранная сама, — ссылкой, без перехода: в итогах её нет, ошибки тоже.
+        if (stdfs::symlink_status(source_fs_path, ec).type() == stdfs::file_type::symlink) {
+            continue;
+        }
         const bool is_directory = stdfs::is_directory(source_fs_path, ec);
         if (ec) {
             if (error != nullptr) {
@@ -206,18 +210,11 @@ auto calculate_archive_source_totals(NSArray<NSString*>* sources,
             const stdfs::recursive_directory_iterator end;
             while (it != end) {
                 const stdfs::directory_entry& entry = *it;
-                const bool is_regular_file = entry.is_regular_file(ec);
-                if (ec) {
-                    if (error != nullptr) {
-                        fcxl::common::Error core_error = fcxl::common::Error::make(
-                            fcxl::common::ErrorCode::IOError,
-                            "Failed to inspect directory child",
-                            entry.path().string()
-                        );
-                        *error = make_nserror(core_error);
-                    }
-                    return std::nullopt;
-                }
+                // Итоги — только для хода упаковки: тип самой записи, без перехода по ссылке.
+                // Битая ссылка (их сотни во фреймворках папок сборки) обрывала здесь всю упаковку.
+                const bool is_regular_file =
+                    entry.symlink_status(ec).type() == stdfs::file_type::regular;
+                ec.clear();
 
                 if (is_regular_file &&
                     !accumulate_file_totals(entry.path(), &totals, error)) {
@@ -259,18 +256,11 @@ auto calculate_archive_source_totals(NSArray<NSString*>* sources,
         const stdfs::directory_iterator end;
         while (it != end) {
             const stdfs::directory_entry& entry = *it;
-            const bool is_regular_file = entry.is_regular_file(ec);
-            if (ec) {
-                if (error != nullptr) {
-                    fcxl::common::Error core_error = fcxl::common::Error::make(
-                        fcxl::common::ErrorCode::IOError,
-                        "Failed to inspect directory child",
-                        entry.path().string()
-                    );
-                    *error = make_nserror(core_error);
-                }
-                return std::nullopt;
-            }
+            // Итоги — только для хода упаковки: тип самой записи, без перехода по ссылке.
+            // Битая ссылка (их сотни во фреймворках папок сборки) обрывала здесь всю упаковку.
+            const bool is_regular_file =
+                entry.symlink_status(ec).type() == stdfs::file_type::regular;
+            ec.clear();
 
             if (is_regular_file &&
                 !accumulate_file_totals(entry.path(), &totals, error)) {
@@ -305,6 +295,15 @@ auto add_sources_to_archive(fcxl::archive::ArchiveWriter* writer,
         const stdfs::path source_fs_path(source_path);
 
         std::error_code ec;
+        const std::string archive_base_name = source_fs_path.filename().string();
+        // Выбранная ссылка — ссылкой: по ней не идут, и битая не обрывает упаковку.
+        if (stdfs::symlink_status(source_fs_path, ec).type() == stdfs::file_type::symlink) {
+            const auto result = writer->add_symlink(source_path, archive_base_name);
+            if (!assign_void_result(result, error)) {
+                return false;
+            }
+            continue;
+        }
         const bool is_directory = stdfs::is_directory(source_fs_path, ec);
         if (ec) {
             if (error != nullptr) {
@@ -318,7 +317,6 @@ auto add_sources_to_archive(fcxl::archive::ArchiveWriter* writer,
             return false;
         }
 
-        const std::string archive_base_name = source_fs_path.filename().string();
         if (is_directory) {
             if (include_subfolders) {
                 const auto result = writer->add_directory(source_path, archive_base_name);
@@ -346,7 +344,8 @@ auto add_sources_to_archive(fcxl::archive::ArchiveWriter* writer,
                 const stdfs::directory_entry& entry = *it;
                 const stdfs::path child_path = entry.path();
 
-                const bool is_regular_file = entry.is_regular_file(ec);
+                // Тип самой записи, без перехода по ссылке: ссылка — ссылкой.
+                const stdfs::file_type child_type = entry.symlink_status(ec).type();
                 if (ec) {
                     if (error != nullptr) {
                         fcxl::common::Error core_error = fcxl::common::Error::make(
@@ -359,7 +358,15 @@ auto add_sources_to_archive(fcxl::archive::ArchiveWriter* writer,
                     return false;
                 }
 
-                if (is_regular_file) {
+                if (child_type == stdfs::file_type::symlink) {
+                    const std::string archive_child = preserve_paths
+                        ? (stdfs::path(archive_base_name) / child_path.filename()).generic_string()
+                        : child_path.filename().string();
+                    const auto link_result = writer->add_symlink(child_path.string(), archive_child);
+                    if (!assign_void_result(link_result, error)) {
+                        return false;
+                    }
+                } else if (child_type == stdfs::file_type::regular) {
                     const std::string archive_child = preserve_paths
                         ? (stdfs::path(archive_base_name) / child_path.filename()).generic_string()
                         : child_path.filename().string();

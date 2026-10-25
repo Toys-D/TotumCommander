@@ -7,6 +7,7 @@
 #include "mz_strm.h"
 #include "mz_zip.h"
 #include "mz_zip_rw.h"
+#include "mz_os.h"
 
 #include <algorithm>
 #include <array>
@@ -21,6 +22,8 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+
+#include <sys/stat.h>
 #include <utility>
 
 namespace fcxl::archive {
@@ -400,6 +403,119 @@ auto configure_minizip_writer(void* writer,
     return {};
 }
 
+// Права и время файла — как на диске: исполняемый остаётся исполняемым после распаковки, и
+// дата та же. Раньше всем ставилось 0644, и программа, сложенная в архив, из него не запускалась.
+auto source_mode(const stdfs::path& path) -> mode_t {
+    struct stat info {};
+    if (::lstat(path.c_str(), &info) != 0) {
+        return 0644;
+    }
+    const mode_t mode = info.st_mode & 07777;
+    return mode == 0 ? 0644 : mode;
+}
+
+auto source_mtime(const stdfs::path& path) -> std::time_t {
+    struct stat info {};
+    if (::lstat(path.c_str(), &info) != 0) {
+        return std::time(nullptr);
+    }
+    return info.st_mtime;
+}
+
+// Символическая ссылка — ссылкой. Раньше упаковка шла по ссылке: ссылка на файл ложилась его
+// копией, на папку — пустой папкой, а битая (ведущая в никуда) обрывала всю упаковку: «Failed to
+// inspect directory child». В папке со сборками таких ссылок сотни — во фреймворках.
+auto symlink_target(const stdfs::path& link_path) -> common::Result<std::string> {
+    std::error_code ec;
+    const stdfs::path target = stdfs::read_symlink(link_path, ec);
+    if (ec || target.empty()) {
+        return make_error(common::ErrorCode::IOError,
+                          "Failed to read symbolic link",
+                          link_path.string());
+    }
+    return target.string();
+}
+
+auto add_symlink_entry_libarchive(WriterSession* session,
+                                  const stdfs::path& link_path,
+                                  std::string_view archive_entry_path) -> common::Result<void> {
+    if (session == nullptr || session->libarchive_writer == nullptr) {
+        return make_error(common::ErrorCode::ArchiveError,
+                          "Archive writer is not initialized");
+    }
+    const auto target = symlink_target(link_path);
+    if (!target.has_value()) {
+        return target.error();
+    }
+
+    std::string entry_name = normalize_archive_path(archive_entry_path);
+    if (entry_name.empty()) {
+        entry_name = link_path.filename().string();
+    }
+
+    archive_entry* entry = archive_entry_new();
+    if (entry == nullptr) {
+        return make_error(common::ErrorCode::ArchiveError,
+                          "Failed to allocate archive link entry",
+                          session->archive_path);
+    }
+    archive_entry_set_pathname(entry, entry_name.c_str());
+    archive_entry_set_filetype(entry, AE_IFLNK);
+    archive_entry_set_perm(entry, 0755);
+    archive_entry_set_symlink(entry, target.value().c_str());
+    archive_entry_set_size(entry, 0);
+    archive_entry_set_mtime(entry, source_mtime(link_path), 0);
+
+    const int status = archive_write_header(session->libarchive_writer, entry);
+    archive_entry_free(entry);
+    if (status < ARCHIVE_OK) {
+        return to_archive_error("Failed to write link entry", session->archive_path,
+                                session->libarchive_writer);
+    }
+    report_progress_from_libarchive(session, entry_name);
+    return {};
+}
+
+auto add_symlink_entry_minizip(void* writer,
+                               const stdfs::path& link_path,
+                               std::string_view archive_entry_path,
+                               const std::string& archive_path) -> common::Result<void> {
+    const auto target = symlink_target(link_path);
+    if (!target.has_value()) {
+        return target.error();
+    }
+
+    std::string entry_name = normalize_archive_path(archive_entry_path);
+    if (entry_name.empty()) {
+        entry_name = link_path.filename().string();
+    }
+
+    // Как пишет Info-ZIP: тип «ссылка» в атрибутах, путь цели — содержимым записи.
+    mz_zip_file file_info = {};
+    file_info.filename = entry_name.c_str();
+    file_info.version_madeby = MZ_VERSION_MADEBY;
+    file_info.external_fa = static_cast<uint32_t>(S_IFLNK | 0755) << 16;
+    file_info.uncompressed_size = static_cast<int64_t>(target.value().size());
+    file_info.modified_date = source_mtime(link_path);
+    file_info.zip64 = MZ_ZIP64_AUTO;
+
+    int32_t status = mz_zip_writer_entry_open(writer, &file_info);
+    if (status != MZ_OK) {
+        return minizip_error_to_result(status, "Failed to write link entry", archive_path);
+    }
+    status = mz_zip_writer_entry_write(writer, target.value().data(),
+                                       static_cast<int32_t>(target.value().size()));
+    if (status < 0) {
+        mz_zip_writer_entry_close(writer);
+        return minizip_error_to_result(status, "Failed to write link entry", archive_path);
+    }
+    status = mz_zip_writer_entry_close(writer);
+    if (status != MZ_OK) {
+        return minizip_error_to_result(status, "Failed to finalize link entry", archive_path);
+    }
+    return {};
+}
+
 auto add_directory_entry_libarchive(WriterSession* session,
                                     std::string_view entry_name) -> common::Result<void> {
     if (session == nullptr || session->libarchive_writer == nullptr) {
@@ -509,8 +625,9 @@ auto add_file_entry_libarchive(WriterSession* session,
 
     archive_entry_set_pathname(entry, entry_name.c_str());
     archive_entry_set_filetype(entry, AE_IFREG);
-    archive_entry_set_perm(entry, 0644);
+    archive_entry_set_perm(entry, source_mode(file_path));
     archive_entry_set_size(entry, static_cast<la_int64_t>(size));
+    archive_entry_set_mtime(entry, source_mtime(file_path), 0);
 
     const int header_status = archive_write_header(writer, entry);
     archive_entry_free(entry);
@@ -580,7 +697,7 @@ auto add_file_entry_minizip(void* writer,
     mz_zip_file file_info = {};
     file_info.filename = entry_name.c_str();
     file_info.uncompressed_size = static_cast<int64_t>(size);
-    file_info.external_fa = (0644u << 16);
+    file_info.external_fa = static_cast<uint32_t>(S_IFREG | source_mode(file_path)) << 16;
     file_info.zip64 = MZ_ZIP64_AUTO;
 
     const auto write_time = stdfs::last_write_time(file_path, ec);
@@ -838,6 +955,46 @@ auto ArchiveWriter::add_file(std::string_view file_path,
     return add_file_entry_libarchive(session, source_path, entry_path);
 }
 
+auto ArchiveWriter::add_symlink(std::string_view link_path,
+                                std::string_view archive_path) -> common::Result<void> {
+    if (link_path.empty()) {
+        return make_error(common::ErrorCode::InvalidArgument,
+                          "Source link path cannot be empty");
+    }
+    if (is_archive_write_cancelled()) {
+        return cancelled_error(std::string(link_path));
+    }
+
+    std::lock_guard<std::mutex> lock(g_writer_mutex);
+    WriterSession* session = writer_session(this);
+    if (session == nullptr ||
+        (session->backend == WriterBackend::Libarchive && session->libarchive_writer == nullptr) ||
+        (session->backend == WriterBackend::Minizip && session->minizip_writer == nullptr)) {
+        return make_error(common::ErrorCode::ArchiveError,
+                          "Archive writer is not initialized");
+    }
+
+    const stdfs::path source_path(link_path);
+    std::error_code ec;
+    if (stdfs::symlink_status(source_path, ec).type() != stdfs::file_type::symlink) {
+        return make_error(common::ErrorCode::InvalidArgument,
+                          "Source path is not a symbolic link",
+                          source_path.string());
+    }
+
+    std::string entry_path =
+        archive_path.empty() ? source_path.filename().string() : normalize_archive_path(archive_path);
+    if (!session->preserve_paths) {
+        entry_path = source_path.filename().string();
+    }
+
+    if (session->backend == WriterBackend::Minizip) {
+        return add_symlink_entry_minizip(session->minizip_writer, source_path, entry_path,
+                                         session->archive_path);
+    }
+    return add_symlink_entry_libarchive(session, source_path, entry_path);
+}
+
 auto ArchiveWriter::add_directory(std::string_view dir_path,
                                   std::string_view archive_path) -> common::Result<void> {
     if (dir_path.empty()) {
@@ -909,6 +1066,18 @@ auto ArchiveWriter::add_directory(std::string_view dir_path,
         return add_file_entry_libarchive(session, source, entry_name);
     };
 
+    const auto add_symlink_entry = [&](const stdfs::path& source,
+                                       std::string_view entry_name) -> common::Result<void> {
+        if (session->backend == WriterBackend::Minizip) {
+            return add_symlink_entry_minizip(
+                session->minizip_writer,
+                source,
+                entry_name,
+                session->archive_path);
+        }
+        return add_symlink_entry_libarchive(session, source, entry_name);
+    };
+
     const std::string root_entry = archive_path.empty()
                                        ? normalize_archive_path(source_root.filename().string())
                                        : normalize_archive_path(archive_path);
@@ -930,14 +1099,22 @@ auto ArchiveWriter::add_directory(std::string_view dir_path,
 
             const stdfs::directory_entry& entry = *flat_iterator;
             const stdfs::path entry_path = entry.path();
-            const bool is_regular_file = entry.is_regular_file(ec);
+            // Тип — самой записи, без перехода по ссылке: битая ссылка — тоже запись.
+            const stdfs::file_type type = entry.symlink_status(ec).type();
             if (ec) {
                 return make_error(common::ErrorCode::IOError,
                                   "Failed to inspect directory entry type",
                                   entry_path.string());
             }
 
-            if (is_regular_file) {
+            if (type == stdfs::file_type::symlink) {
+                const auto link_result = add_symlink_entry(
+                    entry_path,
+                    entry_path.filename().string());
+                if (!link_result.has_value()) {
+                    return link_result.error();
+                }
+            } else if (type == stdfs::file_type::regular) {
                 const auto file_result = add_file_entry(
                     entry_path,
                     entry_path.filename().string());
@@ -978,8 +1155,10 @@ auto ArchiveWriter::add_directory(std::string_view dir_path,
         const stdfs::directory_entry& entry = *iterator;
         const stdfs::path entry_path = entry.path();
 
-        const stdfs::path relative_path = stdfs::relative(entry_path, source_root, ec);
-        if (ec) {
+        // Путь записи — по буквам, без разворота ссылок: stdfs::relative разворачивает их, и
+        // ссылка «link» на «plain.txt» ложилась в архив под именем «plain.txt».
+        const stdfs::path relative_path = entry_path.lexically_relative(source_root);
+        if (relative_path.empty()) {
             return make_error(common::ErrorCode::IOError,
                               "Failed to compute relative archive path",
                               entry_path.string());
@@ -987,31 +1166,29 @@ auto ArchiveWriter::add_directory(std::string_view dir_path,
 
         const std::string archive_entry = join_archive_paths(root_entry, relative_path.generic_string());
 
-        const bool is_directory = entry.is_directory(ec);
+        // Тип — самой записи, без перехода по ссылке: ссылка на папку — не папка, а битая
+        // ссылка — не ошибка. Сокеты и прочее особое в архив не идут.
+        const stdfs::file_type type = entry.symlink_status(ec).type();
         if (ec) {
             return make_error(common::ErrorCode::IOError,
                               "Failed to inspect directory entry",
                               entry_path.string());
         }
 
-        if (is_directory) {
+        if (type == stdfs::file_type::directory) {
             const auto dir_result = add_directory_entry(archive_entry);
             if (!dir_result.has_value()) {
                 return dir_result.error();
             }
-        } else {
-            const bool is_regular_file = entry.is_regular_file(ec);
-            if (ec) {
-                return make_error(common::ErrorCode::IOError,
-                                  "Failed to inspect directory entry type",
-                                  entry_path.string());
+        } else if (type == stdfs::file_type::symlink) {
+            const auto link_result = add_symlink_entry(entry_path, archive_entry);
+            if (!link_result.has_value()) {
+                return link_result.error();
             }
-
-            if (is_regular_file) {
-                const auto file_result = add_file_entry(entry_path, archive_entry);
-                if (!file_result.has_value()) {
-                    return file_result.error();
-                }
+        } else if (type == stdfs::file_type::regular) {
+            const auto file_result = add_file_entry(entry_path, archive_entry);
+            if (!file_result.has_value()) {
+                return file_result.error();
             }
         }
 

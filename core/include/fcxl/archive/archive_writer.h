@@ -28,6 +28,9 @@ public:
                               int total_files = 0) -> common::Result<void>;
     [[nodiscard]] auto add_file(std::string_view file_path, std::string_view archive_path = "") -> common::Result<void>;
     [[nodiscard]] auto add_directory(std::string_view dir_path, std::string_view archive_path = "") -> common::Result<void>;
+    /// Символическая ссылка — ссылкой, с тем же путём внутри, как её хранят zip и tar. Цель не
+    /// читается: битая ссылка упаковывается так же, как целая.
+    [[nodiscard]] auto add_symlink(std::string_view link_path, std::string_view archive_path = "") -> common::Result<void>;
     [[nodiscard]] auto finalize() -> common::Result<void>;
     static void cancel_current_operation();
     static void reset_cancelled();
