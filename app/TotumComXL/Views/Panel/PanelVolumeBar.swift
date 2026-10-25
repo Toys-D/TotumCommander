@@ -724,7 +724,7 @@ struct PanelVolumeBar: View {
         if !unsavedDocs.isEmpty {
             if !lines.isEmpty { lines.append("") }
             lines.append(L("volume.eject.busy.unsaved"))
-            lines.append(contentsOf: unsavedDocs.map { "  • " + URL(fileURLWithPath: $0).lastPathComponent })
+            lines.append(contentsOf: unsavedDocs.map { "  • " + ($0 as NSString).lastPathComponent })
         }
         let detail = lines.joined(separator: "\n")
 

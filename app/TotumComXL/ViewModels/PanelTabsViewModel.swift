@@ -90,12 +90,12 @@ final class PanelTabsViewModel: ObservableObject {
         }
         if let net = mount {
             // Inside a mounted SMB share → "COMPUTER: folder" (e.g. "SERVER_SO: Доки").
-            let leaf = (path == net.mountRoot) ? net.share : URL(fileURLWithPath: path).lastPathComponent
+            let leaf = (path == net.mountRoot) ? net.share : (path as NSString).lastPathComponent
             tabs[activeIndex].title = "\(net.computer): \(leaf)"
         } else if !tabs[activeIndex].isNetworkMount {
             // Normal local tab → current folder name. (A network-mount tab still at the
             // virtual browser root keeps its "Локальная сеть" title.)
-            let lastComponent = URL(fileURLWithPath: path).lastPathComponent
+            let lastComponent = (path as NSString).lastPathComponent
             tabs[activeIndex].title = lastComponent.isEmpty ? path : lastComponent
         }
         persist()
@@ -356,7 +356,7 @@ final class PanelTabsViewModel: ObservableObject {
                 continue
             }
             tabs[index].path = normalizedReplacement
-            let lastComponent = URL(fileURLWithPath: normalizedReplacement).lastPathComponent
+            let lastComponent = (normalizedReplacement as NSString).lastPathComponent
             tabs[index].title = lastComponent.isEmpty ? normalizedReplacement : lastComponent
             changed = true
         }

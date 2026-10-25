@@ -262,7 +262,7 @@ final class FileOperationsService {
         if let fallbackName, !fallbackName.isEmpty {
             resolvedName = fallbackName
         } else {
-            let lastComponent = URL(fileURLWithPath: path).lastPathComponent
+            let lastComponent = (path as NSString).lastPathComponent
             resolvedName = lastComponent.isEmpty ? path : lastComponent
         }
 
@@ -2774,7 +2774,7 @@ final class FileOperationsService {
 
                     DispatchQueue.main.async {
                         progressController.setIndeterminate(false)
-                        let currentFile = URL(fileURLWithPath: archivePath).lastPathComponent
+                        let currentFile = (archivePath as NSString).lastPathComponent
                         progressController.update(
                             currentFile: currentFile,
                             progress: 0.01,
@@ -3067,7 +3067,7 @@ final class FileOperationsService {
         }
 
         progressController.update(
-            currentFile: URL(fileURLWithPath: path).lastPathComponent,
+            currentFile: (path as NSString).lastPathComponent,
             progress: 0.01,
             bytesDone: 0,
             bytesTotal: 1,
@@ -3091,7 +3091,7 @@ final class FileOperationsService {
 
                 DispatchQueue.main.async {
                     swappable.update(
-                        currentFile: URL(fileURLWithPath: path).lastPathComponent,
+                        currentFile: (path as NSString).lastPathComponent,
                         progress: 0.01,
                         bytesDone: 0,
                         bytesTotal: plannedBytes,
@@ -3193,7 +3193,7 @@ final class FileOperationsService {
 
         DispatchQueue.main.async {
             reporter.update(
-                currentFile: URL(fileURLWithPath: archivePath).lastPathComponent,
+                currentFile: (archivePath as NSString).lastPathComponent,
                 progress: 0.01,
                 bytesDone: 0,
                 bytesTotal: totalBytes,
@@ -3275,7 +3275,7 @@ final class FileOperationsService {
 
         DispatchQueue.main.async {
             reporter.update(
-                currentFile: URL(fileURLWithPath: path).lastPathComponent,
+                currentFile: (path as NSString).lastPathComponent,
                 progress: 0.01,
                 bytesDone: 0,
                 bytesTotal: plannedBytes,
@@ -4099,7 +4099,7 @@ final class FileOperationsService {
     }
 
     private func archiveBaseName(for path: String) -> String {
-        archiveBaseName(from: URL(fileURLWithPath: path).lastPathComponent)
+        archiveBaseName(from: (path as NSString).lastPathComponent)
     }
 
     /// Strips a known archive extension from a file name (single source of truth;

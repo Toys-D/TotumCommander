@@ -69,7 +69,7 @@ struct PanelTab: Identifiable, Codable {
             self.title = title ?? "Remote"
             self.colorHex = colorHex ?? Self.remoteDefaultColorHex
         } else {
-            let lastComponent = URL(fileURLWithPath: path).lastPathComponent
+            let lastComponent = (path as NSString).lastPathComponent
             self.title = title ?? (lastComponent.isEmpty ? path : lastComponent)
             self.colorHex = colorHex
         }

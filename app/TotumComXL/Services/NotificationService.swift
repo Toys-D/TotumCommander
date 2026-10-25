@@ -54,7 +54,7 @@ final class NotificationService: @unchecked Sendable {
 
     /// Notify about a copy/move operation completion.
     func notifyCopyMoveCompleted(operationName: String, itemCount: Int, destination: String) {
-        let destName = URL(fileURLWithPath: destination).lastPathComponent
+        let destName = (destination as NSString).lastPathComponent
         let title = L("notification.operation.completed")
         let message: String
         if itemCount == 1 {

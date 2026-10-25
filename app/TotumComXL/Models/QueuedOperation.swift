@@ -136,8 +136,11 @@ struct QueuedOperation: Identifiable {
                 ? L("queue.deleteSingle", items[0].name)
                 : L("queue.deleteMultiple", count)
         case .pack:
+            // Имя — строкой, без диска. `URL(fileURLWithPath:)` спрашивает у диска, не папка ли
+            // это (lstat), а туннель перечитывает это название на каждый шаг хода: архив пишется
+            // на внешний exFAT, lstat ждал записи по нескольку секунд — и вся программа с ним.
             let archiveName = archiveParams.map {
-                URL(fileURLWithPath: $0.archivePath).lastPathComponent
+                ($0.archivePath as NSString).lastPathComponent
             } ?? "archive"
             return L("queue.packSingle", archiveName)
         case .unpack:

@@ -4778,7 +4778,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         // Same naming rule as the full dialog: one item → its name, several → the folder's.
         let sourceName = items.count == 1
             ? items[0].name
-            : URL(fileURLWithPath: sourceVM.currentPath).lastPathComponent
+            : (sourceVM.currentPath as NSString).lastPathComponent
         let baseName = archiveBaseName(from: sourceName)
 
         let fileName = PackDialogController.normalizedArchiveName(baseName + ".zip", format: format)
@@ -4834,7 +4834,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         if items.count == 1 {
             sourceName = items[0].name
         } else {
-            sourceName = URL(fileURLWithPath: sourceVM.currentPath).lastPathComponent
+            sourceName = (sourceVM.currentPath as NSString).lastPathComponent
         }
         let baseName = archiveBaseName(from: sourceName)
         let defaultDestination = splitVC.inactivePanelViewModel.currentPath
@@ -5034,7 +5034,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         // ARC owns this window (a strong reference is kept) — without this flag
         // close() ALSO releases it and the second release crashes (SearchWindow bug).
         termWindow.isReleasedWhenClosed = false
-        termWindow.title = "Terminal — \(URL(fileURLWithPath: directory).lastPathComponent)"
+        termWindow.title = "Terminal — \((directory as NSString).lastPathComponent)"
         termWindow.styleMask = [.titled, .closable, .resizable, .miniaturizable]
         termWindow.setContentSize(NSSize(width: 600, height: 400))
         termWindow.center()

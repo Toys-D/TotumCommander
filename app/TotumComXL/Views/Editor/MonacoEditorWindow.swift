@@ -43,7 +43,7 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
         /// differs from the archive. Drives the "update archive?" prompt on close (TC-style).
         var archiveNeedsUpdate: Bool = false
         var isDirty: Bool { content != lastSaved }
-        var fileName: String { URL(fileURLWithPath: path).lastPathComponent }
+        var fileName: String { (path as NSString).lastPathComponent }
     }
     private var tabs: [Tab] = []
     private var activeTabIndex = 0
@@ -509,7 +509,7 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
     // MARK: - Title
 
     private func updateTitle() {
-        let fileName = URL(fileURLWithPath: currentPath).lastPathComponent
+        let fileName = (currentPath as NSString).lastPathComponent
         window?.title = "\(fileName) — \(currentPath)\(isDirty ? L("editor.title.dirtySuffix") : "")"
     }
 

@@ -231,7 +231,7 @@ final class DialogService {
         sourcePath: String,
         destinationPath: String
     ) -> (resolution: ConflictResolution, applyToAll: Bool) {
-        let fileName = URL(fileURLWithPath: destinationPath).lastPathComponent
+        let fileName = (destinationPath as NSString).lastPathComponent
         let sides = conflictSides(source: sourcePath, sourceLabel: L("conflict.sourceNew"),
                                   destination: destinationPath,
                                   destinationLabel: L("conflict.destinationExisting"))

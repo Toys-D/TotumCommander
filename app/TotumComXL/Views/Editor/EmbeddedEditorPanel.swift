@@ -24,7 +24,7 @@ struct EmbeddedEditorPanel: View {
         VStack(spacing: 0) {
             // Tab bar: filename + save + close
             HStack(spacing: 6) {
-                Text(URL(fileURLWithPath: filePath).lastPathComponent)
+                Text((filePath as NSString).lastPathComponent)
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)

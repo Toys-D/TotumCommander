@@ -23,9 +23,9 @@ struct OperationLogEntry: Identifiable {
     }()
 
     var summary: String {
-        let srcName = URL(fileURLWithPath: sourcePath).lastPathComponent
+        let srcName = (sourcePath as NSString).lastPathComponent
         if let dest = destinationPath {
-            let destName = URL(fileURLWithPath: dest).lastPathComponent
+            let destName = (dest as NSString).lastPathComponent
             if itemCount > 1 {
                 return "\(operationType): \(itemCount) items -> \(destName)"
             }

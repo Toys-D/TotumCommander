@@ -136,4 +136,37 @@ final class QueuedOperationTests: XCTestCase {
         XCTAssertFalse(single.isEmpty)
         XCTAssertFalse(multiple.isEmpty)
     }
+
+    // MARK: - Names without the disk
+
+    /// Название упаковки — имя архива из пути, в том числе на томе, которого сейчас нет.
+    func test_названиеУпаковки_имяАрхиваИзПути() {
+        var pack = op(.pack)
+        var params = ArchiveOperationParams()
+        params.archivePath = "/Volumes/Нет-такого-тома/Дима/проект.zip"
+        pack.archiveParams = params
+        XCTAssertTrue(pack.displayTitle.contains("проект.zip"), pack.displayTitle)
+    }
+
+    /// Имя файла по пути — только строкой. `URL(fileURLWithPath:).lastPathComponent` делает lstat:
+    /// туннель вызывал его на каждый шаг хода упаковки, и пока архив писался на внешний exFAT,
+    /// программа замирала на секунды.
+    func test_имяПоПутиНеСпрашиваетДиск() throws {
+        let root = FileManager.default.currentDirectoryPath + "/app/TotumComXL"
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(atPath: root))
+        let pattern = try NSRegularExpression(pattern: #"URL\(fileURLWithPath: [^()]*\)\.lastPathComponent"#)
+        var found: [String] = []
+        while let path = enumerator.nextObject() as? String {
+            guard path.hasSuffix(".swift"),
+                  let text = try? String(contentsOfFile: root + "/" + path, encoding: .utf8) else { continue }
+            for (number, line) in text.components(separatedBy: "\n").enumerated() {
+                let code = line.trimmingCharacters(in: .whitespaces)
+                guard !code.hasPrefix("//") else { continue }
+                if pattern.firstMatch(in: code, range: NSRange(code.startIndex..., in: code)) != nil {
+                    found.append("\(path):\(number + 1): \(code)")
+                }
+            }
+        }
+        XCTAssertTrue(found.isEmpty, "имя через URL — с обращением к диску:\n" + found.joined(separator: "\n"))
+    }
 }
