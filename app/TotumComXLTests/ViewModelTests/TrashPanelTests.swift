@@ -413,6 +413,12 @@ final class TrashContextMenuTests: XCTestCase {
     }
 }
 
+/// Корзина дома лежит на APFS, и там macOS ведёт дату удаления у каждого предмета. В корзинах
+/// других томов — exFAT, FAT, сетевых — её нет вовсе: прочерк там правда, а не ошибка. Проверки
+/// дат смотрят только на то, что система датирует, иначе они падали, пока подключена флешка.
+private let homeTrash = FileManager.default.urls(for: .trashDirectory, in: .userDomainMask)[0].path + "/"
+private func isDatedBySystem(_ item: FileItem) -> Bool { item.path.hasPrefix(homeTrash) }
+
 /// The deletion date reaching the panel. It showed "-" on every row: the data is there (macOS
 /// reports addedToDirectoryDate for everything in the Trash) so something between the service and
 /// the panel was dropping it.
@@ -420,7 +426,7 @@ final class TrashContextMenuTests: XCTestCase {
 final class TrashDeletionDateTests: XCTestCase {
 
     func testTheServiceReadsADeletionDate() throws {
-        let items = TrashService.items()
+        let items = TrashService.items().filter(isDatedBySystem)
         try XCTSkipIf(items.isEmpty, "nothing in the Trash to look at")
         let dated = items.filter { $0.dateAdded != nil }
         XCTAssertEqual(dated.count, items.count,
@@ -440,8 +446,8 @@ final class TrashDeletionDateTests: XCTestCase {
         try XCTSkipIf(TrashService.items().isEmpty, "nothing in the Trash to look at")
 
         vm.loadTrashDirectory()
-        let listed = vm.items.filter { $0.name != ".." }
-        XCTAssertFalse(listed.isEmpty)
+        let listed = vm.items.filter { $0.name != ".." && isDatedBySystem($0) }
+        try XCTSkipIf(listed.isEmpty, "nothing in the home Trash to look at")
         XCTAssertTrue(listed.allSatisfy { $0.dateAdded != nil },
                       "\(listed.filter { $0.dateAdded == nil }.count) of \(listed.count) rows lost it")
     }
@@ -568,7 +574,7 @@ final class TrashPanelStateTests: XCTestCase {
                        "a header over a column the table is not drawing shows the neighbour's data")
 
         // And the column itself carries the date, not a dash.
-        let row = try XCTUnwrap(vm.items.firstIndex { $0.name != ".." })
+        let row = try XCTUnwrap(vm.items.firstIndex { $0.name != ".." && isDatedBySystem($0) })
         let added = try XCTUnwrap(table.tableColumns.first { $0.identifier.rawValue == "added" })
         let cell = vc.tableView(table, viewFor: added, row: row)
         let text = (cell as? NSTableCellView)?.textField?.stringValue
@@ -583,7 +589,7 @@ final class TrashPanelStateTests: XCTestCase {
 final class TrashViewModeSwitchTests: XCTestCase {
 
     private func addedCellText(_ vc: PanelViewController, _ vm: PanelViewModel) throws -> String? {
-        let row = try XCTUnwrap(vm.items.firstIndex { $0.name != ".." })
+        let row = try XCTUnwrap(vm.items.firstIndex { $0.name != ".." && isDatedBySystem($0) })
         let col = try XCTUnwrap(vc.tableView.tableColumns.first { $0.identifier.rawValue == "added" })
         let cell = vc.tableView(vc.tableView, viewFor: col, row: row)
         return (cell as? NSTableCellView)?.textField?.stringValue
