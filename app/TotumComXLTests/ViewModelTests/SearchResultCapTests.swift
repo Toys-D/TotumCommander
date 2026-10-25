@@ -137,3 +137,15 @@ final class SearchExclusionTests: XCTestCase {
         XCTAssertFalse(AdvancedSearchViewModel.pathIsExcluded("/x/node_modules/f", patterns: []))
     }
 }
+
+/// Размер окна расширенного поиска.
+final class SearchWindowSizeTests: XCTestCase {
+    /// Окно поиска открывается высоким — место под найденное, — но не выше видимой части экрана.
+    func test_окноПоискаВысокоеНоВлезаетВЭкран() {
+        XCTAssertEqual(AdvancedSearchPanelController.initialSize(visibleHeight: 1100).height, 850)
+        XCTAssertEqual(AdvancedSearchPanelController.initialSize(visibleHeight: nil).height, 850)
+        XCTAssertEqual(AdvancedSearchPanelController.initialSize(visibleHeight: 760).height, 720,
+                       "на низком экране — по видимой части")
+        XCTAssertEqual(AdvancedSearchPanelController.initialSize(visibleHeight: 760).width, 760)
+    }
+}

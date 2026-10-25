@@ -990,6 +990,16 @@ private class SearchWindow: NSWindow {
 
 @MainActor
 final class AdvancedSearchPanelController {
+    /// Результатам нужно место: при 580 точках список находок был узкой полосой под фильтрами.
+    nonisolated static let preferredSize = NSSize(width: 760, height: 850)
+
+    /// Не выше видимой части экрана — на низком экране нижние кнопки иначе ушли бы за край.
+    nonisolated static func initialSize(visibleHeight: CGFloat?) -> NSSize {
+        guard let visibleHeight else { return preferredSize }
+        let height = max(580, min(preferredSize.height, visibleHeight - 40))
+        return NSSize(width: preferredSize.width, height: height)
+    }
+
     private var window: NSWindow?
     private var vm: AdvancedSearchViewModel?
 
@@ -1024,7 +1034,9 @@ final class AdvancedSearchPanelController {
         let content = AdvancedSearchContentView(vm: viewModel)
         let hostingView = NSHostingView(rootView: content.focusEffectDisabled())
 
-        let w = SearchWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 580),
+        let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame.height
+        let w = SearchWindow(contentRect: NSRect(origin: .zero,
+                                                 size: Self.initialSize(visibleHeight: visible)),
                              styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                              backing: .buffered, defer: false)
         // CRITICAL: NSWindow defaults to isReleasedWhenClosed = true — close() would
