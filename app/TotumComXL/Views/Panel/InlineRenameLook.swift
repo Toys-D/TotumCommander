@@ -2,24 +2,47 @@ import AppKit
 
 /// Как выглядит поле переименования имени — одно на все режимы списка.
 ///
-/// Поле прозрачное: ни подложки, ни ободка — только каретка и выделение. Буквы цветом
-/// текста, выделение цветом акцента с читаемыми на нём буквами: системная голубая
-/// полоса под голубыми буквами и была той нечитаемостью. Шрифт — как у подписи строки
-/// сейчас (с волной курсора): свои 12 pt делали имя меньше в самый момент правки.
+/// Заметное поле ввода: своя подложка (светлая в светлой теме, тёмная в тёмной) и рамка
+/// поверх строки, буквы цветом текста, выделение цветом акцента с читаемыми на нём буквами.
+/// Раньше поле было прозрачным — только каретка и выделение, — и сливалось со строкой: курсор
+/// того же цвета, что акцент, съедал и выделение, и кнопку «OK», и было не понять, идёт ли
+/// уже правка. Шрифт — как у подписи строки сейчас (с волной курсора): свои 12 pt делали имя
+/// меньше в самый момент правки.
 enum InlineRenameLook {
     static func apply(to field: NSTextField, font: NSFont) {
         field.font = font
         field.isBordered = false
         field.isBezeled = false
+        // Подложку и рамку рисует ячейка поля (InlineRenameCell), с отступом для букв.
         field.drawsBackground = false
         field.backgroundColor = .clear
-        field.textColor = ink
+        field.textColor = boxInk
         field.focusRingType = .none
+        field.needsDisplay = true
     }
 
-    /// Буквы и каретка поля: чёрные или белые — какие читаемее на том, что под полем (тот же
-    /// замер контраста, что у надписей на акценте). Цвет живой: тема, курсор или фон сменились —
-    /// буквы следом.
+    /// Подложка поля — как у любого поля ввода в этой теме.
+    static let boxFill = NSColor.textBackgroundColor
+
+    /// Буквы и каретка на подложке.
+    static let boxInk = NSColor.labelColor
+
+    /// Рамка поля: цвет акцента, если его видно на том, что под полем; иначе чёрная или белая —
+    /// какая виднее. Акцент того же оттенка, что курсор, рамку бы спрятал.
+    static let boxBorder = NSColor(name: "fcxlInlineRenameBorder") { appearance in
+        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return border(accent: PanelAppearanceSettings.accentNSColor, on: ground(dark: dark))
+    }
+
+    /// Само правило рамки — отдельно, чтобы проверялось без настроек.
+    static func border(accent: NSColor, on ground: NSColor) -> NSColor {
+        PanelAppearanceSettings.contrast(between: accent, and: ground) >= 2
+            ? accent : PanelAppearanceSettings.contrastingTextColor(on: ground)
+    }
+
+    /// Чёрное или белое — что читаемее на том, что под полем (тот же замер контраста, что у
+    /// надписей на акценте): кнопка «OK» рядом с полем и запасная рамка. Цвет живой: тема,
+    /// курсор или фон сменились — он следом.
     static let ink = NSColor(name: "fcxlInlineRenameInk") { appearance in
         PanelAppearanceSettings.contrastingTextColor(
             on: ground(dark: appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua))
@@ -51,8 +74,8 @@ enum InlineRenameLook {
         let colors = selectionColors()
         editor.selectedTextAttributes = [.backgroundColor: colors.background,
                                          .foregroundColor: colors.text]
-        editor.insertionPointColor = ink
-        editor.textColor = ink
+        editor.insertionPointColor = boxInk
+        editor.textColor = boxInk
     }
 
     /// Попал ли щелчок в поле, которое сейчас правят: в само поле или в его редактор.
@@ -65,5 +88,62 @@ enum InlineRenameLook {
             view = current.superview
         }
         return false
+    }
+}
+
+/// Поле переименования во всех трёх видах списка: подложку и рамку рисует его ячейка.
+class InlineRenameTextField: NSTextField {
+    override class var cellClass: AnyClass? {
+        get { InlineRenameCell.self }
+        set {}
+    }
+}
+
+/// Ячейка поля переименования: скруглённая подложка с рамкой и отступ для букв внутри — и
+/// когда поле просто стоит, и когда в нём уже идёт правка.
+final class InlineRenameCell: NSTextFieldCell {
+    static let padX: CGFloat = 4
+    static let padY: CGFloat = 1
+    static let radius: CGFloat = 4
+    static let lineWidth: CGFloat = 1.5
+
+    override func cellSize(forBounds rect: NSRect) -> NSSize {
+        var size = super.cellSize(forBounds: rect)
+        size.width += 2 * Self.padX
+        size.height += 2 * Self.padY
+        return size
+    }
+
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        super.drawingRect(forBounds: rect.insetBy(dx: Self.padX, dy: Self.padY))
+    }
+
+    // Редактор поля встаёт туда же, где стоят буквы без правки: иначе с началом правки текст
+    // съезжал на отступ влево, на саму рамку.
+    override func edit(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText,
+                       delegate: Any?, event: NSEvent?) {
+        super.edit(withFrame: rect.insetBy(dx: Self.padX, dy: Self.padY), in: controlView,
+                   editor: textObj, delegate: delegate, event: event)
+    }
+
+    override func select(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText,
+                         delegate: Any?, start selStart: Int, length selLength: Int) {
+        super.select(withFrame: rect.insetBy(dx: Self.padX, dy: Self.padY), in: controlView,
+                     editor: textObj, delegate: delegate, start: selStart, length: selLength)
+    }
+
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
+        let inset = Self.lineWidth / 2
+        let box = NSBezierPath(roundedRect: cellFrame.insetBy(dx: inset, dy: inset),
+                               xRadius: Self.radius, yRadius: Self.radius)
+        InlineRenameLook.boxFill.setFill()
+        box.fill()
+        InlineRenameLook.boxBorder.setStroke()
+        box.lineWidth = Self.lineWidth
+        box.stroke()
+        // Пока идёт правка, буквы рисует редактор поля — второй раз не надо.
+        if (controlView as? NSTextField)?.currentEditor() == nil {
+            drawInterior(withFrame: cellFrame, in: controlView)
+        }
     }
 }

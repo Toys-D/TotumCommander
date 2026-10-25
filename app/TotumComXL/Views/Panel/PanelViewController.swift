@@ -3694,7 +3694,7 @@ final class PanelViewController: NSViewController,
         guard let nameColIdx = tableView.tableColumns.firstIndex(where: { $0.identifier.rawValue == "name" }) else { return }
         guard let cellView = tableView.view(atColumn: nameColIdx, row: row, makeIfNecessary: false) as? NSTableCellView else { return }
 
-        let field = NSTextField(frame: .zero)
+        let field = InlineRenameTextField(frame: .zero)
         field.stringValue = item.name
         InlineRenameLook.apply(to: field, font: InlineRenameLook.font(matching: (cellView as? NameCellView)?.label.font))
         field.isEditable = true
@@ -3706,7 +3706,9 @@ final class PanelViewController: NSViewController,
         okBtn.bezelStyle = .recessed
         okBtn.isBordered = false
         okBtn.font = .systemFont(ofSize: 11, weight: .medium)
-        okBtn.contentTintColor = PanelAppearanceSettings.accentNSColor
+        // Чёрная или белая — какая видна на том, что под строкой: акцент того же оттенка, что
+        // курсор, прятал кнопку целиком.
+        okBtn.contentTintColor = InlineRenameLook.ink
         okBtn.target = self
         okBtn.action = #selector(inlineRenameOKTapped(_:))
         okBtn.translatesAutoresizingMaskIntoConstraints = false

@@ -1835,7 +1835,7 @@ final class BriefItemView: NSView, DropRingCell {
     }
 }
 
-private final class InlineRenameBriefField: NSTextField, NSTextFieldDelegate {
+private final class InlineRenameBriefField: InlineRenameTextField, NSTextFieldDelegate {
     var onCommit: (() -> Void)?
     var onCancel: (() -> Void)?
     var onTextChanged: ((String) -> Void)?

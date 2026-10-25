@@ -1715,7 +1715,7 @@ final class ThumbnailItemView: NSView, DropRingCell {
     }
 }
 
-private final class InlineRenameThumbnailsField: NSTextField, NSTextFieldDelegate {
+private final class InlineRenameThumbnailsField: InlineRenameTextField, NSTextFieldDelegate {
     var onCommit: (() -> Void)?
     var onCancel: (() -> Void)?
     var onTextChanged: ((String) -> Void)?
