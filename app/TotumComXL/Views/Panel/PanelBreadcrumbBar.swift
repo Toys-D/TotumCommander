@@ -40,6 +40,7 @@ struct PanelBreadcrumbBar: View {
         }
         .frame(maxWidth: .infinity, minHeight: 26, maxHeight: 26)
         .interfaceBackground()
+        .focusEffectDisabled()
     }
 
     private func startEditing() {

@@ -19,6 +19,7 @@ struct PanelStatusBar: View {
         .frame(maxWidth: .infinity)
         .interfaceBackground()
         .overlay(alignment: .top) { Divider() }
+        .focusEffectDisabled()
     }
 
     private var statusText: String {

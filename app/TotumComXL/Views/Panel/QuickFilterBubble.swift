@@ -58,6 +58,7 @@ final class QuickFilterBubble: NSView {
         countLabel.translatesAutoresizingMaskIntoConstraints = false
 
         helpButton.bezelStyle = .accessoryBarAction
+        helpButton.focusRingType = .none
         helpButton.isBordered = false
         helpButton.controlSize = .small
         helpButton.image = NSImage(systemSymbolName: "questionmark.circle",
@@ -75,6 +76,7 @@ final class QuickFilterBubble: NSView {
         helpText.preferredMaxLayoutWidth = 340
 
         presetButton.bezelStyle = .accessoryBarAction
+        presetButton.focusRingType = .none
         presetButton.isBordered = false
         presetButton.controlSize = .small
         presetButton.imagePosition = .imageOnly
@@ -173,6 +175,7 @@ final class QuickFilterBubble: NSView {
         for mask in MaskPresets.masks.prefix(6) {
             let chip = NSButton(title: mask, target: self, action: #selector(applyPreset(_:)))
             chip.bezelStyle = .accessoryBarAction
+            chip.focusRingType = .none
             chip.controlSize = .small
             chip.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
             chip.toolTip = mask

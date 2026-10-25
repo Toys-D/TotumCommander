@@ -1252,6 +1252,7 @@ struct ProgressButtonBar: View {
                     .keyboardShortcut(.cancelAction)
             }
         }
+        .focusEffectDisabled()
     }
 
     private func barLabel(_ title: String) -> some View {

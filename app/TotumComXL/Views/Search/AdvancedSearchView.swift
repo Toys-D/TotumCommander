@@ -1022,7 +1022,7 @@ final class AdvancedSearchPanelController {
         self.vm = viewModel
 
         let content = AdvancedSearchContentView(vm: viewModel)
-        let hostingView = NSHostingView(rootView: content)
+        let hostingView = NSHostingView(rootView: content.focusEffectDisabled())
 
         let w = SearchWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 580),
                              styleMask: [.titled, .closable, .resizable, .fullSizeContentView],

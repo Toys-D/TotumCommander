@@ -217,7 +217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let hostingController = NSHostingController(rootView: SettingsRootView())
+        let hostingController = NSHostingController(rootView: SettingsRootView().focusEffectDisabled())
         // Let AppKit (setContentSize + the animator) own the window size, not the
         // SwiftUI content — so per-section resize is driven by us.
         hostingController.sizingOptions = []
@@ -308,7 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             w.makeKeyAndOrderFront(nil)
             return
         }
-        let hosting = NSHostingController(rootView: HelpWindowView())
+        let hosting = NSHostingController(rootView: HelpWindowView().focusEffectDisabled())
         let window = NSWindow(contentViewController: hosting)
         window.collectionBehavior.insert(.moveToActiveSpace)
         window.title = L("menu.help.guide")

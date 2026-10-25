@@ -2593,7 +2593,8 @@ final class PanelViewController: NSViewController,
         let host = NSHostingView(rootView: AnyView(
             SystemMonitorView(service: monitorService,
                               onClose: { [weak self] in self?.toggleMonitor() },
-                              onRestoreFocus: { [weak self] in self?.focusMonitorHost() })))
+                              onRestoreFocus: { [weak self] in self?.focusMonitorHost() })
+                .focusEffectDisabled()))
         // Как у краткого вида: место монитора — область списка, а не размер его содержимого,
         // иначе содержимое могло бы ужать или растянуть всё окно.
         host.sizingOptions = []
@@ -3702,6 +3703,7 @@ final class PanelViewController: NSViewController,
         field.translatesAutoresizingMaskIntoConstraints = false
 
         let okBtn = NSButton(frame: .zero)
+        okBtn.focusRingType = .none
         okBtn.title = "OK"
         okBtn.bezelStyle = .recessed
         okBtn.isBordered = false
@@ -6069,10 +6071,10 @@ final class PanelViewController: NSViewController,
             // Already in hierarchy — just update content.  The brand-new collection is
             // momentarily 0-height here (SwiftUI sizes it a frame later); BriefFlowLayout
             // guards against that so no "folders in a row" frame is drawn.
-            existing.rootView = AnyView(makeAlternateView())
+            existing.rootView = AnyView(makeAlternateView().focusEffectDisabled())
             return
         }
-        let hosting = NSHostingView(rootView: AnyView(makeAlternateView()))
+        let hosting = NSHostingView(rootView: AnyView(makeAlternateView().focusEffectDisabled()))
         // Размер задают края области списка, а не содержимое SwiftUI. По умолчанию NSHostingView
         // переносит в ограничения наименьший и наибольший размер содержимого (приоритет 999,9).
         // При переходе в подробный вид этот вид ещё на месте, пока смена режима доходит до
@@ -6110,7 +6112,7 @@ final class PanelViewController: NSViewController,
     }
 
     private func updateAlternateHosting() {
-        alternateHosting?.rootView = AnyView(makeAlternateView())
+        alternateHosting?.rootView = AnyView(makeAlternateView().focusEffectDisabled())
     }
 
     /// Left-click on the empty panel background (any view mode): drop the marked selection —

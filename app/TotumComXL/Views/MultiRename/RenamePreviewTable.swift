@@ -11,6 +11,7 @@ struct RenamePreviewTable: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let table = NSTableView()
+        table.focusRingType = .none
         table.usesAlternatingRowBackgroundColors = true
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         table.rowHeight = 20
@@ -62,6 +63,7 @@ struct RenamePreviewTable: NSViewRepresentable {
             } else {
                 field = NSTextField()
                 field.identifier = id
+                field.focusRingType = .none
                 field.isBordered = false
                 field.drawsBackground = false
                 field.font = .systemFont(ofSize: 12)

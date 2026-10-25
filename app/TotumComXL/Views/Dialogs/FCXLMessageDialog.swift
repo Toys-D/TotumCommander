@@ -89,7 +89,7 @@ enum FCXLMessageDialog {
                                     text: .constant(config.textFieldInitial ?? ""),
                                     isMeasuring: true)
             .frame(width: config.width, alignment: .leading)
-        let host = NSHostingView(rootView: AnyView(probe))
+        let host = NSHostingView(rootView: AnyView(probe.focusEffectDisabled()))
         host.frame = NSRect(x: 0, y: 0, width: config.width, height: 4000)
         host.layoutSubtreeIfNeeded()
         return layout(contentHeight: ceil(host.fittingSize.height))

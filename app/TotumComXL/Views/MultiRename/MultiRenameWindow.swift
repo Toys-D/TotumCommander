@@ -23,7 +23,7 @@ final class MultiRenameWindow {
         let content = MultiRenameView(vm: viewModel, onClose: { [weak self] in self?.close() })
 
         if let window {
-            window.contentView = NSHostingView(rootView: content)
+            window.contentView = NSHostingView(rootView: content.focusEffectDisabled())
             window.makeKeyAndOrderFront(nil)
             return
         }
@@ -41,7 +41,7 @@ final class MultiRenameWindow {
         w.standardWindowButton(.miniaturizeButton)?.isHidden = true
         w.standardWindowButton(.zoomButton)?.isHidden = true
         w.isMovableByWindowBackground = true
-        w.contentView = NSHostingView(rootView: content)
+        w.contentView = NSHostingView(rootView: content.focusEffectDisabled())
         SettingsWindowAnimator.centerOnScreen(w)
         SettingsWindowAnimator.growOpen(w)
         w.makeKeyAndOrderFront(nil)

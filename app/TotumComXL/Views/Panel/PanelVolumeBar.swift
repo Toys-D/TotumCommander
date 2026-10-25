@@ -269,6 +269,7 @@ struct PanelVolumeBar: View {
             for: NSApplication.didBecomeActiveNotification)) { _ in
             mountedVolumesRevision &+= 1
         }
+        .focusEffectDisabled()
     }
 
     // MARK: - Volume Button View

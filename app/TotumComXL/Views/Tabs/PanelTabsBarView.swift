@@ -155,6 +155,7 @@ struct PanelTabsBarView: View {
         .contentShape(Rectangle())
         .allowsHitTesting(true)
         .zIndex(21)
+        .focusEffectDisabled()
     }
 
     private func canClose(tab: PanelTab) -> Bool {
@@ -174,6 +175,7 @@ private struct TabOverflowMenuButton: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSButton {
         let btn = NSButton(frame: .zero)
+        btn.focusRingType = .none
         btn.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
         btn.imagePosition = .imageOnly
         btn.isBordered = false

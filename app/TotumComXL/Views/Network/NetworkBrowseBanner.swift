@@ -53,5 +53,6 @@ struct NetworkBrowseBanner: View {
             }
         }
         .padding(20)
+        .focusEffectDisabled()
     }
 }

@@ -113,6 +113,7 @@ struct FooterBar: View {
         .padding(.vertical, 3)
         .frame(maxWidth: .infinity, minHeight: 29, maxHeight: 29)
         .interfaceBackground()
+        .focusEffectDisabled()
     }
 
     private var divider: some View {

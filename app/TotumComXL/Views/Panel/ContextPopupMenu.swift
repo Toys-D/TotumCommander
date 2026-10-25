@@ -141,7 +141,7 @@ final class ContextPopupMenuController {
                 self?.openSubmenu(item, fromLevel: level, rowTopInPanel: rowTopInPanel)
             },
             onHoverSettledOnLeaf: { [weak self] in self?.closeDeeper(than: level) }
-        ))
+        ).focusEffectDisabled())
         host.view.layoutSubtreeIfNeeded()
         let size = host.view.fittingSize
 
@@ -186,7 +186,7 @@ final class ContextPopupMenuController {
     private func measure(_ items: [NSMenuItem], minWidth: CGFloat) -> NSSize {
         let host = NSHostingController(rootView: ContextPopupMenuView(
             rows: ContextPopupRows(items), minWidth: minWidth,
-            onLeaf: { _ in }, onSubmenu: { _, _ in }, onHoverSettledOnLeaf: {}))
+            onLeaf: { _ in }, onSubmenu: { _, _ in }, onHoverSettledOnLeaf: {}).focusEffectDisabled())
         host.view.layoutSubtreeIfNeeded()
         return host.view.fittingSize
     }

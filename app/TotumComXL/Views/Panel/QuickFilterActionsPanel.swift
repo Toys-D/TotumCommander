@@ -73,6 +73,7 @@ final class QuickFilterActionsPanel: NSView {
 
     private func configure(_ button: NSButton, symbol: String, title: String, action: Selector) {
         button.bezelStyle = .accessoryBarAction
+        button.focusRingType = .none
         button.controlSize = .small
         button.font = .systemFont(ofSize: 11)
         button.title = title

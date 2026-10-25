@@ -22,7 +22,7 @@ final class OperationQueuePanelController {
             return
         }
         let content = OperationQueuePanelContent(viewModel: viewModel)
-        let hosting = NSHostingView(rootView: content)
+        let hosting = NSHostingView(rootView: content.focusEffectDisabled())
         hosting.translatesAutoresizingMaskIntoConstraints = false
 
         let newPanel = NSPanel(

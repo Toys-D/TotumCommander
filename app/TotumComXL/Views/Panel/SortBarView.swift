@@ -137,6 +137,7 @@ struct SortBarView: View {
         // panel under the light theme gets light header text — the rule every chrome
         // surface follows. Last in the chain, so the overlays are inside it too.
         .environment(\.colorScheme, PanelAppearanceSettings.colorScheme(on: NSColor(backgroundColor)))
+        .focusEffectDisabled()
     }
 
     /// Divider x-positions (from the bar's left edge) matching the visual

@@ -207,7 +207,7 @@ final class CommandPaletteController {
             DispatchQueue.main.async { CommandRegistry.run(command) }
         }
         self.model = model
-        let hosting = NSHostingView(rootView: view)
+        let hosting = NSHostingView(rootView: view.focusEffectDisabled())
         let panel = PaletteWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 420),
                                   styleMask: [.titled, .fullSizeContentView],
                                   backing: .buffered, defer: false)

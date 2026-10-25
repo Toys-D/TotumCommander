@@ -351,6 +351,7 @@ struct CenterDividerView: View {
                     }
                 }
             }
+            .focusEffectDisabled()
     }
 
     /// Стопка кнопок: шапка, папки, разделитель, операции — с «Ещё» там, где не влезло.

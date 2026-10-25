@@ -2495,7 +2495,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
                 }
 
                 let viewer = UnifiedFileViewer(viewModel: vm, onClose: onClose, operations: operationsService)
-                let contentView: NSView = NSHostingView(rootView: viewer)
+                let contentView: NSView = NSHostingView(rootView: viewer.focusEffectDisabled())
 
                 // NSPanel with .nonactivatingPanel — doesn't steal keyboard focus
                 let viewerPanel = NSPanel(

@@ -114,7 +114,8 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
         container.addSubview(statusBar)
 
         // Полоса поиска над текстом — пока открыта; закрытая не занимает места.
-        let findBar = NSHostingView(rootView: EditorFindBarHost(model: monaco.findModel).editorChrome(viewOptions))
+        let findBar = NSHostingView(rootView: EditorFindBarHost(model: monaco.findModel).editorChrome(viewOptions)
+            .focusEffectDisabled())
         findBar.sizingOptions = [.intrinsicContentSize]
         findBar.translatesAutoresizingMaskIntoConstraints = false
         // Ширину задаёт окно, а не длина подписей: узкое окно полосу прокручивает.
@@ -359,6 +360,7 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
 
             // Tab button
             let btn = NSButton(frame: NSRect(x: x, y: 2, width: 10, height: h - 4))
+            btn.focusRingType = .none
             btn.isBordered = false
             btn.title = title
             btn.font = .systemFont(ofSize: 11, weight: isActive ? .semibold : .regular)
@@ -380,6 +382,7 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
             // Close button (✕) on each tab
             let closeBtn = NSButton(frame: NSRect(x: x + btn.frame.width - 18, y: (h - 14) / 2, width: 14, height: 14))
             closeBtn.isBordered = false
+            closeBtn.focusRingType = .none
             closeBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: L("tabs.close"))
             closeBtn.imageScaling = .scaleProportionallyDown
             closeBtn.contentTintColor = isDark ? NSColor(white: 0.5, alpha: 1) : NSColor(white: 0.4, alpha: 1)
@@ -403,7 +406,8 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
             options: viewOptions,
             onFind: { [weak self] in self?.monaco.showFind() },
             onReplace: { [weak self] in self?.monaco.showReplace() })
-            .editorChrome(viewOptions))
+            .editorChrome(viewOptions)
+            .focusEffectDisabled())
         host.frame = NSRect(x: 0, y: 0, width: 900, height: 30)
         host.autoresizingMask = [.width]
         return host

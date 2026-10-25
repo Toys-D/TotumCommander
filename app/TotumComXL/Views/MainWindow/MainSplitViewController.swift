@@ -489,10 +489,10 @@ final class MainSplitViewController: NSViewController {
         let hostingView: NSView
         if useNativeQL {
             let panel = EmbeddedViewerPanel(viewModel: viewModel, onClose: onClose, operations: operations)
-            hostingView = NSHostingView(rootView: panel)
+            hostingView = NSHostingView(rootView: panel.focusEffectDisabled())
         } else {
             let viewer = UnifiedFileViewer(viewModel: viewModel, onClose: onClose, operations: operations)
-            hostingView = NSHostingView(rootView: viewer)
+            hostingView = NSHostingView(rootView: viewer.focusEffectDisabled())
         }
 
         hostingView.translatesAutoresizingMaskIntoConstraints = false
@@ -549,7 +549,7 @@ final class MainSplitViewController: NSViewController {
         let editor = EmbeddedEditorPanel(filePath: filePath, source: source,
                                          operations: operations, onClose: onClose,
                                          onDirtyChange: { [weak self] in self?.embeddedEditorIsDirty = $0 })
-        let hostingView = NSHostingView(rootView: editor)
+        let hostingView = NSHostingView(rootView: editor.focusEffectDisabled())
         hostingView.translatesAutoresizingMaskIntoConstraints = false
 
         let inactiveVC = activePanel == .left ? rightPanelVC! : leftPanelVC!
@@ -583,7 +583,7 @@ final class MainSplitViewController: NSViewController {
         embeddedEditorIsDirty = false
         let editor = RTFEditorPanel(filePath: filePath, onClose: onClose,
                                     onDirtyChange: { [weak self] in self?.embeddedEditorIsDirty = $0 })
-        let hostingView = NSHostingView(rootView: editor)
+        let hostingView = NSHostingView(rootView: editor.focusEffectDisabled())
         hostingView.translatesAutoresizingMaskIntoConstraints = false
 
         let inactiveVC = activePanel == .left ? rightPanelVC! : leftPanelVC!

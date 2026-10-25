@@ -763,6 +763,99 @@ final class ContextMenuLayoutTests: XCTestCase {
         XCTAssertTrue(found.isEmpty, "голые всплывающие окна:\n" + found.joined(separator: "\n"))
     }
 
+    /// Синего кольца фокуса нет нигде. С включённой «Навигацией с клавиатуры» macOS обводит
+    /// кольцом первую кнопку каждого окна — «Отмену» в окне хода упаковки. Запрет ставится в
+    /// корень каждой вставки SwiftUI в окно: в само выражение или в `body` вставляемого вида.
+    func test_вставкиSwiftUIБезКольцаФокуса() throws {
+        let root = FileManager.default.currentDirectoryPath + "/app/TotumComXL"
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(atPath: root))
+        var files: [String: [String]] = [:]
+        while let path = enumerator.nextObject() as? String {
+            guard path.hasSuffix(".swift"),
+                  let text = try? String(contentsOfFile: root + "/" + path, encoding: .utf8) else { continue }
+            files[path] = text.components(separatedBy: "\n")
+        }
+        let disabled = ".focusEffectDisabled()"
+        // Вид, который запрещает кольцо в собственном объявлении.
+        func focuslessType(_ type: String) -> Bool {
+            let declaration = #"^(final )?(struct|class) "# + type + #"\b"#
+            let next = #"^(final )?(struct|class|enum|extension) "#
+            for lines in files.values {
+                guard let start = lines.firstIndex(where: {
+                    $0.range(of: declaration, options: .regularExpression) != nil
+                }) else { continue }
+                let end = lines[(start + 1)...].firstIndex(where: {
+                    $0.range(of: next, options: .regularExpression) != nil
+                }) ?? lines.endIndex
+                return lines[start..<end].contains { $0.contains(disabled) }
+            }
+            return false
+        }
+        let site = try NSRegularExpression(
+            pattern: #"(NSHostingView|NSHostingController|TunnelDropHostingView)\(rootView: *([A-Za-z_][A-Za-z0-9_]*)(\()?"#)
+        var checked = 0
+        var found: [String] = []
+        for (path, lines) in files {
+            for (index, line) in lines.enumerated() {
+                guard !line.trimmingCharacters(in: .whitespaces).hasPrefix("//"),
+                      let match = site.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+                      let nameRange = Range(match.range(at: 2), in: line),
+                      let callStart = Range(match.range, in: line)?.lowerBound else { continue }
+                checked += 1
+                // Само выражение — до парной закрывающей скобки, хоть на несколько строк.
+                var statement = ""
+                var depth = 0
+                scan: for (offset, text) in lines[index...].enumerated() {
+                    let piece = offset == 0 ? String(text[callStart...]) : text
+                    for character in piece {
+                        statement.append(character)
+                        if character == "(" { depth += 1 }
+                        if character == ")" { depth -= 1; if depth == 0 { break scan } }
+                    }
+                    statement.append("\n")
+                }
+                if statement.contains(disabled) { continue }
+
+                let name = String(line[nameRange])
+                let isCall = match.range(at: 3).location != NSNotFound
+                var type: String?
+                if name.first?.isUppercase == true, name != "AnyView" {
+                    type = name
+                } else if isCall {
+                    // makeSortBarView() → тип, который функция возвращает.
+                    let signature = #"func "# + name + #"\([^)]*\) *-> *([A-Za-z_][A-Za-z0-9_]*)"#
+                    for text in lines {
+                        if let r = text.range(of: signature, options: .regularExpression) {
+                            type = text[r].components(separatedBy: "->").last?
+                                .trimmingCharacters(in: .whitespaces)
+                        }
+                    }
+                } else {
+                    // Переменная: её объявление выше — тип и, может быть, запрет прямо там; а нет
+                    // рядом — свойство с типом где-то в том же файле.
+                    let definition = #"(let|var) "# + name + #" *(=|:) *([A-Za-z_][A-Za-z0-9_]*)"#
+                    func declared(_ text: String) -> String? {
+                        text.range(of: definition, options: .regularExpression).flatMap {
+                            text[$0].components(separatedBy: CharacterSet(charactersIn: "=:")).last?
+                                .trimmingCharacters(in: .whitespaces)
+                        }
+                    }
+                    for back in stride(from: index - 1, through: max(0, index - 40), by: -1) {
+                        guard let declaredType = declared(lines[back]) else { continue }
+                        type = lines[back...index].contains(where: { $0.contains(disabled) }) ? "" : declaredType
+                        break
+                    }
+                    if type == nil { type = lines.lazy.compactMap(declared).first }
+                }
+                if type == "" { continue }
+                if let type, focuslessType(type) { continue }
+                found.append("\(path):\(index + 1): \(line.trimmingCharacters(in: .whitespaces))")
+            }
+        }
+        XCTAssertGreaterThan(checked, 20, "вставки нашлись")
+        XCTAssertTrue(found.isEmpty, "вставки SwiftUI с кольцом фокуса:\n" + found.sorted().joined(separator: "\n"))
+    }
+
     /// Все меню программы — в её окне меню. Системное меню (`.contextMenu {}` и `Menu {}` у
     /// SwiftUI, NSPopUpButton и показ NSMenu самим AppKit) выглядит и появляется по-своему,
     /// а на macOS 27 ещё и влетает сбоку. Такого в исходниках быть не должно.
