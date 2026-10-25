@@ -300,6 +300,14 @@
 "pack.includeSubfolders" = "Учитывать подкаталоги";
 "pack.deleteAfterPack" = "Удалить исходные файлы после упаковки";
 "pack.separateArchives" = "Отдельные архивы для каждого файла";
+"pack.links" = "Ссылки";
+"pack.links.keep" = "Все ссылками";
+"pack.links.followOutside" = "Наружные — файлами";
+"pack.links.followAll" = "Все — файлами";
+"pack.links.keep.note" = "Ссылка ложится ссылкой — как в «Сжать» Finder. Ведущая наружу на другом Mac может вести в никуда.";
+"pack.links.followOutside.note" = "Ссылка наружу — по полному пути или выше упакованного — ложится тем, на что ведёт. Ссылки внутри остаются ссылками.";
+"pack.links.followAll.note" = "Вместо каждой ссылки ложится то, на что она ведёт: файл или папка целиком.";
+"pack.links.dmg.note" = "В образе DMG ссылки всегда остаются ссылками.";
 "pack.browseFolder" = "Выбрать папку";
 "pack.defaultName" = "archive";
 

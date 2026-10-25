@@ -190,6 +190,7 @@ let package = Package(
             sources: [
                 "App/AppDelegate.swift",
                 "App/TotumComXLApp.swift",
+                "Models/ArchiveLinkMode.swift",
                 "Models/FileItem.swift",
                 "Models/PanelTab.swift",
                 "Models/PosixPermissions.swift",

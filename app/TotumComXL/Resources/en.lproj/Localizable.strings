@@ -295,6 +295,14 @@
 "pack.includeSubfolders" = "Include subfolders";
 "pack.deleteAfterPack" = "Delete source files after packing";
 "pack.separateArchives" = "Separate archive for each file";
+"pack.links" = "Links";
+"pack.links.keep" = "All as links";
+"pack.links.followOutside" = "Outside ones as files";
+"pack.links.followAll" = "All as files";
+"pack.links.keep.note" = "A link is stored as a link, as Finder's Compress does. One leading outside may point nowhere on another Mac.";
+"pack.links.followOutside.note" = "A link leading outside — by a full path or above what is packed — is stored as what it points to. Links inside stay links.";
+"pack.links.followAll.note" = "Each link is replaced by what it points to: a file or a whole folder.";
+"pack.links.dmg.note" = "A DMG image always keeps links as links.";
 "pack.browseFolder" = "Choose folder";
 "pack.defaultName" = "archive";
 

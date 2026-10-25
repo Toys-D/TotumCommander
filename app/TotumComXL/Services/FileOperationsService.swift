@@ -1810,7 +1810,8 @@ final class FileOperationsService {
                 sources: [path],
                 includeSubfolders: true,
                 preservePaths: false,
-                compressionLevel: ArchiveFormat.zip.defaultCompressionLevel
+                compressionLevel: ArchiveFormat.zip.defaultCompressionLevel,
+                links: ArchiveLinkMode.stored.forSending
             )
         } catch {
             Self.cleanupTemporaryDirectory(directory)
@@ -2506,6 +2507,7 @@ final class FileOperationsService {
                    deleteAfterPack: Bool = false,
                    separateArchives: Bool = false,
                    password: String = "",
+                   links: ArchiveLinkMode = .stored,
                    queueService: OperationQueueService? = nil,
                    onCompletion: (() -> Void)? = nil) async throws {
         guard !items.isEmpty else { return }
@@ -2524,7 +2526,8 @@ final class FileOperationsService {
                 format: format,
                 compressionLevel: normalizedLevel,
                 preservePaths: preservePaths,
-                includeSubfolders: includeSubfolders
+                includeSubfolders: includeSubfolders,
+                links: links
             )
         } else {
             guard let destinationArchivePath = try resolveSingleArchiveDestination(
@@ -2551,6 +2554,7 @@ final class FileOperationsService {
                 preservePaths: preservePaths,
                 includeSubfolders: includeSubfolders,
                 password: password,
+                links: links,
                 queueService: queueService,
                 onCompletion: onCompletion,
                 ntfsDeleteSources: ntfsDeleteSources
@@ -2573,7 +2577,8 @@ final class FileOperationsService {
                                      format: ArchiveFormat,
                                      compressionLevel: Int,
                                      preservePaths: Bool,
-                                     includeSubfolders: Bool) async throws -> [FileItem] {
+                                     includeSubfolders: Bool,
+                                     links: ArchiveLinkMode) async throws -> [FileItem] {
         let destinationDirectoryRaw = (archivePath as NSString).deletingLastPathComponent
         let destinationDirectory = destinationDirectoryRaw.isEmpty
             ? FileManager.default.currentDirectoryPath
@@ -2619,7 +2624,8 @@ final class FileOperationsService {
                 format: format,
                 compressionLevel: compressionLevel,
                 preservePaths: preservePaths,
-                includeSubfolders: includeSubfolders
+                includeSubfolders: includeSubfolders,
+                links: links
             )
             packedItems.append(item)
         }
@@ -2688,6 +2694,7 @@ final class FileOperationsService {
                                    preservePaths: Bool,
                                    includeSubfolders: Bool,
                                    password: String = "",
+                                   links: ArchiveLinkMode,
                                    queueService: OperationQueueService? = nil,
                                    onCompletion: (() -> Void)? = nil,
                                    ntfsDeleteSources: [String] = []) async throws -> Bool {
@@ -2729,7 +2736,8 @@ final class FileOperationsService {
                         compressionLevel: compressionLevel,
                         preservePaths: preservePaths,
                         includeSubfolders: includeSubfolders,
-                        password: password
+                        password: password,
+                        links: links
                     )
                     let (_, queueReporter) = queueService.adoptRunningOperation(
                         kind: .pack,
@@ -2795,6 +2803,7 @@ final class FileOperationsService {
                             preservePaths: preservePaths,
                             compressionLevel: compressionLevel,
                             password: password,
+                            links: links,
                             progress: self.makeArchiveProgressHandler(
                                 progressController: swappable,
                                 overrideTotalBytes: totalBytes,
@@ -3174,6 +3183,7 @@ final class FileOperationsService {
                                      preservePaths: Bool,
                                      includeSubfolders: Bool,
                                      password: String = "",
+                                     links: ArchiveLinkMode,
                                      reporter: OperationProgressReporter) throws {
         let sourceStats = items.map { self.calculatePathStats(path: $0.path) }
         let totalBytes = max(sourceStats.reduce(Int64(0)) { $0 + $1.bytes }, 1)
@@ -3209,6 +3219,7 @@ final class FileOperationsService {
                 preservePaths: preservePaths,
                 compressionLevel: compressionLevel,
                 password: password,
+                links: links,
                 progress: makeArchiveProgressHandler(
                     progressController: reporter,
                     overrideTotalBytes: totalBytes,

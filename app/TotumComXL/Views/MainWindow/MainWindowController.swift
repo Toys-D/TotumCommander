@@ -2103,7 +2103,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
                         try bridge.createArchive(
                             archivePath: tmpZip, format: .zip, sources: [source],
                             includeSubfolders: true, preservePaths: true,
-                            compressionLevel: 6)
+                            compressionLevel: 6, links: .stored)
                         if progress.isCancelled { break }
                         let output = Self.freeAgePath(for: source + ".zip", decrypt: false)
                         try AgeCrypt.encrypt(input: tmpZip, output: output, password: password,
@@ -4797,6 +4797,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
                     includeSubfolders: true,
                     deleteAfterPack: false,
                     separateArchives: false,
+                    // Only the format is asked here; links go the way the pack window last chose.
+                    links: .stored,
                     queueService: queueService,
                     onCompletion: { [weak self] in self?.forceRefreshBothPanels() }
                 )
@@ -4860,6 +4862,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
                     deleteAfterPack: result.deleteAfterPack,
                     separateArchives: result.separateArchives,
                     password: result.password,
+                    links: result.links,
                     queueService: queueService,
                     // Fires when a QUEUED pack finishes — refreshes the panels so a
                     // big archive built in the background still appears on its own.

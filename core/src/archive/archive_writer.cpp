@@ -17,11 +17,14 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include <sys/stat.h>
 #include <utility>
@@ -759,6 +762,284 @@ auto add_file_entry_minizip(void* writer,
     return {};
 }
 
+// Что ляжет в архив и под каким именем — один обход и для записи, и для подсчёта итогов: ход
+// упаковки знает и то, что придёт через ссылки.
+struct PackVisit {
+    std::function<common::Result<void>(std::string_view entry)> directory;
+    std::function<common::Result<void>(const stdfs::path& source, std::string_view entry)> file;
+    std::function<common::Result<void>(const stdfs::path& link, std::string_view entry)> link;
+};
+
+auto writing_visit(WriterSession* session) -> PackVisit {
+    return PackVisit{
+        [session](std::string_view entry) -> common::Result<void> {
+            if (session->backend == WriterBackend::Minizip) {
+                return add_directory_entry_minizip(session->minizip_writer, session->archive_path, entry);
+            }
+            return add_directory_entry_libarchive(session, entry);
+        },
+        [session](const stdfs::path& source, std::string_view entry) -> common::Result<void> {
+            if (session->backend == WriterBackend::Minizip) {
+                return add_file_entry_minizip(session->minizip_writer, source, entry, session->archive_path);
+            }
+            return add_file_entry_libarchive(session, source, entry);
+        },
+        [session](const stdfs::path& link, std::string_view entry) -> common::Result<void> {
+            if (session->backend == WriterBackend::Minizip) {
+                return add_symlink_entry_minizip(session->minizip_writer, link, entry, session->archive_path);
+            }
+            return add_symlink_entry_libarchive(session, link, entry);
+        },
+    };
+}
+
+auto measuring_visit(SourceTotals* totals) -> PackVisit {
+    return PackVisit{
+        [](std::string_view) -> common::Result<void> { return {}; },
+        [totals](const stdfs::path& source, std::string_view) -> common::Result<void> {
+            std::error_code ec;
+            const uintmax_t size = stdfs::file_size(source, ec);
+            if (ec) {
+                return make_error(common::ErrorCode::IOError,
+                                  "Failed to read source file size",
+                                  source.string());
+            }
+            if (size > static_cast<uintmax_t>(std::numeric_limits<int64_t>::max())) {
+                return make_error(common::ErrorCode::InvalidArgument,
+                                  "Source file is too large",
+                                  source.string());
+            }
+            totals->bytes += static_cast<int64_t>(size);
+            totals->files += 1;
+            return {};
+        },
+        [](const stdfs::path&, std::string_view) -> common::Result<void> { return {}; },
+    };
+}
+
+// Путь без «.», «..» и косой черты в конце — чтобы сравнивать по частям.
+auto tidy_path(const stdfs::path& path) -> stdfs::path {
+    stdfs::path normal = path.lexically_normal();
+    if (normal.has_relative_path() && normal.filename().empty()) {
+        normal = normal.parent_path();
+    }
+    return normal;
+}
+
+auto lies_within(const stdfs::path& path, const stdfs::path& root) -> bool {
+    const stdfs::path relative = path.lexically_relative(root);
+    return !relative.empty() && *relative.begin() != "..";
+}
+
+auto source_bounds(const std::vector<std::string>& sources) -> std::vector<stdfs::path> {
+    std::vector<stdfs::path> bounds;
+    bounds.reserve(sources.size());
+    for (const auto& source : sources) {
+        bounds.push_back(tidy_path(stdfs::path(source)));
+    }
+    return bounds;
+}
+
+// Обход выбранного. Ссылка кладётся тем, на что ведёт, только если так велит режим и это файл
+// или папка; битая, ведущая на особый файл или в петлю — ссылкой: развернуть её нечем.
+class PackWalk {
+public:
+    PackWalk(SymlinkMode mode, bool preserve_paths, PackVisit visit)
+        : mode_(mode), preserve_paths_(preserve_paths), visit_(std::move(visit)) {}
+
+    // Выбранный путь под именем `entry`. `bounds` — всё выбранное: ссылка внутрь него наружу
+    // не ведёт.
+    auto source(const stdfs::path& path, const std::string& entry, bool include_subfolders,
+                const std::vector<stdfs::path>& bounds) -> common::Result<void> {
+        std::error_code ec;
+        const stdfs::file_type type = stdfs::symlink_status(path, ec).type();
+        if (ec) {
+            return make_error(common::ErrorCode::IOError,
+                              "Failed to inspect source entry",
+                              path.string());
+        }
+        if (type == stdfs::file_type::symlink) {
+            const auto target = follow(path, bounds);
+            if (!target.has_value()) {
+                return visit_.link(path, entry);
+            }
+            // Выбранная ссылка на папку — как выбранная папка, со своими границами.
+            return place(target->path, target->type, entry, include_subfolders, {target->path});
+        }
+        if (type != stdfs::file_type::directory && type != stdfs::file_type::regular) {
+            return make_error(common::ErrorCode::NotAFile,
+                              "Source path is not a regular file",
+                              path.string());
+        }
+        return place(path, type, entry, include_subfolders, bounds);
+    }
+
+    // Папка с вложенным под именем `entry`.
+    auto tree(const stdfs::path& dir, const std::string& entry,
+              const std::vector<stdfs::path>& bounds) -> common::Result<void> {
+        if (preserve_paths_) {
+            const auto result = visit_.directory(entry);
+            if (!result.has_value()) {
+                return result.error();
+            }
+        }
+        return children(dir, entry, true, bounds);
+    }
+
+private:
+    using DirId = std::pair<dev_t, ino_t>;
+
+    struct Target {
+        stdfs::path path;
+        stdfs::file_type type;
+    };
+
+    // Папка в цепочке, пока её обходят: ссылка на любую из них — петля.
+    class AncestorScope {
+    public:
+        AncestorScope(std::vector<DirId>& chain, const stdfs::path& dir) : chain_(chain) {
+            struct stat info {};
+            if (::stat(dir.c_str(), &info) == 0) {
+                chain_.emplace_back(info.st_dev, info.st_ino);
+                pushed_ = true;
+            }
+        }
+        ~AncestorScope() {
+            if (pushed_) {
+                chain_.pop_back();
+            }
+        }
+        AncestorScope(const AncestorScope&) = delete;
+        auto operator=(const AncestorScope&) -> AncestorScope& = delete;
+
+    private:
+        std::vector<DirId>& chain_;
+        bool pushed_ = false;
+    };
+
+    auto place(const stdfs::path& path, stdfs::file_type type, const std::string& entry,
+               bool include_subfolders, const std::vector<stdfs::path>& bounds) -> common::Result<void> {
+        if (type == stdfs::file_type::regular) {
+            return visit_.file(path, entry);
+        }
+        return include_subfolders ? tree(path, entry, bounds) : children(path, entry, false, bounds);
+    }
+
+    auto children(const stdfs::path& dir, const std::string& entry, bool recursive,
+                  const std::vector<stdfs::path>& bounds) -> common::Result<void> {
+        std::error_code ec;
+        stdfs::directory_iterator it(dir, stdfs::directory_options::skip_permission_denied, ec);
+        if (ec) {
+            return make_error(common::ErrorCode::IOError,
+                              "Failed to iterate source directory",
+                              dir.string());
+        }
+        const AncestorScope scope(ancestors_, dir);
+
+        const stdfs::directory_iterator end;
+        while (it != end) {
+            if (is_archive_write_cancelled()) {
+                return cancelled_error(dir.string());
+            }
+            const stdfs::path child = it->path();
+            const std::string child_entry = preserve_paths_
+                ? join_archive_paths(entry, child.filename().string())
+                : child.filename().string();
+
+            // Тип — самой записи, без перехода по ссылке: ссылка на папку — не папка, а битая
+            // ссылка — не ошибка. Сокеты и прочее особое в архив не идут.
+            const stdfs::file_type type = it->symlink_status(ec).type();
+            if (ec) {
+                return make_error(common::ErrorCode::IOError,
+                                  "Failed to inspect directory entry",
+                                  child.string());
+            }
+
+            common::Result<void> result;
+            if (type == stdfs::file_type::directory) {
+                if (recursive) {
+                    result = tree(child, child_entry, bounds);
+                }
+            } else if (type == stdfs::file_type::regular) {
+                result = visit_.file(child, child_entry);
+            } else if (type == stdfs::file_type::symlink) {
+                result = walk_link(child, child_entry, recursive, bounds);
+            }
+            if (!result.has_value()) {
+                return result.error();
+            }
+
+            it.increment(ec);
+            if (ec) {
+                return make_error(common::ErrorCode::IOError,
+                                  "Failed to advance directory iterator",
+                                  dir.string());
+            }
+        }
+        return {};
+    }
+
+    auto walk_link(const stdfs::path& link, const std::string& entry, bool recursive,
+                 const std::vector<stdfs::path>& bounds) -> common::Result<void> {
+        const auto target = follow(link, bounds);
+        if (!target.has_value()) {
+            return visit_.link(link, entry);
+        }
+        if (target->type == stdfs::file_type::regular) {
+            return visit_.file(target->path, entry);
+        }
+        // Папка за ссылкой — та же папка: без вложенных папок её нет, как и обычной. Внутри
+        // неё «своё» — она сама: ссылка из неё вверх ведёт уже не туда, где лежала.
+        if (!recursive) {
+            return {};
+        }
+        return tree(target->path, entry, {target->path});
+    }
+
+    // Куда класть ссылку тем, на что она ведёт; ничего — если класть ссылкой.
+    auto follow(const stdfs::path& link, const std::vector<stdfs::path>& bounds) const
+        -> std::optional<Target> {
+        if (mode_ == SymlinkMode::Keep ||
+            (mode_ == SymlinkMode::FollowOutside && !leads_outside(link, bounds))) {
+            return std::nullopt;
+        }
+        std::error_code ec;
+        const stdfs::path target = stdfs::canonical(link, ec);
+        struct stat info {};
+        if (ec || ::stat(target.c_str(), &info) != 0) {
+            return std::nullopt;
+        }
+        if (S_ISREG(info.st_mode)) {
+            return Target{target, stdfs::file_type::regular};
+        }
+        const DirId id{info.st_dev, info.st_ino};
+        if (!S_ISDIR(info.st_mode) ||
+            std::find(ancestors_.begin(), ancestors_.end(), id) != ancestors_.end()) {
+            return std::nullopt;
+        }
+        return Target{target, stdfs::file_type::directory};
+    }
+
+    // Наружу — по полному пути или, по буквам пути, за пределы своего: после распаковки
+    // в другом месте такая ссылка ведёт в никуда.
+    static auto leads_outside(const stdfs::path& link, const std::vector<stdfs::path>& bounds) -> bool {
+        std::error_code ec;
+        const stdfs::path target = stdfs::read_symlink(link, ec);
+        if (ec || target.is_absolute()) {
+            return true;
+        }
+        const stdfs::path resolved = tidy_path(link.parent_path() / target);
+        return std::none_of(bounds.begin(), bounds.end(), [&](const stdfs::path& bound) {
+            return lies_within(resolved, bound);
+        });
+    }
+
+    SymlinkMode mode_;
+    bool preserve_paths_;
+    PackVisit visit_;
+    std::vector<DirId> ancestors_;
+};
+
 }  // namespace
 
 auto ArchiveWriter::create(std::string_view path,
@@ -1044,163 +1325,55 @@ auto ArchiveWriter::add_directory(std::string_view dir_path,
                           source_root.string());
     }
 
-    const auto add_directory_entry = [&](std::string_view entry_name) -> common::Result<void> {
-        if (session->backend == WriterBackend::Minizip) {
-            return add_directory_entry_minizip(
-                session->minizip_writer,
-                session->archive_path,
-                entry_name);
-        }
-        return add_directory_entry_libarchive(session, entry_name);
-    };
-
-    const auto add_file_entry = [&](const stdfs::path& source,
-                                    std::string_view entry_name) -> common::Result<void> {
-        if (session->backend == WriterBackend::Minizip) {
-            return add_file_entry_minizip(
-                session->minizip_writer,
-                source,
-                entry_name,
-                session->archive_path);
-        }
-        return add_file_entry_libarchive(session, source, entry_name);
-    };
-
-    const auto add_symlink_entry = [&](const stdfs::path& source,
-                                       std::string_view entry_name) -> common::Result<void> {
-        if (session->backend == WriterBackend::Minizip) {
-            return add_symlink_entry_minizip(
-                session->minizip_writer,
-                source,
-                entry_name,
-                session->archive_path);
-        }
-        return add_symlink_entry_libarchive(session, source, entry_name);
-    };
-
     const std::string root_entry = archive_path.empty()
                                        ? normalize_archive_path(source_root.filename().string())
                                        : normalize_archive_path(archive_path);
+    PackWalk walk(SymlinkMode::Keep, session->preserve_paths, writing_visit(session));
+    return walk.tree(source_root, root_entry, {tidy_path(source_root)});
+}
 
-    if (!session->preserve_paths) {
-        stdfs::recursive_directory_iterator flat_iterator(
-            source_root, stdfs::directory_options::skip_permission_denied, ec);
-        if (ec) {
-            return make_error(common::ErrorCode::IOError,
-                              "Failed to iterate source directory",
-                              source_root.string());
-        }
-
-        const stdfs::recursive_directory_iterator flat_end;
-        while (flat_iterator != flat_end) {
-            if (is_archive_write_cancelled()) {
-                return cancelled_error(session->archive_path);
-            }
-
-            const stdfs::directory_entry& entry = *flat_iterator;
-            const stdfs::path entry_path = entry.path();
-            // Тип — самой записи, без перехода по ссылке: битая ссылка — тоже запись.
-            const stdfs::file_type type = entry.symlink_status(ec).type();
-            if (ec) {
-                return make_error(common::ErrorCode::IOError,
-                                  "Failed to inspect directory entry type",
-                                  entry_path.string());
-            }
-
-            if (type == stdfs::file_type::symlink) {
-                const auto link_result = add_symlink_entry(
-                    entry_path,
-                    entry_path.filename().string());
-                if (!link_result.has_value()) {
-                    return link_result.error();
-                }
-            } else if (type == stdfs::file_type::regular) {
-                const auto file_result = add_file_entry(
-                    entry_path,
-                    entry_path.filename().string());
-                if (!file_result.has_value()) {
-                    return file_result.error();
-                }
-            }
-
-            flat_iterator.increment(ec);
-            if (ec) {
-                return make_error(common::ErrorCode::IOError,
-                                  "Failed to advance directory iterator",
-                                  source_root.string());
-            }
-        }
-
-        return {};
+auto ArchiveWriter::add_sources(const std::vector<std::string>& sources,
+                                bool include_subfolders,
+                                SymlinkMode links) -> common::Result<void> {
+    if (is_archive_write_cancelled()) {
+        return cancelled_error(sources.empty() ? std::string() : sources.front());
     }
 
-    const auto root_dir_result = add_directory_entry(root_entry);
-    if (!root_dir_result.has_value()) {
-        return root_dir_result.error();
+    std::lock_guard<std::mutex> lock(g_writer_mutex);
+    WriterSession* session = writer_session(this);
+    if (session == nullptr ||
+        (session->backend == WriterBackend::Libarchive && session->libarchive_writer == nullptr) ||
+        (session->backend == WriterBackend::Minizip && session->minizip_writer == nullptr)) {
+        return make_error(common::ErrorCode::ArchiveError,
+                          "Archive writer is not initialized");
     }
 
-    stdfs::recursive_directory_iterator iterator(
-        source_root, stdfs::directory_options::skip_permission_denied, ec);
-    if (ec) {
-        return make_error(common::ErrorCode::IOError,
-                          "Failed to iterate source directory",
-                          source_root.string());
-    }
-
-    const stdfs::recursive_directory_iterator end;
-    while (iterator != end) {
-        if (is_archive_write_cancelled()) {
-            return cancelled_error(session->archive_path);
-        }
-        const stdfs::directory_entry& entry = *iterator;
-        const stdfs::path entry_path = entry.path();
-
-        // Путь записи — по буквам, без разворота ссылок: stdfs::relative разворачивает их, и
-        // ссылка «link» на «plain.txt» ложилась в архив под именем «plain.txt».
-        const stdfs::path relative_path = entry_path.lexically_relative(source_root);
-        if (relative_path.empty()) {
-            return make_error(common::ErrorCode::IOError,
-                              "Failed to compute relative archive path",
-                              entry_path.string());
-        }
-
-        const std::string archive_entry = join_archive_paths(root_entry, relative_path.generic_string());
-
-        // Тип — самой записи, без перехода по ссылке: ссылка на папку — не папка, а битая
-        // ссылка — не ошибка. Сокеты и прочее особое в архив не идут.
-        const stdfs::file_type type = entry.symlink_status(ec).type();
-        if (ec) {
-            return make_error(common::ErrorCode::IOError,
-                              "Failed to inspect directory entry",
-                              entry_path.string());
-        }
-
-        if (type == stdfs::file_type::directory) {
-            const auto dir_result = add_directory_entry(archive_entry);
-            if (!dir_result.has_value()) {
-                return dir_result.error();
-            }
-        } else if (type == stdfs::file_type::symlink) {
-            const auto link_result = add_symlink_entry(entry_path, archive_entry);
-            if (!link_result.has_value()) {
-                return link_result.error();
-            }
-        } else if (type == stdfs::file_type::regular) {
-            const auto file_result = add_file_entry(entry_path, archive_entry);
-            if (!file_result.has_value()) {
-                return file_result.error();
-            }
-        }
-
-        iterator.increment(ec);
-        if (ec) {
-            return make_error(common::ErrorCode::IOError,
-                              "Failed to advance directory iterator",
-                              source_root.string());
+    PackWalk walk(links, session->preserve_paths, writing_visit(session));
+    const std::vector<stdfs::path> bounds = source_bounds(sources);
+    for (const auto& source : sources) {
+        const stdfs::path path(source);
+        const auto result = walk.source(path, path.filename().string(), include_subfolders, bounds);
+        if (!result.has_value()) {
+            return result.error();
         }
     }
-
     return {};
+}
+
+auto ArchiveWriter::measure_sources(const std::vector<std::string>& sources,
+                                    bool include_subfolders,
+                                    SymlinkMode links) -> common::Result<SourceTotals> {
+    SourceTotals totals;
+    PackWalk walk(links, true, measuring_visit(&totals));
+    const std::vector<stdfs::path> bounds = source_bounds(sources);
+    for (const auto& source : sources) {
+        const stdfs::path path(source);
+        const auto result = walk.source(path, path.filename().string(), include_subfolders, bounds);
+        if (!result.has_value()) {
+            return result.error();
+        }
+    }
+    return totals;
 }
 
 auto ArchiveWriter::finalize() -> common::Result<void> {

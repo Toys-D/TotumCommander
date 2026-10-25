@@ -1473,7 +1473,14 @@ auto add_directory_children_to_writer(ArchiveWriter* writer,
         const stdfs::directory_entry& entry = *it;
         const std::string archive_name = entry.path().filename().generic_string();
 
-        if (entry.is_directory(ec)) {
+        // Ссылка — ссылкой: архив пересобирается таким, каким был. Иначе ссылка верхнего
+        // уровня ложилась копией того, на что ведёт, а битая пропадала.
+        if (entry.is_symlink(ec)) {
+            const auto result = writer->add_symlink(entry.path().string(), archive_name);
+            if (!result.has_value()) {
+                return result.error();
+            }
+        } else if (entry.is_directory(ec)) {
             if (ec) {
                 return make_error(common::ErrorCode::IOError,
                                   "Failed to inspect temporary directory entry",

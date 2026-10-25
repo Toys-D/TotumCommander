@@ -3,9 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
-#include <filesystem>
-#include <limits>
-#include <optional>
+#include <string>
 #include <vector>
 
 #include "fcxl/archive/archive_reader.h"
@@ -15,8 +13,6 @@
 @implementation FCXLArchiveBridge
 
 namespace {
-
-namespace stdfs = std::filesystem;
 
 auto string_from_utf8_or_fallback(const std::string& value, NSString* fallback) -> NSString* {
     NSString* converted = [NSString stringWithUTF8String:value.c_str()];
@@ -113,293 +109,26 @@ auto archive_format_from_string(NSString* format, fcxl::archive::ArchiveFormat* 
     return false;
 }
 
-struct ArchiveSourceTotals {
-    int64_t bytes_total = 0;
-    int files_total = 0;
-};
-
-auto accumulate_file_totals(const stdfs::path& file_path,
-                            ArchiveSourceTotals* totals,
-                            NSError** error) -> bool {
-    if (totals == nullptr) {
-        return false;
+auto source_path_list(NSArray<NSString*>* sources) -> std::vector<std::string> {
+    std::vector<std::string> paths;
+    paths.reserve(sources.count);
+    for (NSString* source in sources) {
+        const char* utf8 = source.UTF8String;
+        paths.emplace_back(utf8 != nullptr ? utf8 : "");
     }
-
-    std::error_code ec;
-    const uintmax_t raw_size = stdfs::file_size(file_path, ec);
-    if (ec) {
-        if (error != nullptr) {
-            fcxl::common::Error core_error = fcxl::common::Error::make(
-                fcxl::common::ErrorCode::IOError,
-                "Failed to read source file size",
-                file_path.string()
-            );
-            *error = make_nserror(core_error);
-        }
-        return false;
-    }
-
-    if (raw_size > static_cast<uintmax_t>(std::numeric_limits<int64_t>::max())) {
-        if (error != nullptr) {
-            fcxl::common::Error core_error = fcxl::common::Error::make(
-                fcxl::common::ErrorCode::InvalidArgument,
-                "Source file is too large",
-                file_path.string()
-            );
-            *error = make_nserror(core_error);
-        }
-        return false;
-    }
-
-    totals->bytes_total += static_cast<int64_t>(raw_size);
-    totals->files_total += 1;
-    return true;
+    return paths;
 }
 
-auto calculate_archive_source_totals(NSArray<NSString*>* sources,
-                                     bool include_subfolders,
-                                     NSError** error) -> std::optional<ArchiveSourceTotals> {
-    ArchiveSourceTotals totals;
-
-    for (NSString* source in sources) {
-        const std::string source_path = source.UTF8String;
-        const stdfs::path source_fs_path(source_path);
-
-        std::error_code ec;
-        // Ссылка, выбранная сама, — ссылкой, без перехода: в итогах её нет, ошибки тоже.
-        if (stdfs::symlink_status(source_fs_path, ec).type() == stdfs::file_type::symlink) {
-            continue;
-        }
-        const bool is_directory = stdfs::is_directory(source_fs_path, ec);
-        if (ec) {
-            if (error != nullptr) {
-                fcxl::common::Error core_error = fcxl::common::Error::make(
-                    fcxl::common::ErrorCode::IOError,
-                    "Failed to inspect source entry",
-                    source_path
-                );
-                *error = make_nserror(core_error);
-            }
-            return std::nullopt;
-        }
-
-        if (!is_directory) {
-            if (!accumulate_file_totals(source_fs_path, &totals, error)) {
-                return std::nullopt;
-            }
-            continue;
-        }
-
-        if (include_subfolders) {
-            stdfs::recursive_directory_iterator it(
-                source_fs_path,
-                stdfs::directory_options::skip_permission_denied,
-                ec);
-            if (ec) {
-                if (error != nullptr) {
-                    fcxl::common::Error core_error = fcxl::common::Error::make(
-                        fcxl::common::ErrorCode::IOError,
-                        "Failed to iterate source directory",
-                        source_path
-                    );
-                    *error = make_nserror(core_error);
-                }
-                return std::nullopt;
-            }
-
-            const stdfs::recursive_directory_iterator end;
-            while (it != end) {
-                const stdfs::directory_entry& entry = *it;
-                // Итоги — только для хода упаковки: тип самой записи, без перехода по ссылке.
-                // Битая ссылка (их сотни во фреймворках папок сборки) обрывала здесь всю упаковку.
-                const bool is_regular_file =
-                    entry.symlink_status(ec).type() == stdfs::file_type::regular;
-                ec.clear();
-
-                if (is_regular_file &&
-                    !accumulate_file_totals(entry.path(), &totals, error)) {
-                    return std::nullopt;
-                }
-
-                it.increment(ec);
-                if (ec) {
-                    if (error != nullptr) {
-                        fcxl::common::Error core_error = fcxl::common::Error::make(
-                            fcxl::common::ErrorCode::IOError,
-                            "Failed to advance directory iterator",
-                            source_path
-                        );
-                        *error = make_nserror(core_error);
-                    }
-                    return std::nullopt;
-                }
-            }
-            continue;
-        }
-
-        stdfs::directory_iterator it(
-            source_fs_path,
-            stdfs::directory_options::skip_permission_denied,
-            ec);
-        if (ec) {
-            if (error != nullptr) {
-                fcxl::common::Error core_error = fcxl::common::Error::make(
-                    fcxl::common::ErrorCode::IOError,
-                    "Failed to iterate source directory",
-                    source_path
-                );
-                *error = make_nserror(core_error);
-            }
-            return std::nullopt;
-        }
-
-        const stdfs::directory_iterator end;
-        while (it != end) {
-            const stdfs::directory_entry& entry = *it;
-            // Итоги — только для хода упаковки: тип самой записи, без перехода по ссылке.
-            // Битая ссылка (их сотни во фреймворках папок сборки) обрывала здесь всю упаковку.
-            const bool is_regular_file =
-                entry.symlink_status(ec).type() == stdfs::file_type::regular;
-            ec.clear();
-
-            if (is_regular_file &&
-                !accumulate_file_totals(entry.path(), &totals, error)) {
-                return std::nullopt;
-            }
-
-            it.increment(ec);
-            if (ec) {
-                if (error != nullptr) {
-                    fcxl::common::Error core_error = fcxl::common::Error::make(
-                        fcxl::common::ErrorCode::IOError,
-                        "Failed to advance directory iterator",
-                        source_path
-                    );
-                    *error = make_nserror(core_error);
-                }
-                return std::nullopt;
-            }
-        }
+auto symlink_mode_from(FCXLArchiveLinks links) -> fcxl::archive::SymlinkMode {
+    switch (links) {
+        case FCXLArchiveLinksFollowOutside:
+            return fcxl::archive::SymlinkMode::FollowOutside;
+        case FCXLArchiveLinksFollowAll:
+            return fcxl::archive::SymlinkMode::FollowAll;
+        case FCXLArchiveLinksKeep:
+            break;
     }
-
-    return totals;
-}
-
-auto add_sources_to_archive(fcxl::archive::ArchiveWriter* writer,
-                            NSArray<NSString*>* sources,
-                            bool include_subfolders,
-                            bool preserve_paths,
-                            NSError** error) -> bool {
-    for (NSString* source in sources) {
-        const std::string source_path = source.UTF8String;
-        const stdfs::path source_fs_path(source_path);
-
-        std::error_code ec;
-        const std::string archive_base_name = source_fs_path.filename().string();
-        // Выбранная ссылка — ссылкой: по ней не идут, и битая не обрывает упаковку.
-        if (stdfs::symlink_status(source_fs_path, ec).type() == stdfs::file_type::symlink) {
-            const auto result = writer->add_symlink(source_path, archive_base_name);
-            if (!assign_void_result(result, error)) {
-                return false;
-            }
-            continue;
-        }
-        const bool is_directory = stdfs::is_directory(source_fs_path, ec);
-        if (ec) {
-            if (error != nullptr) {
-                fcxl::common::Error core_error = fcxl::common::Error::make(
-                    fcxl::common::ErrorCode::IOError,
-                    "Failed to inspect source entry",
-                    source_path
-                );
-                *error = make_nserror(core_error);
-            }
-            return false;
-        }
-
-        if (is_directory) {
-            if (include_subfolders) {
-                const auto result = writer->add_directory(source_path, archive_base_name);
-                if (!assign_void_result(result, error)) {
-                    return false;
-                }
-                continue;
-            }
-
-            stdfs::directory_iterator it(source_fs_path, stdfs::directory_options::skip_permission_denied, ec);
-            if (ec) {
-                if (error != nullptr) {
-                    fcxl::common::Error core_error = fcxl::common::Error::make(
-                        fcxl::common::ErrorCode::IOError,
-                        "Failed to iterate source directory",
-                        source_path
-                    );
-                    *error = make_nserror(core_error);
-                }
-                return false;
-            }
-
-            const stdfs::directory_iterator end;
-            while (it != end) {
-                const stdfs::directory_entry& entry = *it;
-                const stdfs::path child_path = entry.path();
-
-                // Тип самой записи, без перехода по ссылке: ссылка — ссылкой.
-                const stdfs::file_type child_type = entry.symlink_status(ec).type();
-                if (ec) {
-                    if (error != nullptr) {
-                        fcxl::common::Error core_error = fcxl::common::Error::make(
-                            fcxl::common::ErrorCode::IOError,
-                            "Failed to inspect directory child",
-                            child_path.string()
-                        );
-                        *error = make_nserror(core_error);
-                    }
-                    return false;
-                }
-
-                if (child_type == stdfs::file_type::symlink) {
-                    const std::string archive_child = preserve_paths
-                        ? (stdfs::path(archive_base_name) / child_path.filename()).generic_string()
-                        : child_path.filename().string();
-                    const auto link_result = writer->add_symlink(child_path.string(), archive_child);
-                    if (!assign_void_result(link_result, error)) {
-                        return false;
-                    }
-                } else if (child_type == stdfs::file_type::regular) {
-                    const std::string archive_child = preserve_paths
-                        ? (stdfs::path(archive_base_name) / child_path.filename()).generic_string()
-                        : child_path.filename().string();
-                    const auto add_result = writer->add_file(child_path.string(), archive_child);
-                    if (!assign_void_result(add_result, error)) {
-                        return false;
-                    }
-                }
-
-                it.increment(ec);
-                if (ec) {
-                    if (error != nullptr) {
-                        fcxl::common::Error core_error = fcxl::common::Error::make(
-                            fcxl::common::ErrorCode::IOError,
-                            "Failed to advance directory iterator",
-                            source_path
-                        );
-                        *error = make_nserror(core_error);
-                    }
-                    return false;
-                }
-            }
-
-            continue;
-        }
-
-        const auto result = writer->add_file(source_path, archive_base_name);
-        if (!assign_void_result(result, error)) {
-            return false;
-        }
-    }
-
-    return true;
+    return fcxl::archive::SymlinkMode::Keep;
 }
 
 auto make_archive_modify_progress_callback(
@@ -592,6 +321,7 @@ auto make_archive_modify_progress_callback(
     return [self createArchiveAtPath:archivePath format:format sources:sources
                    includeSubfolders:includeSubfolders preservePaths:preservePaths
                     compressionLevel:compressionLevel password:@""
+                               links:FCXLArchiveLinksKeep
                     progressCallback:progressCallback error:error];
 }
 
@@ -602,6 +332,7 @@ auto make_archive_modify_progress_callback(
                preservePaths:(BOOL)preservePaths
             compressionLevel:(NSInteger)compressionLevel
                    password:(NSString *)password
+                      links:(FCXLArchiveLinks)links
            progressCallback:(FCXLArchiveCreateProgressCallback)progressCallback
                       error:(NSError**)error {
     FCXLInvalidateArchiveListing();
@@ -632,12 +363,18 @@ auto make_archive_modify_progress_callback(
         return NO;
     }
 
+    // Итоги — тем же обходом, что и запись: через ссылки, если их класть тем, на что ведут.
+    const std::vector<std::string> source_paths = source_path_list(sources);
+    const fcxl::archive::SymlinkMode link_mode = symlink_mode_from(links);
     const auto totals_result =
-        calculate_archive_source_totals(sources, includeSubfolders, error);
+        fcxl::archive::ArchiveWriter::measure_sources(source_paths, includeSubfolders, link_mode);
     if (!totals_result.has_value()) {
+        if (error != nullptr) {
+            *error = make_nserror(totals_result.error());
+        }
         return NO;
     }
-    const ArchiveSourceTotals totals = totals_result.value();
+    const fcxl::archive::SourceTotals totals = totals_result.value();
 
     fcxl::archive::ArchiveWriter::ArchiveProgressCallback core_progress_callback = nullptr;
     if (progressCallback != nil) {
@@ -675,14 +412,14 @@ auto make_archive_modify_progress_callback(
         static_cast<int>(compressionLevel),
         preservePaths,
         core_progress_callback,
-        totals.bytes_total,
-        totals.files_total
+        totals.bytes,
+        totals.files
     );
     if (!assign_void_result(create_result, error)) {
         return NO;
     }
 
-    if (!add_sources_to_archive(&writer, sources, includeSubfolders, preservePaths, error)) {
+    if (!assign_void_result(writer.add_sources(source_paths, includeSubfolders, link_mode), error)) {
         return NO;
     }
 

@@ -21,6 +21,8 @@ struct PackDialogView: View {
     @State private var dontShowAgain = false
     @State private var password = ""
     @State private var passwordRepeat = ""
+    /// The last choice made here; it is written back on OK, so a cancelled dialog changes nothing.
+    @State private var links = ArchiveLinkMode.stored
 
     init(session: FCXLDialogSession<ArchivePackDialogResult>,
          defaultArchivePath: String,
@@ -138,6 +140,19 @@ struct PackDialogView: View {
                     Toggle(L("pack.includeSubfolders"), isOn: $includeSubfolders)
                     Toggle(L("pack.deleteAfterPack"), isOn: $deleteAfterPack)
                     Toggle(L("pack.separateArchives"), isOn: $separateArchives)
+                    // hdiutil copies a folder as it is, links included: for DMG there is
+                    // nothing to choose, and a live picker would promise a choice nobody honours.
+                    LabeledContent(L("pack.links")) {
+                        FCXLDialogMenuPicker(items: ArchiveLinkMode.allCases,
+                                             selection: $links,
+                                             title: \.title)
+                    }
+                    .disabled(format.isBuiltByHdiutil)
+                    .opacity(format.isBuiltByHdiutil ? 0.4 : 1)
+                    Text(format.isBuiltByHdiutil ? L("pack.links.dmg.note") : links.note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Section {
@@ -165,6 +180,7 @@ struct PackDialogView: View {
         if dontShowAgain {
             UserDefaults.standard.set(true, forKey: DialogService.skipPackDialogKey)
         }
+        UserDefaults.standard.set(links.rawValue, forKey: ArchiveLinkMode.defaultsKey)
         session.finish(ArchivePackDialogResult(
             archivePath: archivePath,
             format: format,
@@ -173,7 +189,8 @@ struct PackDialogView: View {
             includeSubfolders: includeSubfolders,
             deleteAfterPack: deleteAfterPack,
             separateArchives: separateArchives,
-            password: (format == .zip || format == .dmg) ? password : ""
+            password: (format == .zip || format == .dmg) ? password : "",
+            links: links
         ))
     }
 }

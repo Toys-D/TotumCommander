@@ -49,6 +49,8 @@ struct ArchiveOperationParams {
     /// The archive's password, when it has one. This struct lives in MEMORY only — were the
     /// queue ever persisted to disk, this field must be excluded first.
     var password: String = ""
+    /// For pack — what a symbolic link becomes; a retried operation packs the same way.
+    var links: ArchiveLinkMode = .keep
 }
 
 /// Parameters for remote file transfer operations.

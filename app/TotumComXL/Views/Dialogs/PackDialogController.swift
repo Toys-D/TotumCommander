@@ -7,11 +7,13 @@ import Foundation
 @MainActor
 enum PackDialogController {
 
+    static let size = NSSize(width: 560, height: 620)
+
     /// Show the pack dialog modally; returns nil on Cancel/ESC.
     static func run(defaultArchivePath: String,
                     defaultFormat: ArchiveFormat,
                     selectedItemsCount: Int) -> ArchivePackDialogResult? {
-        FCXLDialog.runModal(size: NSSize(width: 560, height: 620)) { session in
+        FCXLDialog.runModal(size: size) { session in
             PackDialogView(
                 session: session,
                 defaultArchivePath: defaultArchivePath,

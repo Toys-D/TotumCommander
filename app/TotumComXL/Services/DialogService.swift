@@ -14,6 +14,7 @@ struct ArchivePackDialogResult {
     let separateArchives: Bool
     /// AES-256, ZIP only; empty means an ordinary archive.
     var password: String = ""
+    var links: ArchiveLinkMode = .keep
 }
 
 struct ArchiveExtractDialogResult {
@@ -620,7 +621,9 @@ final class DialogService {
                 preservePaths: true,
                 includeSubfolders: true,
                 deleteAfterPack: false,
-                separateArchives: false
+                separateArchives: false,
+                // The window is skipped, its remembered choice is not.
+                links: .stored
             )
         }
         return PackDialogController.run(

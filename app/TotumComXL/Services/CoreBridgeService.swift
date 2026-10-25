@@ -223,6 +223,7 @@ final class CoreBridgeService {
                        preservePaths: Bool,
                        compressionLevel: Int,
                        password: String = "",
+                       links: ArchiveLinkMode = .keep,
                        progress: ((String, Int64, Int64, Int, Int, Int64) -> Void)? = nil) throws {
         _ = try archiveBridge.createArchive(
             atPath: archivePath,
@@ -232,6 +233,7 @@ final class CoreBridgeService {
             preservePaths: preservePaths,
             compressionLevel: compressionLevel,
             password: password,
+            links: links.bridgeValue,
             progressCallback: { currentFile, bytesRead, bytesTotal, filesDone, filesTotal, compressedBytes in
                 progress?(
                     currentFile,

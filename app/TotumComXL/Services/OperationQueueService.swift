@@ -549,6 +549,7 @@ final class OperationQueueService: ObservableObject {
                     preservePaths: params.preservePaths,
                     includeSubfolders: params.includeSubfolders,
                     password: params.password,
+                    links: params.links,
                     reporter: reporter
                 )
 

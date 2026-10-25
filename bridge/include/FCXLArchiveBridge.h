@@ -15,6 +15,16 @@ typedef void (^FCXLArchiveCreateProgressCallback)(NSString *currentFile,
                                                   int filesTotal,
                                                   int64_t compressedBytes);
 
+/// What a symbolic link becomes in a new archive.
+typedef NS_ENUM(NSInteger, FCXLArchiveLinks) {
+    /// The link itself, as tar and zip -y keep it.
+    FCXLArchiveLinksKeep = 0,
+    /// What it points to, when it points outside what is packed: by a full path or above it.
+    FCXLArchiveLinksFollowOutside = 1,
+    /// Always what it points to.
+    FCXLArchiveLinksFollowAll = 2,
+};
+
 @interface FCXLArchiveBridge : NSObject
 
 - (instancetype)init;
@@ -53,7 +63,7 @@ typedef void (^FCXLArchiveCreateProgressCallback)(NSString *currentFile,
            progressCallback:(nullable FCXLArchiveCreateProgressCallback)progressCallback
                       error:(NSError**)error;
 /// AES-256, ZIP only; any other format with a non-empty password errors rather than shipping
-/// an archive the user merely believes is protected.
+/// an archive the user merely believes is protected. `links` — what goes in for a symbolic link.
 - (BOOL)createArchiveAtPath:(NSString *)archivePath
                      format:(NSString *)format
                     sources:(NSArray<NSString*>*)sources
@@ -61,6 +71,7 @@ typedef void (^FCXLArchiveCreateProgressCallback)(NSString *currentFile,
                preservePaths:(BOOL)preservePaths
             compressionLevel:(NSInteger)compressionLevel
                    password:(NSString *)password
+                      links:(FCXLArchiveLinks)links
            progressCallback:(nullable FCXLArchiveCreateProgressCallback)progressCallback
                       error:(NSError**)error;
 - (BOOL)addFilesToArchive:(NSString *)archivePath

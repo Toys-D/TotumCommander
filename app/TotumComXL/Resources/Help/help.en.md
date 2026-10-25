@@ -225,6 +225,8 @@ An archive opens with ↩ like an ordinary folder; inside you can browse, view a
 
 **Archive here** — a submenu with formats: the archive lands next to the files, no questions.
 
+**Links** — a row in the pack dialog; the choice is remembered and also applies to "Archive here". "All as links" (the default) stores a link as a link, as Finder's Compress and tar do: build folders with frameworks are packed as they are. "Outside ones as files" stores a link by a full path or above what is packed as what it points to, a file or a whole folder; links inside what is packed, including into another selected folder, stay links. "All as files" does that to every link. A broken link and a loop (a link to a folder it sits in) stay links; a DMG always keeps links. File permissions and dates are kept; on unpacking a link becomes a link again, and writing through a link outside the destination folder is refused.
+
 **Unpack** (⌘F9, context menu): destination folder, "Create subfolder with archive name", "Overwrite existing files". A password-protected archive asks for it; the password is kept in memory until the program quits. An encrypted ZIP without the right password is not unpacked at all — it is refused, and no empty files are left behind; a cancelled unpack removes the half-written file.
 
 **Editing an archive** — adding, deleting and renaming inside ZIP and other formats. If the format needs a full repack, you are warned with the archive size. Only ordinary local files can be added to an archive.
