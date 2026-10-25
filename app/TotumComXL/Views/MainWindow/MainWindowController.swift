@@ -4492,8 +4492,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         params.entryPaths = entries
 
         // Отправленное в очередь закрывает очередь: без отметки «готово» строка висела на 100 %
-        // с идущим таймером, а локальные операции после неё так и не начинались — они ждут
-        // друг друга по одной.
+        // с идущим таймером и навсегда занимала одно из мест — операций одновременно идёт не
+        // больше, чем задано в настройках.
         let adopted = AdoptedQueueOperation()
         progress.onSendToQueue = { [weak self] in
             let (opID, queueReporter) = qs.adoptRunningOperation(
