@@ -744,6 +744,7 @@ let package = Package(
                 "ViewModelTests/ChangeAttributesTests.swift",
                 "ViewModelTests/ResumableTransferTests.swift",
                 "ViewModelTests/ResumeFailedTransferTests.swift",
+                "ViewModelTests/AdoptedQueueOperationTests.swift",
                 "ViewModelTests/LocalizationTests.swift",
                 "ViewModelTests/DarwinFileOperationsTests.swift",
             ]

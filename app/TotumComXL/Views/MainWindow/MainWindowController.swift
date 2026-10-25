@@ -4491,8 +4491,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         params.archivePath = archivePath
         params.entryPaths = entries
 
+        // Отправленное в очередь закрывает очередь: без отметки «готово» строка висела на 100 %
+        // с идущим таймером, а локальные операции после неё так и не начинались — они ждут
+        // друг друга по одной.
+        let adopted = AdoptedQueueOperation()
         progress.onSendToQueue = { [weak self] in
-            let (_, queueReporter) = qs.adoptRunningOperation(
+            let (opID, queueReporter) = qs.adoptRunningOperation(
                 kind: .archiveExtract,
                 items: [],
                 destination: destination,
@@ -4504,6 +4508,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
                 filesDone: progress.lastFilesDoneValue,
                 filesTotal: progress.lastFilesTotalValue,
                 onCompletion: { self?.forceRefreshBothPanels() })
+            adopted.id = opID
             reporter.swap(to: queueReporter)
             return true
         }
@@ -4524,12 +4529,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
                     shouldCancel: { reporter.isCancelled })
                 Task { @MainActor in
                     reporter.close()
-                    self?.forceRefreshBothPanels()
+                    // В очереди панели обновит её собственное завершение.
+                    if !adopted.finish(in: qs) { self?.forceRefreshBothPanels() }
                 }
             } catch where ArchivePasswords.isPasswordFailure(error) {
                 Task { @MainActor in
                     // The window goes before the question, or the two modals stack.
                     reporter.close()
+                    adopted.finish(in: qs, error: error)
                     guard let self else { return }
                     ArchivePasswords.forget(for: archivePath)
                     guard let entered = ArchivePasswords.ask(
@@ -4541,6 +4548,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
             } catch {
                 Task { @MainActor in
                     reporter.close()
+                    // Сбой операции из очереди показывает её строка; без очереди — окно.
+                    guard !adopted.finish(in: qs, error: error) else { return }
                     // showOperationError stays quiet about a cancellation on its own — stopping
                     // on purpose is not a failure to complain about.
                     DialogService.shared.showOperationError(title: L("archive.operationError"),

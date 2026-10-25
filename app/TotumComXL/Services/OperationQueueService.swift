@@ -797,3 +797,22 @@ final class OperationQueueService: ObservableObject {
         onSuccessCallbacks.removeValue(forKey: id)
     }
 }
+
+/// Операция, которую окно хода отдало в очередь посреди работы. Кончается она там же, где
+/// шла, и сама очередь её конца не видит — ей надо сказать, иначе строка висит «идёт».
+@MainActor
+final class AdoptedQueueOperation {
+    var id: UUID?
+
+    /// Сообщает очереди итог, если операция ушла в неё. true — ушла: ошибку покажет её строка,
+    /// а панели обновит её завершение.
+    @discardableResult
+    func finish(in queue: OperationQueueService, error: Error? = nil) -> Bool {
+        guard let id else { return false }
+        // Отменённую в самой очереди не трогаем — её строка уже закрыта.
+        if queue.operations.first(where: { $0.id == id })?.isActive == true {
+            queue.markOperationCompleted(id, error: error)
+        }
+        return true
+    }
+}
