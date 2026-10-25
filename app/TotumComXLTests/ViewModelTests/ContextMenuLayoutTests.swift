@@ -739,6 +739,30 @@ final class ContextMenuLayoutTests: XCTestCase {
         return nil
     }
 
+    /// Всплывающие окна программы — только через `fcxlPopover`: голый `.popover` на macOS 27
+    /// обводит первую кнопку синим кольцом фокуса (синий квадрат в окне выбора цвета).
+    func test_всплывающиеОкнаБезКольцаФокуса() throws {
+        let root = FileManager.default.currentDirectoryPath + "/app/TotumComXL"
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(atPath: root))
+        let pattern = try NSRegularExpression(pattern: #"\.popover\s*\("#)
+        var found: [String] = []
+        var seen = 0
+        while let path = enumerator.nextObject() as? String {
+            guard path.hasSuffix(".swift"),
+                  let text = try? String(contentsOfFile: root + "/" + path, encoding: .utf8) else { continue }
+            for (number, line) in text.components(separatedBy: "\n").enumerated() {
+                let code = line.trimmingCharacters(in: .whitespaces)
+                guard !code.hasPrefix("//") else { continue }
+                if code.contains(".fcxlPopover(") { seen += 1 }
+                if pattern.firstMatch(in: code, range: NSRange(code.startIndex..., in: code)) != nil {
+                    found.append("\(path):\(number + 1): \(code)")
+                }
+            }
+        }
+        XCTAssertGreaterThan(seen, 5, "обёрткой пользуются")
+        XCTAssertTrue(found.isEmpty, "голые всплывающие окна:\n" + found.joined(separator: "\n"))
+    }
+
     /// Все меню программы — в её окне меню. Системное меню (`.contextMenu {}` и `Menu {}` у
     /// SwiftUI, NSPopUpButton и показ NSMenu самим AppKit) выглядит и появляется по-своему,
     /// а на macOS 27 ещё и влетает сбоку. Такого в исходниках быть не должно.

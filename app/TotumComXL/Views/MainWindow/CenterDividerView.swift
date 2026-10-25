@@ -383,7 +383,7 @@ struct CenterDividerView: View {
                 QueueTunnelButton(queueVM: queueVM, accent: accent) {
                     showQueuePopover.toggle()
                 }
-                .popover(isPresented: $showQueuePopover, arrowEdge: .bottom) {
+                .fcxlPopover(isPresented: $showQueuePopover, arrowEdge: .bottom) {
                     if let queueVM {
                         OperationQueuePanelContent(viewModel: queueVM)
                             .frame(width: 440, height: 340)

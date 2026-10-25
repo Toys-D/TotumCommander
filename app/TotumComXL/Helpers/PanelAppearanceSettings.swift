@@ -445,6 +445,11 @@ enum PanelAppearanceSettings {
 
     /// Applies the saved theme to the whole app. Setting `NSApp.appearance` to nil
     /// follows the system; .aqua / .darkAqua force light / dark (all windows inherit it).
+    /// Отметка в уведомлении о смене оформления: поменялся только цвет окна (интерфейс,
+    /// заголовок). Панелям перечитывать нечего — а ползунок шлёт такие десятками в секунду, и
+    /// полная перезагрузка обеих панелей на каждое держала его.
+    static let chromeOnlyChangeKey = "fcxl.appearance.chromeOnly"
+
     /// Posts `.fcxlAppearanceChanged` so panels re-read their per-theme background.
     @MainActor
     static func applyAppearanceMode() {

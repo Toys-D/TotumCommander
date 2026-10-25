@@ -161,7 +161,7 @@ extension View {
         // on whatever holds focus, and the window would open wearing a blue square.
         .focusable(false)
         .help(L("pdf.help.button"))
-        .popover(isPresented: shown, arrowEdge: .top) {
+        .fcxlPopover(isPresented: shown, arrowEdge: .top) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(topic.sections, id: \.0) { title, body in

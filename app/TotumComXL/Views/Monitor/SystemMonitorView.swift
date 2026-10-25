@@ -133,7 +133,7 @@ struct SystemMonitorView: View {
             .buttonStyle(.plain)
             .disabled(selectedProcess == nil)
             .help(L("monitor.inspect"))
-            .popover(isPresented: $showInspector, arrowEdge: .bottom) {
+            .fcxlPopover(isPresented: $showInspector, arrowEdge: .bottom) {
                 if let p = selectedProcess {
                     inspector(p)
                 } else {

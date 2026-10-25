@@ -457,7 +457,7 @@ struct DirectoryCompareDialogView: View {
                     // it opened with a blue square around it. Focus now starts on the real controls.
                     .focusable(false)
                     .help(L("compare.help.button"))
-                    .popover(isPresented: $showHelp, arrowEdge: .top) { helpContent }
+                    .fcxlPopover(isPresented: $showHelp, arrowEdge: .top) { helpContent }
                     .padding(.trailing, 20)
                     .padding(.top, 18)
                 }

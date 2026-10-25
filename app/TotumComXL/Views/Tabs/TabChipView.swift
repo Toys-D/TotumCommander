@@ -194,7 +194,7 @@ struct TabChipView: View {
         .overlay {
             RightClickMenu(buildContextMenu)
         }
-        .popover(isPresented: $showColorPicker, arrowEdge: .bottom) {
+        .fcxlPopover(isPresented: $showColorPicker, arrowEdge: .bottom) {
             FCXLColorPickerPanel(
                 hex: Binding(get: { pickerHex },
                              set: { pickerHex = $0; onSetColor($0.isEmpty ? nil : $0) }),

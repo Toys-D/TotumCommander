@@ -28,7 +28,7 @@ struct FCXLColorPicker: View {
                 )
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
+        .fcxlPopover(isPresented: $showPopover, arrowEdge: .bottom) {
             FCXLColorPickerPanel(
                 hex: $hex,
                 presets: presets,

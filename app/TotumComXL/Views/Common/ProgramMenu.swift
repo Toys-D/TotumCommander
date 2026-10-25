@@ -101,3 +101,16 @@ extension NSMenu {
         addItem(item)
     }
 }
+
+extension View {
+    /// Всплывающее окно программы — без синего кольца фокуса. macOS 27 ставит фокус на первую
+    /// кнопку всплывающего окна и обводит её; в окне выбора цвета это был синий квадрат вокруг
+    /// первого сохранённого цвета. Все всплывающие окна программы идут через эту обёртку —
+    /// проверка следит, чтобы голого `.popover(` в исходниках не было.
+    func fcxlPopover<Content: View>(isPresented: Binding<Bool>, arrowEdge: Edge? = nil,
+                                    @ViewBuilder content: @escaping () -> Content) -> some View {
+        popover(isPresented: isPresented, arrowEdge: arrowEdge) {
+            content().focusEffectDisabled()
+        }
+    }
+}

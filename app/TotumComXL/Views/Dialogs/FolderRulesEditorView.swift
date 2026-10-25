@@ -38,7 +38,7 @@ struct FolderRulesEditorView: View {
                     // a blue square.
                     .focusable(false)
                     .help(L("rules.help.button"))
-                    .popover(isPresented: $showHelp, arrowEdge: .top) { helpContent }
+                    .fcxlPopover(isPresented: $showHelp, arrowEdge: .top) { helpContent }
                     .padding(.trailing, 20)
                     .padding(.top, 18)
                 }

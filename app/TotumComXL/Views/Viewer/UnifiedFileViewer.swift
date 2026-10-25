@@ -869,7 +869,7 @@ struct UnifiedFileViewer: View {
             .buttonStyle(.borderless)
             .help(L("viewer.image.colours"))
             .disabled(imageSaving)
-            .popover(isPresented: $showImageColours, arrowEdge: .top) { imageColourPanel }
+            .fcxlPopover(isPresented: $showImageColours, arrowEdge: .top) { imageColourPanel }
         }
     }
 
@@ -885,7 +885,7 @@ struct UnifiedFileViewer: View {
             .help(L("viewer.image.crop"))
             .disabled(imageSaving)
             editButton("info.circle", L("viewer.exif.title")) { showImageInfo.toggle() }
-                    .popover(isPresented: $showImageInfo, arrowEdge: .top) { imageInfoPanel }
+                    .fcxlPopover(isPresented: $showImageInfo, arrowEdge: .top) { imageInfoPanel }
             editButton("doc.on.clipboard", L("viewer.image.copy")) { copyImageToClipboard() }
 
         }

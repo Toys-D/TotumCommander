@@ -97,6 +97,115 @@ final class AlternateRowsTests: XCTestCase {
     }
 }
 
+/// Цвет, который тянут ползунком, меняется плавно: фон панели, полосы и линии сетки
+/// перекрашиваются сразу и без перезагрузки строк, а цвета, которым перезагрузка нужна, —
+/// одна на серию шагов, после неё, а не на каждом шаге внутри движения мыши.
+@MainActor
+final class ColourDragTests: XCTestCase {
+
+    private let keys = [PanelAppearanceSettings.alternateRowsEnabledKey,
+                        PanelAppearanceSettings.alternateRowColorHexLightKey,
+                        PanelAppearanceSettings.alternateRowColorHexDarkKey,
+                        PanelAppearanceSettings.panelBackgroundColorHexLightKey,
+                        PanelAppearanceSettings.panelBackgroundColorHexDarkKey,
+                        PanelAppearanceSettings.fileNameColorHexKey]
+    private var saved: [String: Any] = [:]
+    private var folder = ""
+
+    override func setUp() async throws {
+        try await super.setUp()
+        for key in keys { saved[key] = UserDefaults.standard.object(forKey: key) }
+        folder = NSTemporaryDirectory() + "цвет-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        for n in 1...20 {
+            FileManager.default.createFile(atPath: folder + "/файл \(n).txt", contents: Data("x".utf8))
+        }
+    }
+
+    override func tearDown() async throws {
+        for key in keys {
+            if let value = saved[key] { UserDefaults.standard.set(value, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+        try? FileManager.default.removeItem(atPath: folder)
+        try await super.tearDown()
+    }
+
+    private func panel() async throws -> PanelViewController {
+        let id = UUID().uuidString
+        let vm = PanelViewModel(service: CoreBridgeService(), initialPath: NSHomeDirectory(),
+                                pathDefaultsKey: "panel.path.цвет.\(id)",
+                                viewModeDefaultsKey: "panel.mode.цвет.\(id)",
+                                showHiddenFiles: false)
+        addTeardownBlock { [weak vm] in MainActor.assumeIsolated { vm?.stopWatching() } }
+        let tabs = PanelTabsViewModel(panelKey: "tabs.цвет.\(id)", initialPath: NSHomeDirectory())
+        let vc = PanelViewController(viewModel: vm, tabsVM: tabs, side: .left)
+        vc.loadViewIfNeeded()
+        vm.loadDirectory(at: folder)
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline, vm.items.count < 20 {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        // Загрузка сама могла поставить перезагрузку вида — пусть пройдёт до замеров.
+        try await Task.sleep(nanoseconds: 200_000_000)
+        return vc
+    }
+
+    private func hex(_ colour: NSColor?) -> String {
+        colour.map { PanelAppearanceSettings.hexString(from: $0) } ?? "нет"
+    }
+
+    func testStripesAndBackgroundFollowTheDragAtOnceWithoutReloading() async throws {
+        let dark = PanelAppearanceSettings.isDarkAppearance
+        UserDefaults.standard.set(true, forKey: PanelAppearanceSettings.alternateRowsEnabledKey)
+        let vc = try await panel()
+        let reloads = vc.appearanceReloadCount
+
+        for step in 0..<30 {
+            let shade = String(format: "#%02X%02X%02XFF", step * 8, 64, 255 - step * 8)
+            UserDefaults.standard.set(shade, forKey: PanelAppearanceSettings.alternateRowColorKey(dark: dark))
+            XCTAssertEqual(hex(vc.tableView.alternateRowColor),
+                           hex(PanelAppearanceSettings.resolvedAlternateRowColor()),
+                           "полосы перекрашены сразу, шаг \(step)")
+
+            let background = String(format: "#%02X%02X%02X", 20, step * 6, 40)
+            UserDefaults.standard.set(background, forKey: PanelAppearanceSettings.panelBackgroundKey(dark: dark))
+            XCTAssertEqual(hex(vc.tableView.backgroundColor), hex(PanelAppearanceSettings.nsColor(
+                from: background, fallback: .black)), "фон перекрашен сразу, шаг \(step)")
+        }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(vc.appearanceReloadCount, reloads, "ни одной перезагрузки строк за всё перетаскивание")
+    }
+
+    /// Цвет интерфейса и заголовка — дело окна: панели на него не перезагружаются. Смена темы —
+    /// перезагружаются, как раньше.
+    func testTheWindowColourIsNoneOfThePanelsBusiness() async throws {
+        let vc = try await panel()
+        let reloads = vc.appearanceReloadCount
+        for _ in 0..<10 {
+            NotificationCenter.default.post(name: .fcxlAppearanceChanged, object: nil,
+                                            userInfo: [PanelAppearanceSettings.chromeOnlyChangeKey: true])
+        }
+        XCTAssertEqual(vc.appearanceReloadCount, reloads)
+        NotificationCenter.default.post(name: .fcxlAppearanceChanged, object: nil)
+        XCTAssertEqual(vc.appearanceReloadCount, reloads + 1, "смена темы — перечитать")
+    }
+
+    func testANameColourDragReloadsOnceAfterTheStepsNotOnEachOne() async throws {
+        let vc = try await panel()
+        let reloads = vc.appearanceReloadCount
+
+        for step in 0..<20 {
+            UserDefaults.standard.set(String(format: "#%02X8040", step * 10),
+                                      forKey: PanelAppearanceSettings.fileNameColorHexKey)
+        }
+        XCTAssertEqual(vc.appearanceReloadCount, reloads, "внутри движения — ни одной")
+
+        try await Task.sleep(nanoseconds: UInt64(PanelViewController.appearanceReloadDelay * 4 * 1e9))
+        XCTAssertEqual(vc.appearanceReloadCount, reloads + 1, "после — одна, с последним цветом")
+    }
+}
+
 /// Where the stripes are drawn: in the background under the transparent rows and cells, never by
 /// a row or a cell itself — a row is a subview, and anything it paints sits ABOVE the background
 /// glow and would shear its halo off. That was the first deleted attempt.

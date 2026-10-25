@@ -1029,10 +1029,13 @@ final class PanelViewController: NSViewController,
             if self.alternateHosting != nil { self.updateAlternateHosting() }
         }
 
-        // Re-read the per-theme panel background when the app switches light/dark.
+        // Re-read the per-theme panel background when the app switches light/dark. A change of
+        // the window's own colours (interface, title bar) says so and is none of the panel's
+        // business.
         appearanceNoteObserver = NotificationCenter.default.addObserver(
             forName: .fcxlAppearanceChanged, object: nil, queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] note in
+            guard (note.userInfo?[PanelAppearanceSettings.chromeOnlyChangeKey] as? Bool) != true else { return }
             self?.reloadAppearanceSettings()
         }
 
@@ -1322,6 +1325,21 @@ final class PanelViewController: NSViewController,
         PanelAppearanceSettings.cursorIconZoomAmountKey,
     ]
 
+    /// Ключи, которые только перекрашивают показанное: фон панели, полосы строк, линии сетки.
+    /// Ползунок цвета шлёт их десятками раз в секунду, и полная перезагрузка на каждый — все
+    /// строки, ширины столбцов, краткий вид, строка сортировки, в обеих панелях — держала саму
+    /// мышь: цвет полз за ней рывками. Им хватает перекраски (см. `recolourPanel`).
+    static let recolourKeys: Set<String> = [
+        PanelAppearanceSettings.panelBackgroundColorHexLightKey,
+        PanelAppearanceSettings.panelBackgroundColorHexDarkKey,
+        PanelAppearanceSettings.alternateRowColorHexLightKey,
+        PanelAppearanceSettings.alternateRowColorHexDarkKey,
+        PanelAppearanceSettings.gridLineColorHexLightKey,
+        PanelAppearanceSettings.gridLineColorHexDarkKey,
+        PanelAppearanceSettings.gridLinesOpacityKey,
+    ]
+
+    /// Отложенная полная перезагрузка вида (см. `scheduleAppearanceReload`).
     private var appearanceDebounceWork: DispatchWorkItem?
     private var appearanceNoteObserver: NSObjectProtocol?
     private var fileColorsObserver: NSObjectProtocol?
@@ -1338,13 +1356,16 @@ final class PanelViewController: NSViewController,
         } else if keyPath == PanelAppearanceSettings.thumbnailSizeKey {
             // A new cell size is a new layout, not a new colour: rebuild the thumbnails view.
             updateAlternateHosting()
+        } else if let keyPath, Self.recolourKeys.contains(keyPath) {
+            recolourPanel(backgroundChanged: keyPath == PanelAppearanceSettings.panelBackgroundColorHexLightKey
+                                             || keyPath == PanelAppearanceSettings.panelBackgroundColorHexDarkKey)
         } else if let keyPath, Self.appearanceKeys.contains(keyPath) {
             // Акцент красит лист «новое внутри» у папок (FolderNews). Краткий вид и миниатюры
             // перенастраивают ячейки по счётчику перекрасок — без него лист остался бы старым.
             if keyPath == PanelAppearanceSettings.accentColorHexKey {
                 FileColorRulesStore.shared.markRepaint()
             }
-            reloadAppearanceSettings()
+            scheduleAppearanceReload()
         } else if let keyPath, Self.cursorBeautyKeys.contains(keyPath) {
             // Live cursor-beauty tweak: repaint just the detailed-mode glow. No reload.
             updateDetailedCursorGlow()
@@ -1466,7 +1487,70 @@ final class PanelViewController: NSViewController,
             """)
     }
 
+    /// Полная перезагрузка вида — не на каждый тик ползунка. Цвет имени или курсора, который
+    /// тянут мышью, приходит десятками раз в секунду, и перезагрузка всех строк на каждый шла
+    /// прямо внутри движения мыши — ползунок отставал. Теперь движение только отмечает, что
+    /// перезагрузка нужна; она идёт после, одна на короткий промежуток, и берёт последнее
+    /// значение. Одиночная правка (выключатель, выбор из списка) её задержки не замечает.
+    private func scheduleAppearanceReload() {
+        guard appearanceDebounceWork == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.appearanceDebounceWork = nil
+            self.reloadAppearanceSettings()
+        }
+        appearanceDebounceWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.appearanceReloadDelay, execute: work)
+    }
+
+    /// Сколько ждать полной перезагрузки после правки: столько же, сколько длится кадр-другой —
+    /// глаз не видит задержки, а ползунок, который тянут, ничего не держит.
+    static let appearanceReloadDelay: TimeInterval = 0.06
+
+    /// Перекрасить показанное — фон, полосы строк, линии сетки — без перезагрузки строк.
+    /// Подробный вид рисует их на фоне таблицы, краткий — на своём холсте; эскизы и краткий
+    /// вид прозрачны и показывают фон самой панели.
+    private func recolourPanel(backgroundChanged: Bool) {
+        let appAppearance = NSApp?.effectiveAppearance ?? NSAppearance.currentDrawing()
+        let dark = appAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let bgHex = UserDefaults.standard.string(forKey: PanelAppearanceSettings.panelBackgroundKey(dark: dark)) ?? ""
+        resolvedPanelBackgroundColor = PanelAppearanceSettings.nsColor(from: bgHex, fallback: .controlBackgroundColor)
+        resolvedAlternateRowColor = PanelAppearanceSettings.resolvedAlternateRowColor()
+        let gridColor = PanelAppearanceSettings.resolvedGridLineColor()
+        let gridStyle = PanelAppearanceSettings.resolvedGridStyle()
+
+        view.layer?.backgroundColor = resolvedPanelBackgroundColor.cgColor
+        scrollView?.backgroundColor = resolvedPanelBackgroundColor
+        if let tableView {
+            tableView.backgroundColor = resolvedPanelBackgroundColor
+            tableView.alternateRowColor = resolvedAlternateRowColor
+            tableView.gridLineColor = gridColor
+            tableView.gridStyle = gridStyle
+        }
+        if let alternateHosting {
+            for canvas in Self.briefCanvases(in: alternateHosting) {
+                canvas.alternateRowColor = resolvedAlternateRowColor
+                canvas.gridLineColor = gridColor
+                canvas.gridStyle = gridStyle
+            }
+        }
+        if backgroundChanged { updateSortBarBackground() }
+    }
+
+    /// Холсты краткого вида внутри его SwiftUI-обёртки.
+    private static func briefCanvases(in view: NSView) -> [BriefCollectionView] {
+        view.subviews.flatMap { sub -> [BriefCollectionView] in
+            if let canvas = sub as? BriefCollectionView { return [canvas] }
+            return briefCanvases(in: sub)
+        }
+    }
+
+    /// Сколько раз вид перезагружался целиком — для проверок: перетаскивание цвета не должно
+    /// перезагружать его на каждом шаге.
+    private(set) var appearanceReloadCount = 0
+
     private func reloadAppearanceSettings() {
+        appearanceReloadCount += 1
         reloadAppearanceFromDefaults()
 
         // Apply row height and icon column width to detailed-mode table

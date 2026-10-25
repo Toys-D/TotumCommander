@@ -392,7 +392,8 @@ struct SettingsColorsView: View {
             set: {
                 if $0.isEmpty { UserDefaults.standard.removeObject(forKey: key) }
                 else { UserDefaults.standard.set($0, forKey: key) }
-                NotificationCenter.default.post(name: .fcxlAppearanceChanged, object: nil)
+                NotificationCenter.default.post(name: .fcxlAppearanceChanged, object: nil,
+                                                userInfo: [PanelAppearanceSettings.chromeOnlyChangeKey: true])
             }
         )
     }
@@ -411,7 +412,8 @@ struct SettingsColorsView: View {
             set: {
                 if $0.isEmpty { UserDefaults.standard.removeObject(forKey: key) }
                 else { UserDefaults.standard.set($0, forKey: key) }
-                NotificationCenter.default.post(name: .fcxlAppearanceChanged, object: nil)
+                NotificationCenter.default.post(name: .fcxlAppearanceChanged, object: nil,
+                                                userInfo: [PanelAppearanceSettings.chromeOnlyChangeKey: true])
             }
         )
     }
