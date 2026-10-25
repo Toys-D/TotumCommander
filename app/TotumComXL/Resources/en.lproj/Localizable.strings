@@ -88,6 +88,7 @@
 "settings.dragDropConfirm" = "Confirm drag & drop operations";
 "settings.dragDropConfirmHint" = "Show confirmation dialog before copy/move. Shift+drag = move, Cmd+drag = move.";
 "settings.section.dialogs" = "Confirmation dialogs";
+"settings.section.queue" = "Operation queue";
 "settings.skipCopyMoveDialog" = "Skip copy/move confirmation";
 "settings.skipDeleteDialog" = "Skip delete confirmation";
 "settings.skipPackDialog" = "Skip archive creation dialog";
@@ -899,7 +900,7 @@
 "network.connectDrive.failed.title" = "Could not connect";
 "network.connectDrive.failed.message" = "Could not mount %@ (status %d).\n\nCheck the address, that the computer is reachable, and that you have access to that share.";
 "settings.maxConcurrentTransfers" = "Simultaneous operations: %d";
-"settings.maxConcurrentTransfers.hint" = "How many operations the queue runs at once: network transfers to one server and local copies alike. While one operation is asking about a conflict, the next one waits. If a server refuses an extra connection, the app falls back to running them one at a time.";
+"settings.maxConcurrentTransfers.hint" = "How many operations the queue runs at once. On different disks they run together; on one external or network disk, one at a time: together they only get in each other's way there. While an operation asks about a name clash, the next one waits. At most as many connections to one server; if it refuses one, the app falls back to running them one at a time.";
 "settings.speedLimit" = "Speed limit";
 "settings.speedLimit.none" = "No limit";
 "settings.speedLimit.kilobytes" = "%d KB/s";

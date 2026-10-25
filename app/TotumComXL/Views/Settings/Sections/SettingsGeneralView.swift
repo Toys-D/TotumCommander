@@ -18,6 +18,8 @@ struct SettingsGeneralView: View {
     @AppStorage(DialogService.skipDeleteDialogKey) private var skipDeleteDialog: Bool = false
     @AppStorage(DialogService.skipPackDialogKey) private var skipPackDialog: Bool = false
     @AppStorage(DialogService.skipExtractDialogKey) private var skipExtractDialog: Bool = false
+    /// Одна настройка и для сетевых передач, и для локальных операций: очередь у них общая.
+    @AppStorage("fcxl.maxConcurrentTransfers") private var maxConcurrentTransfers: Int = 2
     @AppStorage(FileOperationsService.externalEditorKey) private var externalEditorPath: String = ""
     @AppStorage("fcxl.breadcrumbSelectAll") private var breadcrumbSelectAll: Bool = false
     @AppStorage("fcxl.calculateFolderSizes") private var calculateFolderSizes: Bool = false
@@ -187,6 +189,16 @@ struct SettingsGeneralView: View {
                 Toggle(L("settings.confirmDelete"), isOn: invertedBinding($skipDeleteDialog)).settingAnchor("settings.confirmDelete")
                 Toggle(L("settings.confirmPack"), isOn: invertedBinding($skipPackDialog)).settingAnchor("settings.confirmPack")
                 Toggle(L("settings.confirmExtract"), isOn: invertedBinding($skipExtractDialog)).settingAnchor("settings.confirmExtract")
+            }
+            Section(L("settings.section.queue")) {
+                Stepper(value: $maxConcurrentTransfers, in: 1...8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L("settings.maxConcurrentTransfers", maxConcurrentTransfers)).settingAnchor("settings.maxConcurrentTransfers")
+                        Text(L("settings.maxConcurrentTransfers.hint"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             Section(L("settings.section.breadcrumbs")) {
                 Toggle(L("settings.breadcrumbSelectAll"), isOn: $breadcrumbSelectAll).settingAnchor("settings.breadcrumbSelectAll")

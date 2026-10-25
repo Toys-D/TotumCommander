@@ -3,21 +3,12 @@ import SwiftUI
 
 struct SettingsNetworkNTFSView: View {
     @AppStorage("fcxl.remoteDirectToQueue") private var remoteDirectToQueue: Bool = true
-    @AppStorage("fcxl.maxConcurrentTransfers") private var maxConcurrentTransfers: Int = 2
     @AppStorage(TransferSpeedLimit.key) private var speedLimitKBps: Int = 0
 
     var body: some View {
         Form {
             Section(L("settings.section.network")) {
                 Toggle(L("settings.remoteDirectToQueue"), isOn: $remoteDirectToQueue).settingAnchor("settings.remoteDirectToQueue")
-                Stepper(value: $maxConcurrentTransfers, in: 1...8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(L("settings.maxConcurrentTransfers", maxConcurrentTransfers)).settingAnchor("settings.maxConcurrentTransfers")
-                        Text(L("settings.maxConcurrentTransfers.hint"))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
                 VStack(alignment: .leading, spacing: 2) {
                     Picker(L("settings.speedLimit"), selection: $speedLimitKBps) {
                         ForEach(TransferSpeedLimit.choices, id: \.self) { kbps in

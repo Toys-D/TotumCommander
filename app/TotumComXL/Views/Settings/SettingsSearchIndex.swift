@@ -20,6 +20,7 @@ enum SettingsSearchIndex {
             ("settings.confirmDelete", "settings.section.dialogs"),
             ("settings.confirmPack", "settings.section.dialogs"),
             ("settings.confirmExtract", "settings.section.dialogs"),
+            ("settings.maxConcurrentTransfers", "settings.section.queue"),
             ("settings.breadcrumbSelectAll", "settings.section.breadcrumbs"),
             ("settings.updates.check", "settings.section.updates"),
         ],
@@ -207,7 +208,6 @@ enum SettingsSearchIndex {
         ],
         .networkNTFS: [
             ("settings.remoteDirectToQueue", "settings.section.network"),
-            ("settings.maxConcurrentTransfers", "settings.section.network"),
             ("settings.speedLimit", "settings.section.network"),
             ("settings.ntfs.explain", "settings.section.ntfs"),
             ("settings.ntfs.saved", "settings.section.ntfs"),

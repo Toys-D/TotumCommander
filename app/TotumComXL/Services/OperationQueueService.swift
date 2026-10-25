@@ -33,6 +33,9 @@ final class OperationQueueService: ObservableObject {
         self.fileOps = fileOps
     }
 
+    /// Подключённые тома — откуда очередь узнаёт, какие диски у операций. Подменяется в тестах.
+    var mountTable: () -> [OperationDisks.Mount] = OperationDisks.mountTable
+
     var activeCount: Int {
         operations.filter(\.isActive).count
     }
@@ -327,9 +330,9 @@ final class OperationQueueService: ObservableObject {
     }
 
     /// Fill every free slot. Remote transfers run up to `maxConcurrentRemote` at a time (each on
-    /// its own connection); local ops stay strictly serial (they contend on the same disk and on
-    /// the shared conflict dialogs). The WHOLE queue is scanned so a local op that cannot start
-    /// yet does not block remote ops queued behind it (no head-of-line blocking).
+    /// its own connection); local ops run up to the same number, one at a time per external disk
+    /// (OperationDisks), and wait while an earlier one may still ask about conflicts. The WHOLE
+    /// queue is scanned so an op that cannot start yet does not block those behind it.
     /// An op still OWNS its connection while paused — pause only parks the transfer thread inside
     /// waitWhilePaused(), it never disconnects. So a paused op must keep holding its slot.
     private func holdsSlot(_ op: QueuedOperation) -> Bool {
@@ -341,9 +344,12 @@ final class OperationQueueService: ObservableObject {
     }
 
     private func processQueue() {
-        var runningLocal = operations.filter { holdsSlot($0) && !$0.kind.isRemote }.count
+        let runningLocalOps = operations.filter { holdsSlot($0) && !$0.kind.isRemote }
+        var runningLocal = runningLocalOps.count
         let userMax = maxConcurrentRemote
         let mgr = ConnectionManagerService.shared
+        let mounts = mountTable()
+        var busyDisks = Set(runningLocalOps.flatMap { OperationDisks.exclusiveDisks(of: $0, mounts: mounts) })
 
         for idx in operations.indices where operations[idx].status == .queued {
             if operations[idx].kind.isRemote {
@@ -365,8 +371,13 @@ final class OperationQueueService: ObservableObject {
                 // same "how many at once" the user set for transfers — waiting only while
                 // an earlier one may still ask about conflicts. One idea, one setting.
                 guard runningLocal < userMax, dialogPhaseOps.isEmpty else { continue }
+                // На внешнем или сетевом диске — по одной: вместе там они только мешают друг другу.
+                // Ждущая не держит остальных: следующая на другой диск начнётся сразу.
+                let disks = OperationDisks.exclusiveDisks(of: operations[idx], mounts: mounts)
+                guard disks.isDisjoint(with: busyDisks) else { continue }
                 startOperation(at: idx)
                 runningLocal += 1
+                busyDisks.formUnion(disks)
             }
         }
     }

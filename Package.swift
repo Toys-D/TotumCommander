@@ -198,6 +198,7 @@ let package = Package(
                 "Models/RemoteConnection.swift",
                 "Models/RemoteSession.swift",
                 "Services/CoreBridgeService.swift",
+                "Services/OperationDisks.swift",
                 "Services/SpotlightQueryBuilder.swift",
                 "Services/SpotlightSearchService.swift",
                 "Services/CoreErrorCode.swift",
@@ -745,6 +746,7 @@ let package = Package(
                 "ViewModelTests/ResumableTransferTests.swift",
                 "ViewModelTests/ResumeFailedTransferTests.swift",
                 "ViewModelTests/AdoptedQueueOperationTests.swift",
+                "ViewModelTests/OperationDisksTests.swift",
                 "ViewModelTests/LocalizationTests.swift",
                 "ViewModelTests/DarwinFileOperationsTests.swift",
             ]

@@ -199,7 +199,7 @@ Move, copy, rename, delete to the Trash and create can be undone. The "Edit ▸ 
 
 The button with circling arrows in the tunnel (the number of operations is inside the icon) and "View ▸ Operation Queue". Every operation has its own progress and **Pause / Resume / Cancel / Dismiss** buttons; completed ones are cleared in one go. An interrupted network transfer can **continue from where it stopped**. Below the operations in the tunnel, mini progress bars are drawn.
 
-Settings: **concurrent operations** (how many the queue runs at once), **speed limit** for network transfers, **remote operations straight to the queue**. The progress window asks for confirmation when cancelling (can be turned off with "Don't ask next time"). A system notification arrives when done.
+Settings: **concurrent operations** (how many the queue runs at once; one at a time on a single external or network disk), **speed limit** for network transfers, **remote operations straight to the queue**. The progress window asks for confirmation when cancelling (can be turned off with "Don't ask next time"). A system notification arrives when done.
 
 ### 4.6. Drag and drop
 
@@ -445,6 +445,7 @@ The colours of the interface, cursor and tabs, the file-colour rules and the fol
 - **Editor** — an external application for F4; with the field empty, the built-in editor works.
 - **Mouse** — double-click interval; force click on the trackpad: nothing, open or view.
 - **Confirmation dialogs** — whether to ask before copying and moving (drag and drop too), deleting, creating an archive, unpacking.
+- **Operation queue ▸ Simultaneous operations** — how many operations the queue runs at once, network and disk alike. On different disks operations run together; on one external or network disk, one at a time: together they only get in each other's way there. On the internal disk they run together. At most as many connections to one server; if it refuses one, the program switches to one at a time by itself.
 - **Breadcrumbs** — select all text when editing the path.
 - **Updates** — check at launch and every three days: one request to GitHub with nothing about you. When a new version is out, a red "Update to …" button appears in About and a red dot on the Settings button.
 
@@ -515,7 +516,6 @@ The shape, blur and mask of the cursor live in "Design", in the "Effects" group.
 An item still shows only when it applies to the file: "Unpack" for an archive, "Follow Symlink" for a link. A program command that is unavailable at that moment does not disappear — it goes grey. Pressing "More" adds the rest straight into the open menu: it neither closes nor is built again, and the rows already read stay where they were. The menu on empty space is short and is not built here. Below — font size, icon size, padding, highlight rounding, minimum width, with a live preview of the real menu.
 
 ### Network & NTFS
-- **Simultaneous operations** — how many operations the queue runs at once: network transfers and local copies alike. If a server refuses an extra connection, the program switches to serial mode by itself.
 - **Speed limit** — a ceiling for network transfers so a big upload does not take the whole line; it applies from the next file.
 - **Send remote operations directly to queue** — transfers with servers go straight into the operation queue (section 4.5) and run in the background.
 - **NTFS writing** — the administrator password can be saved in the Keychain, after which the program stops asking for it on every write; "Remove password" deletes it.

@@ -16,9 +16,8 @@ enum OperationKind: String {
     case remoteDelete
     case multiRename
 
-    /// Remote transfers each hold their own network connection, so several may run at once
-    /// (see OperationQueueService.processQueue). Local ops stay strictly serial — they
-    /// contend on the same disk and on the shared conflict dialogs.
+    /// Remote transfers each hold their own network connection and are counted per server;
+    /// local ops are counted per external disk (see OperationQueueService.processQueue).
     var isRemote: Bool {
         self == .remoteDownload || self == .remoteUpload || self == .remoteDelete
     }
