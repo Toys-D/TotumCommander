@@ -50,6 +50,30 @@ final class InlineRenameLookTests: XCTestCase {
         XCTAssertGreaterThan(editing.minX, 0, "буквы не лежат на рамке")
     }
 
+    /// Поле получает фокус раньше, чем раскладка даст ему размер: создано с нулевой рамкой, и
+    /// F2 сразу делает его первым ответчиком. Отступ внутри нулевого прямоугольника давал
+    /// бесконечные координаты, AppKit превращал их в NaN и останавливал программу.
+    func test_фокусДоРаскладкиНеРоняетПрограмму() throws {
+        let window = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 300, height: 60),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        addTeardownBlock { MainActor.assumeIsolated { window.orderOut(nil) } }
+        let field = InlineRenameTextField(frame: .zero)
+        field.stringValue = "снимок (1).jpeg"
+        field.isEditable = true
+        field.translatesAutoresizingMaskIntoConstraints = false
+        window.contentView?.addSubview(field)
+        window.orderFront(nil)
+
+        XCTAssertTrue(window.makeFirstResponder(field))
+        let editor = try XCTUnwrap(field.currentEditor())
+        for value in [editor.frame.origin.x, editor.frame.origin.y, editor.frame.width, editor.frame.height] {
+            XCTAssertTrue(value.isFinite, "рамка редактора — числа, а не NaN и не бесконечность")
+        }
+        let cell = try XCTUnwrap(field.cell as? InlineRenameCell)
+        let drawing = cell.drawingRect(forBounds: .zero)
+        XCTAssertTrue(drawing.origin.x.isFinite && drawing.origin.y.isFinite)
+    }
+
     func test_текстЧитаемНаПодложкеВОбеихТемах() {
         let field = InlineRenameTextField(frame: .zero)
         InlineRenameLook.apply(to: field, font: .systemFont(ofSize: 15))

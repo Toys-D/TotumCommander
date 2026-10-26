@@ -107,6 +107,15 @@ final class InlineRenameCell: NSTextFieldCell {
     static let radius: CGFloat = 4
     static let lineWidth: CGFloat = 1.5
 
+    /// Отступ для букв — только когда в поле есть для него место. Поле получает фокус раньше,
+    /// чем раскладка даст ему размер (F2 делает первым ответчиком поле с нулевой рамкой), а
+    /// `insetBy` на слишком малом прямоугольнике возвращает «пустой» с бесконечными
+    /// координатами: AppKit превращал их в NaN и останавливал программу.
+    static func padded(_ rect: NSRect) -> NSRect {
+        guard rect.width > 2 * padX, rect.height > 2 * padY else { return rect }
+        return rect.insetBy(dx: padX, dy: padY)
+    }
+
     override func cellSize(forBounds rect: NSRect) -> NSSize {
         var size = super.cellSize(forBounds: rect)
         size.width += 2 * Self.padX
@@ -115,32 +124,35 @@ final class InlineRenameCell: NSTextFieldCell {
     }
 
     override func drawingRect(forBounds rect: NSRect) -> NSRect {
-        super.drawingRect(forBounds: rect.insetBy(dx: Self.padX, dy: Self.padY))
+        super.drawingRect(forBounds: Self.padded(rect))
     }
 
     // Редактор поля встаёт туда же, где стоят буквы без правки: иначе с началом правки текст
     // съезжал на отступ влево, на саму рамку.
     override func edit(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText,
                        delegate: Any?, event: NSEvent?) {
-        super.edit(withFrame: rect.insetBy(dx: Self.padX, dy: Self.padY), in: controlView,
+        super.edit(withFrame: Self.padded(rect), in: controlView,
                    editor: textObj, delegate: delegate, event: event)
     }
 
     override func select(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText,
                          delegate: Any?, start selStart: Int, length selLength: Int) {
-        super.select(withFrame: rect.insetBy(dx: Self.padX, dy: Self.padY), in: controlView,
+        super.select(withFrame: Self.padded(rect), in: controlView,
                      editor: textObj, delegate: delegate, start: selStart, length: selLength)
     }
 
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
-        let inset = Self.lineWidth / 2
-        let box = NSBezierPath(roundedRect: cellFrame.insetBy(dx: inset, dy: inset),
-                               xRadius: Self.radius, yRadius: Self.radius)
-        InlineRenameLook.boxFill.setFill()
-        box.fill()
-        InlineRenameLook.boxBorder.setStroke()
-        box.lineWidth = Self.lineWidth
-        box.stroke()
+        // Рамку — только полю, у которого уже есть размер (см. padded).
+        if cellFrame.width > Self.lineWidth, cellFrame.height > Self.lineWidth {
+            let inset = Self.lineWidth / 2
+            let box = NSBezierPath(roundedRect: cellFrame.insetBy(dx: inset, dy: inset),
+                                   xRadius: Self.radius, yRadius: Self.radius)
+            InlineRenameLook.boxFill.setFill()
+            box.fill()
+            InlineRenameLook.boxBorder.setStroke()
+            box.lineWidth = Self.lineWidth
+            box.stroke()
+        }
         // Пока идёт правка, буквы рисует редактор поля — второй раз не надо.
         if (controlView as? NSTextField)?.currentEditor() == nil {
             drawInterior(withFrame: cellFrame, in: controlView)
