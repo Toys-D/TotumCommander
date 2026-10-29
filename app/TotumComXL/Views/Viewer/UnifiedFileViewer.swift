@@ -493,9 +493,7 @@ struct UnifiedFileViewer: View {
                 aiOriginBadge
                 textRecognitionControls
                 if let onClose {
-                    Button(L("button.close"), action: onClose)
-                        .frame(minWidth: 44, minHeight: 30)
-                        .contentShape(Rectangle())
+                    sideButton(L("button.close"), symbol: "xmark", action: onClose)
                 }
             }
             HStack(spacing: 14) {
@@ -556,26 +554,36 @@ struct UnifiedFileViewer: View {
     private var printButton: some View {
         if let item = targetItem, !item.isDirectory,
            (effectiveMode == .text && plainText != nil) || PrintService.canPrint(item.path) {
-            Button {
+            sideButton(L("print.button"), symbol: "printer") {
                 if effectiveMode == .text, let plainText {
                     PrintService.print(text: plainText, title: item.name)
                 } else {
                     PrintService.print(files: [item.path])
                 }
-            } label: {
-                Label(L("print.button"), systemImage: "printer")
-                    .font(.caption)
-                    .lineLimit(1)
-                    .padding(.horizontal, 7)
-                    .frame(minHeight: 30)
-                    .contentShape(Rectangle())
-                    .overlay(RoundedRectangle(cornerRadius: 5)
-                        .stroke(Color.secondary.opacity(0.25), lineWidth: 1))
             }
-            .buttonStyle(.plain)
-            .opacity(0.7)
             .help(L("print.button.tip"))
         }
+    }
+
+    /// Кнопки у правого края полос — «Закрыть», «Печать»: одного вида, одной ширины и высоты,
+    /// с общим правым краем, так что стоят ровно одна под другой.
+    private static let sideButtonSize = CGSize(width: 104, height: 30)
+
+    private func sideButton(_ title: String, symbol: String,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            // Значок — в колонке одной ширины: тогда и значки, и подписи соседних кнопок
+            // стоят в одну линию.
+            HStack(spacing: 6) {
+                Image(systemName: symbol).frame(width: 18)
+                Text(title).lineLimit(1)
+            }
+            // Плашка добавляет по 10 точек по бокам и по 5 сверху и снизу.
+            .frame(width: Self.sideButtonSize.width - 20, height: Self.sideButtonSize.height - 10,
+                   alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(FCXLChipButtonStyle())
     }
 
     /// Кнопка режима «в один щелчок» — для тех двух, что нужны почти всегда.
