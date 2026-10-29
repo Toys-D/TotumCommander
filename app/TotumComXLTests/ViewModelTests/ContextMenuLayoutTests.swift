@@ -739,6 +739,96 @@ final class ContextMenuLayoutTests: XCTestCase {
         return nil
     }
 
+    /// Акцентная обводка обходит весь край меню — и подменю — на глазах. Окно доходит до экрана
+    /// через 35–50 мс после начала появления; с прежней кривой (быстро в начале) к этому времени
+    /// была готова четверть края, к 0,1 с — половина, и видно было, как дорисовывается только
+    /// остаток. Теперь к первому видимому кадру не нарисовано почти ничего, линия выходит из
+    /// левого верхнего угла, идёт по часовой стрелке и замыкает весь край.
+    func test_обводкаМенюОбходитВесьКрайНаГлазах() throws {
+        let key = PanelAppearanceSettings.accentColorHexKey
+        let saved = UserDefaults.standard.string(forKey: key)
+        defer { UserDefaults.standard.set(saved, forKey: key) }
+        UserDefaults.standard.set("#FF2D55FF", forKey: key)
+        let menu = NSMenu()
+        menu.addStyledItem(title: "Открыть в соседней панели", symbolName: "folder", id: "context.open") {}
+        menu.addStyledItem(title: "Свойства", symbolName: "info.circle", id: "context.properties") {}
+        let sub = NSMenu()
+        for index in 1...8 { sub.addStyledItem(title: "Вложенный пункт \(index)", symbolName: "circle") {} }
+        let tools = NSMenuItem(title: "Инструменты", action: nil, keyEquivalent: "")
+        tools.submenu = sub
+        menu.addItem(tools)
+        let popup = ContextPopupMenuController.shared
+        addTeardownBlock { MainActor.assumeIsolated { popup.dismiss() } }
+
+        let appearance = NSApp.appearance
+        defer { NSApp.appearance = appearance }
+
+        popup.show(menu, at: NSPoint(x: 400, y: 600))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        for theme in [NSAppearance.Name.aqua, .darkAqua] {
+            NSApp.appearance = NSAppearance(named: theme)
+            popup.show(menu, at: NSPoint(x: 420, y: 620))
+            let root = try XCTUnwrap(popup.openMenuWindow)
+            Self.checkOutlineTrace(Self.outlineTrace(of: root), "меню, \(theme.rawValue)")
+            popup.openSubmenu(ofRow: 2)
+            let child = try XCTUnwrap(NSApp.windows.last { $0.isVisible && $0.level == .popUpMenu && $0 !== root })
+            Self.checkOutlineTrace(Self.outlineTrace(of: child), "подменю, \(theme.rawValue)")
+        }
+    }
+
+    private static func checkOutlineTrace(_ trace: [(ms: Double, drawn: [Bool])], _ name: String,
+                                          file: StaticString = #filePath, line: UInt = #line) {
+        func share(_ drawn: [Bool]) -> Int { drawn.filter { $0 }.count * 100 / max(drawn.count, 1) }
+        let early = trace.filter { $0.ms <= 50 }.map { share($0.drawn) }.max() ?? 0
+        XCTAssertLessThanOrEqual(early, 8, "\(name): к первому видимому кадру обводка ещё в начале пути",
+                                 file: file, line: line)
+        let begun = trace.filter { share($0.drawn) > 0 }
+        XCTAssertFalse(begun.isEmpty, "\(name): обводка нарисовалась", file: file, line: line)
+        for frame in begun {
+            // Нарисованное — всегда начало пути от левого верхнего угла по часовой стрелке.
+            let count = frame.drawn.filter { $0 }.count
+            let prefix = frame.drawn.prefix { $0 }.count
+            XCTAssertGreaterThanOrEqual(prefix, count - 2,
+                                        "\(name): линия идёт от левого верхнего угла по часовой (\(Int(frame.ms)) мс)",
+                                        file: file, line: line)
+        }
+        let halfway = begun.filter { (20...80).contains(share($0.drawn)) }.count
+        XCTAssertGreaterThanOrEqual(halfway, 5, "\(name): середину пути видно кадр за кадром", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(share(trace.last?.drawn ?? []), 97, "\(name): обводка замкнула весь край",
+                                    file: file, line: line)
+    }
+
+    /// Снимки окна от этой минуты, пока обводка не замкнётся: для каждой точки края — нарисована
+    /// ли там обводка. Точки идут по прямым участкам края в том порядке, в каком их проходит
+    /// линия: верх слева направо, правый край сверху вниз, низ справа налево, левый край снизу вверх.
+    private static func outlineTrace(of window: NSWindow) -> [(ms: Double, drawn: [Bool])] {
+        let start = CACurrentMediaTime()
+        var trace: [(ms: Double, drawn: [Bool])] = []
+        while CACurrentMediaTime() - start < 1.2 {
+            guard let view = window.contentView,
+                  let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { break }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            let ms = (CACurrentMediaTime() - start) * 1000
+            let width = rep.pixelsWide, height = rep.pixelsHigh
+            let scale = CGFloat(width) / view.bounds.width
+            let corner = Int(10 * scale), edge = Int(0.4 * scale), step = Int(4 * scale)
+            var points: [(Int, Int)] = []
+            points += stride(from: corner, to: width - corner, by: step).map { ($0, edge) }
+            points += stride(from: corner, to: height - corner, by: step).map { (width - 1 - edge, $0) }
+            points += stride(from: width - corner, to: corner, by: -step).map { ($0, height - 1 - edge) }
+            points += stride(from: height - corner, to: corner, by: -step).map { (edge, $0) }
+            let drawn = points.map { point -> Bool in
+                guard let color = rep.colorAt(x: point.0, y: point.1)?.usingColorSpace(.deviceRGB) else { return false }
+                let channels = [color.redComponent, color.greenComponent, color.blueComponent]
+                return (channels.max() ?? 0) - (channels.min() ?? 0) > 0.15
+            }
+            trace.append((ms, drawn))
+            if drawn.allSatisfy({ $0 }) { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.004))
+        }
+        return trace
+    }
+
     /// Всплывающие окна программы — только через `fcxlPopover`: голый `.popover` на macOS 27
     /// обводит первую кнопку синим кольцом фокуса (синий квадрат в окне выбора цвета).
     func test_всплывающиеОкнаБезКольцаФокуса() throws {

@@ -335,8 +335,8 @@ private struct ContextPopupMenuView: View {
 
     var body: some View {
         // Drives the opening moment: the border traces itself around the menu and the rows
-        // flutter in behind it. Fast on purpose — the whole thing is over in a third of a second,
-        // an effect the eye catches without the hand ever waiting for it.
+        // flutter in behind it. Fast on purpose — the rows are there in a fraction of a second
+        // and the border closes its loop in half of one: the hand never waits for it.
         let revealed = rows.revealed
         VStack(alignment: .leading, spacing: 1) {
             ForEach(Array(items.enumerated()), id: \.offset) { index, item in
@@ -384,11 +384,14 @@ private struct ContextPopupMenuView: View {
         // The accent border DRAWS itself around the menu, starting at the corner facing the
         // file the menu was opened for — the same accent the cursor bar wears, so the eye
         // reads one thread: the row, and the menu growing out of it.
+        // Обводка уходит в путь раньше, чем окно доходит до экрана (35–50 мс), поэтому трогается
+        // плавно: с «быстро в начале» к первому видимому кадру была готова четверть края, к
+        // 0,1 с — половина, и на глазах дорисовывался только остаток.
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            MenuOutline(cornerRadius: 8)
                 .trim(from: 0, to: revealed ? 1 : 0)
                 .stroke(accent.opacity(0.55), lineWidth: 1.5)
-                .animation(.easeOut(duration: 0.3), value: revealed)
+                .animation(.easeInOut(duration: 0.5), value: revealed)
         )
     }
 
@@ -403,6 +406,31 @@ private struct ContextPopupMenuView: View {
             y += items[i].isSeparatorItem ? (1 + 6) : (ContextMenuSettings.rowHeight + 1)
         }
         return y
+    }
+}
+
+/// Край меню для обводки — скругление как у фона, но путь начинается в левом верхнем углу,
+/// откуда меню вырастает из строки или из точки щелчка, идёт по часовой стрелке и замыкается
+/// там же. У `RoundedRectangle` путь начинается с середины правого края.
+private struct MenuOutline: Shape {
+    let cornerRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let radius = min(cornerRadius, rect.width / 2, rect.height / 2)
+        let start = CGPoint(x: rect.minX, y: rect.minY + radius)
+        var path = Path()
+        path.move(to: start)
+        path.addArc(tangent1End: CGPoint(x: rect.minX, y: rect.minY),
+                    tangent2End: CGPoint(x: rect.maxX, y: rect.minY), radius: radius)
+        path.addArc(tangent1End: CGPoint(x: rect.maxX, y: rect.minY),
+                    tangent2End: CGPoint(x: rect.maxX, y: rect.maxY), radius: radius)
+        path.addArc(tangent1End: CGPoint(x: rect.maxX, y: rect.maxY),
+                    tangent2End: CGPoint(x: rect.minX, y: rect.maxY), radius: radius)
+        path.addArc(tangent1End: CGPoint(x: rect.minX, y: rect.maxY),
+                    tangent2End: CGPoint(x: rect.minX, y: rect.minY), radius: radius)
+        path.addLine(to: start)
+        path.closeSubpath()
+        return path
     }
 }
 
