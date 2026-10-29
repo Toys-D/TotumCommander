@@ -56,6 +56,15 @@ struct PanelTab: Identifiable, Codable {
     /// ID of the RemoteConnection this tab belongs to (only for .remote tabs).
     var remoteConnectionID: UUID?
 
+    /// Откуда вкладка ушла на внешний или сетевой диск (или в обзор сети): туда она вернётся,
+    /// когда диск извлекут, а не в домашнюю папку. nil — вкладка на своём диске.
+    var returnPath: String?
+    /// Файл под курсором на том месте — возврат ставит курсор прямо на него.
+    var returnCursorPath: String?
+    /// Вкладку открыли под диск из этой вкладки: диск извлечён — она закрывается, а активной
+    /// становится та.
+    var openedFromTabID: UUID?
+
     init(id: UUID = UUID(), path: String, title: String? = nil, pinned: Bool = false,
          colorHex: String? = nil, kind: TabKind = .directory, remoteConnectionID: UUID? = nil) {
         self.id = id

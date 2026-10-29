@@ -229,15 +229,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
             guard let self,
                   let volumeURL = notification.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL
             else { return }
-            let volumePath = volumeURL.path
-            let leftClosed = self.splitVC.leftTabsVM.closeTabsOnVolume(volumePath)
-            let rightClosed = self.splitVC.rightTabsVM.closeTabsOnVolume(volumePath)
-            if leftClosed {
-                self.splitVC.leftPanelVM.loadDirectory(at: self.splitVC.leftTabsVM.activeTab.path)
-            }
-            if rightClosed {
-                self.splitVC.rightPanelVM.loadDirectory(at: self.splitVC.rightTabsVM.activeTab.path)
-            }
+            self.leaveEjectedVolume(volumeURL.path)
         }
 
         // Arriving back at the desktop this window lives on must put it in front. macOS picks
@@ -623,20 +615,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
     }
 
     func prepareForVolumeEject(_ volumePath: String) {
-        splitVC.leftPanelVM.prepareForVolumeEject(volumePath)
-        splitVC.rightPanelVM.prepareForVolumeEject(volumePath)
+        leaveEjectedVolume(volumePath)
+    }
 
-        // Close tabs that are on the ejected volume
-        let leftClosed = splitVC.leftTabsVM.closeTabsOnVolume(volumePath)
-        let rightClosed = splitVC.rightTabsVM.closeTabsOnVolume(volumePath)
-
-        // Reload panels if their active tab was closed
-        if leftClosed {
-            splitVC.leftPanelVM.loadDirectory(at: splitVC.leftTabsVM.activeTab.path)
-        }
-        if rightClosed {
-            splitVC.rightPanelVM.loadDirectory(at: splitVC.rightTabsVM.activeTab.path)
-        }
+    /// Обе панели уходят с пропавшего тома туда, откуда на него пришли (см. PanelViewController).
+    /// Одна дорога и для извлечения кнопкой, и для извлечения из Finder или diskutil.
+    private func leaveEjectedVolume(_ volumePath: String) {
+        splitVC.leftPanelVC.leaveEjectedVolume(volumePath)
+        splitVC.rightPanelVC.leaveEjectedVolume(volumePath)
     }
 
     /// Titles of active (queued/running/paused) queue operations whose source, destination, or

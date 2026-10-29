@@ -2208,7 +2208,7 @@ final class PanelViewController: NSViewController,
             // in the middle of typing.
             .removeDuplicates()
             .sink { [weak self] newPath in
-                self?.tabsVM.panelNavigated(to: newPath)
+                self?.tabsVM.panelNavigated(to: newPath, leaving: self?.viewModel.lastDeparture)
                 // Ушли из обзора сети — полосе «ищем компьютеры» там больше не место.
                 self?.updateNetworkBanner()
                 // Navigation clears the filter TEXT (the path setter does that), but the bubble is
@@ -2325,7 +2325,7 @@ final class PanelViewController: NSViewController,
         tabsVM.newTab(path: viewModel.currentPath)
     }
 
-    func handleSelectTab(_ index: Int) {
+    func handleSelectTab(_ index: Int, preferredCursorPath: String? = nil) {
         // One controller serves every tab, so nothing else takes the bubble down on a switch.
         endQuickFilter()
         let wasRemote = viewModel.insideRemote
@@ -2416,7 +2416,8 @@ final class PanelViewController: NSViewController,
             // Из терминала — туда, где панель и стояла. Закреплённая вкладка помнит только свой
             // корень, и спрятанный терминал возвращал её из глубины папок в начало.
             let backFromTerminal = oldTab.isTerminal && tab.id == tabBeforeTerminal
-            viewModel.loadDirectory(at: backFromTerminal ? viewModel.currentPath : tab.path)
+            viewModel.loadDirectory(at: backFromTerminal ? viewModel.currentPath : tab.path,
+                                    preferredCursorPath: preferredCursorPath)
         }
 
         // Apply saved viewMode after layout settles
@@ -2444,10 +2445,30 @@ final class PanelViewController: NSViewController,
         if let index = tabsVM.nearestLocalTabIndex(from: tabsVM.activeIndex) {
             handleSelectTab(index)
         } else {
-            tabsVM.newTab(path: path)
+            tabsVM.newTab(path: path, openedFrom: tabsVM.activeTab.id)
             handleSelectTab(tabsVM.activeIndex)
         }
         viewModel.loadDirectory(at: path, resetCursor: true)
+    }
+
+    /// Том пропал — извлекли кнопкой, из Finder, отключили компьютер в сети. Вкладки, ушедшие на
+    /// него, возвращаются туда, откуда пришли, курсором на тот же файл; открытые под него
+    /// закрываются, и панель показывает вкладку, из которой их открыли. Раньше панель с тома
+    /// уходила в домашнюю папку, а его вкладки просто закрывались.
+    func leaveEjectedVolume(_ volumeRoot: String) {
+        let exit = tabsVM.leaveVolume(volumeRoot)
+        if let target = exit.activate, let index = tabsVM.tabs.firstIndex(where: { $0.id == target }) {
+            handleSelectTab(index, preferredCursorPath: exit.cursorPath)
+        } else if exit.reloadActive {
+            viewModel.loadDirectory(at: tabsVM.activeTab.path, resetCursor: true,
+                                    preferredCursorPath: exit.cursorPath)
+        }
+        if tabsVM.closeTabs(exit.close) {
+            viewModel.loadDirectory(at: tabsVM.activeTab.path)
+        }
+        // Что осталось на томе (закреплённая вкладка без памяти) — уводится, как и прежде: держать
+        // открытой папку на извлекаемом томе значит не дать его извлечь.
+        _ = viewModel.prepareForVolumeEject(volumeRoot)
     }
 
     /// Called from MainWindowController when a terminal tab is created externally.
@@ -3039,7 +3060,7 @@ final class PanelViewController: NSViewController,
         } else {
             let title = info.map { "\($0.computer): \($0.share)" }
                 ?? (mountPoint as NSString).lastPathComponent
-            tabsVM.newNetworkMountTab(path: mountPoint, title: title)
+            tabsVM.newNetworkMountTab(path: mountPoint, title: title, openedFrom: tabsVM.activeTab.id)
         }
         viewModel.loadDirectory(at: mountPoint)
     }

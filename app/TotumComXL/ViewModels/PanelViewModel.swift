@@ -1837,7 +1837,15 @@ final class PanelViewModel: ObservableObject {
         return result
     }
 
+    /// Откуда панель ушла последним переходом: папка и файл под курсором — снятые, пока список
+    /// ещё старый (новый кладётся раньше, чем меняется путь). Вкладка, уходя на внешний диск,
+    /// запоминает это, чтобы после извлечения вернуться прямо к тому файлу.
+    private(set) var lastDeparture: PanelTabsViewModel.Departure?
+
     func loadDirectory(at path: String? = nil, resetCursor: Bool = true, preferredCursorPath: String? = nil) {
+        if let path, path != currentPath {
+            lastDeparture = .init(path: currentPath, cursorPath: cursorItem?.path)
+        }
         if insideRemote {
             startRemoteLoad(at: path ?? currentPath)
             return

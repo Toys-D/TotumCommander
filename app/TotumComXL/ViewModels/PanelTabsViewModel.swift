@@ -14,6 +14,16 @@ final class PanelTabsViewModel: ObservableObject {
 
     var activeTab: PanelTab { tabs[min(activeIndex, max(tabs.count - 1, 0))] }
 
+    /// Подключённые тома: по ним видно, ушла ли вкладка на внешний или сетевой диск.
+    /// Подменяется в тестах.
+    var mountTable: () -> [OperationDisks.Mount] = OperationDisks.mountTable
+
+    /// Откуда уходит панель: папка и файл под курсором в ней.
+    struct Departure: Equatable {
+        let path: String
+        let cursorPath: String?
+    }
+
     // MARK: - Tab loading spinner
 
     /// Show the spinner on a tab, with a hard safety timeout.
@@ -67,7 +77,7 @@ final class PanelTabsViewModel: ObservableObject {
 
     // MARK: - Navigation
 
-    func panelNavigated(to path: String) {
+    func panelNavigated(to path: String, leaving departure: Departure? = nil) {
         guard !tabs[activeIndex].pinned else { return }
         guard !tabs[activeIndex].isTerminal else { return }
         guard !tabs[activeIndex].isRemote else { return }
@@ -75,6 +85,7 @@ final class PanelTabsViewModel: ObservableObject {
         // настоящую папку. Запомнив «/STACK», сетевая вкладка при возврате открывала полку
         // с дорогой назад из ЧУЖОЙ вкладки — и «выключить полку» уводило в TEMP.
         guard !DropStackStore.isStackPath(path), !TrashService.isTrashPath(path) else { return }
+        rememberReturn(of: activeIndex, to: path, leaving: departure)
         tabs[activeIndex].path = path
         let mount = NetworkMountInfo.info(forPath: path)
         let kind = Self.kindAfterNavigation(
@@ -99,6 +110,33 @@ final class PanelTabsViewModel: ObservableObject {
             tabs[activeIndex].title = lastComponent.isEmpty ? path : lastComponent
         }
         persist()
+    }
+
+    /// Корень внешнего или сетевого тома, на котором лежит путь, или корень обзора сети; nil —
+    /// свой диск. По таблице томов из памяти ядра, без обращения к дискам.
+    static func awayRoot(of path: String, mounts: [OperationDisks.Mount]) -> String? {
+        if NetworkBrowserService.isNetworkPath(path) { return NetworkBrowserService.networkRoot }
+        return mounts
+            .filter { $0.point.hasPrefix("/Volumes/") && (path == $0.point || path.hasPrefix($0.point + "/")) }
+            .max { $0.point.count < $1.point.count }?
+            .point
+    }
+
+    /// Ушла со своего диска на внешний, сетевой или в обзор сети — запомнить, откуда и с какого
+    /// файла; вернулась на свой — забыть. С одного внешнего на другой память та же: вернуться
+    /// надо туда, где работа с дисками началась.
+    private func rememberReturn(of index: Int, to newPath: String, leaving departure: Departure?) {
+        let mounts = mountTable()
+        let oldPath = tabs[index].path
+        guard Self.awayRoot(of: newPath, mounts: mounts) != nil else {
+            tabs[index].returnPath = nil
+            tabs[index].returnCursorPath = nil
+            tabs[index].openedFromTabID = nil
+            return
+        }
+        guard Self.awayRoot(of: oldPath, mounts: mounts) == nil, tabs[index].openedFromTabID == nil else { return }
+        tabs[index].returnPath = oldPath
+        tabs[index].returnCursorPath = departure?.path == oldPath ? departure?.cursorPath : nil
     }
 
     /// Какой стать вкладке после перехода в другую папку.
@@ -191,8 +229,9 @@ final class PanelTabsViewModel: ObservableObject {
         return nil
     }
 
-    func newTab(path: String) {
-        let tab = PanelTab(path: path)
+    func newTab(path: String, openedFrom origin: UUID? = nil) {
+        var tab = PanelTab(path: path)
+        tab.openedFromTabID = origin
         tabs.insert(tab, at: activeIndex + 1)
         activeIndex += 1
         persist()
@@ -211,8 +250,9 @@ final class PanelTabsViewModel: ObservableObject {
         tabs.firstIndex { $0.isNetworkMount && ($0.path == root || $0.path.hasPrefix(root + "/")) }
     }
 
-    func newNetworkMountTab(path: String, title: String) {
-        let tab = PanelTab(path: path, title: title, kind: .networkMount)
+    func newNetworkMountTab(path: String, title: String, openedFrom origin: UUID? = nil) {
+        var tab = PanelTab(path: path, title: title, kind: .networkMount)
+        tab.openedFromTabID = origin
         tabs.insert(tab, at: activeIndex + 1)
         activeIndex += 1
         persist()
@@ -238,33 +278,91 @@ final class PanelTabsViewModel: ObservableObject {
         persist()
     }
 
-    /// Close all tabs whose path is on the given volume root (used when ejecting a volume).
-    /// Returns true if the active tab was closed and the caller should reload the panel.
-    @discardableResult
-    func closeTabsOnVolume(_ volumeRoot: String) -> Bool {
-        let normRoot = normalizePath(volumeRoot)
-        let activeID = tabs[activeIndex].id
-        var activeClosed = false
+    /// Что сделать панели, когда том пропал.
+    struct VolumeExit: Equatable {
+        /// Сделать активной эту вкладку — ту, из которой открыли вкладку диска.
+        var activate: UUID?
+        /// Активная вкладка вернулась на своё место — её папку надо перечитать.
+        var reloadActive = false
+        /// Файл, на который встать на месте возврата.
+        var cursorPath: String?
+        /// Вкладки, которые закрыть: открытые под диск и незакреплённые без памяти.
+        var close: [UUID] = []
+    }
 
-        tabs.removeAll { tab in
-            guard !tab.pinned else { return false }
-            let normPath = normalizePath(tab.path)
-            let isOnVolume = normPath == normRoot || normPath.hasPrefix(normRoot + "/")
-            if isOnVolume && tab.id == activeID { activeClosed = true }
-            return isOnVolume
+    /// Том пропал (извлекли кнопкой, из Finder, отключили компьютер в сети). Вкладка, ушедшая на
+    /// него, возвращается туда, откуда пришла, курсором на тот же файл; открытая под него — в
+    /// списке на закрытие, а активной станет та, из которой её открыли. Вкладки без памяти —
+    /// как раньше: незакреплённые закрываются. Пути вернувшихся вкладок меняются здесь же;
+    /// переключение и закрытие делает панель (`closeTabs`).
+    func leaveVolume(_ volumeRoot: String) -> VolumeExit {
+        let root = normalizePath(volumeRoot)
+        func isOn(_ path: String) -> Bool {
+            let normalized = normalizePath(path)
+            return normalized == root || normalized.hasPrefix(root + "/")
         }
-
-        // Ensure at least one tab remains
-        if tabs.isEmpty {
-            tabs = [PanelTab(path: NSHomeDirectory())]
-            activeClosed = true
+        let activeID = activeTab.id
+        var exit = VolumeExit()
+        for index in tabs.indices where !tabs[index].isRemote && !tabs[index].isTerminal && isOn(tabs[index].path) {
+            let tab = tabs[index]
+            if let origin = tab.openedFromTabID,
+               let originTab = tabs.first(where: { $0.id == origin }), !isOn(originTab.path) {
+                exit.close.append(tab.id)
+                if tab.id == activeID { exit.activate = origin }
+            } else if let back = tab.returnPath, !isOn(back) {
+                if tab.id == activeID {
+                    exit.reloadActive = true
+                    exit.cursorPath = tab.returnCursorPath
+                }
+                comeBack(index)
+            } else if !tab.pinned {
+                exit.close.append(tab.id)
+            }
         }
-
-        if activeIndex >= tabs.count {
-            activeIndex = max(0, tabs.count - 1)
+        // Вкладка, к которой возвращаемся, по дороге к диску могла зайти в обзор сети — она
+        // тоже возвращается туда, где работа началась.
+        let landing = exit.activate ?? activeID
+        if !exit.close.contains(landing), let index = tabs.firstIndex(where: { $0.id == landing }),
+           NetworkBrowserService.isNetworkPath(tabs[index].path), tabs[index].returnPath != nil {
+            if exit.activate == nil { exit.reloadActive = true }
+            exit.cursorPath = tabs[index].returnCursorPath
+            comeBack(index)
         }
         persist()
-        return activeClosed
+        return exit
+    }
+
+    /// Вернуть вкладку туда, откуда она ушла на диск, и забыть дорогу.
+    private func comeBack(_ index: Int) {
+        guard let back = tabs[index].returnPath else { return }
+        tabs[index].path = back
+        let lastComponent = (back as NSString).lastPathComponent
+        tabs[index].title = lastComponent.isEmpty ? back : lastComponent
+        if tabs[index].kind == .networkMount {
+            tabs[index].kind = .directory
+            if tabs[index].colorHex == PanelTab.remoteDefaultColorHex { tabs[index].colorHex = nil }
+        }
+        tabs[index].returnPath = nil
+        tabs[index].returnCursorPath = nil
+        tabs[index].openedFromTabID = nil
+    }
+
+    /// Закрыть вкладки по списку, не теряя активную. true — закрылась и активная: панели надо
+    /// показать ту, что стала активной вместо неё.
+    @discardableResult
+    func closeTabs(_ ids: [UUID]) -> Bool {
+        guard !ids.isEmpty else { return false }
+        let activeID = activeTab.id
+        tabs.removeAll { ids.contains($0.id) }
+        if tabs.isEmpty { tabs = [PanelTab(path: NSHomeDirectory())] }
+        if let index = tabs.firstIndex(where: { $0.id == activeID }) {
+            activeIndex = index
+            persist()
+            return false
+        }
+        activeIndex = min(activeIndex, tabs.count - 1)
+        persist()
+        return true
     }
 
     func closeTab(at index: Int) {
