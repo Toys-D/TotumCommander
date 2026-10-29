@@ -194,7 +194,9 @@ public final class DjVuPagesView: NSView {
 
     /// Bridge output → NSImage. The bridge hands back RGBA with alpha last, matching the
     /// CGImage layout below.
-    public static func render(reader: FCXLDjVuReader, index: Int, scale: CGFloat) -> NSImage? {
+    /// Чистая: читает страницу из данного читателя и собирает картинку — годится и вне главного
+    /// потока (печать раскладывает книгу на страницы в фоне), если читатель не делят потоки.
+    nonisolated public static func render(reader: FCXLDjVuReader, index: Int, scale: CGFloat) -> NSImage? {
         guard let result = reader.renderPage(at: index, scale: scale),
               let data = result["data"] as? Data,
               let w = result["width"] as? Int,

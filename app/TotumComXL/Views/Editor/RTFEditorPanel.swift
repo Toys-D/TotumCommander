@@ -10,6 +10,8 @@ struct RTFEditorPanel: View {
     let onClose: () -> Void
     /// Reports the unsaved (dirty) state outward so the disk-eject flow can warn about it.
     var onDirtyChange: ((Bool) -> Void)? = nil
+    /// Сюда редактор кладёт свою печать — для ⌥⌘P из окна программы.
+    var printHandle: PrintHandle? = nil
 
     @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
     private var accent: Color { PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple) }
@@ -37,6 +39,8 @@ struct RTFEditorPanel: View {
 
                 Divider().frame(height: 14)
 
+                formatButton("printer", tip: L("print.button.tip")) { printText() }
+
                 Button {
                     if state.save(to: filePath) { isDirty = false }
                 } label: {
@@ -61,6 +65,7 @@ struct RTFEditorPanel: View {
 
             RTFTextView(filePath: filePath, state: state, isDirty: $isDirty)
         }
+        .onAppear { printHandle?.action = { printText() } }
         .onChange(of: isDirty) { newDirty in onDirtyChange?(newDirty) }
         .onReceive(NotificationCenter.default.publisher(for: .fcxlRequestEditorClose)) { _ in
             handleClose()
@@ -74,6 +79,13 @@ struct RTFEditorPanel: View {
         }
         .buttonStyle(.borderless).controlSize(.small).help(tip)
         .contentShape(Rectangle())
+    }
+
+    /// Текст как есть, с оформлением и несохранёнными правками.
+    private func printText() {
+        guard let storage = state.textView?.textStorage else { return }
+        PrintService.print(attributed: NSAttributedString(attributedString: storage),
+                           title: (filePath as NSString).lastPathComponent)
     }
 
     private func handleClose() {

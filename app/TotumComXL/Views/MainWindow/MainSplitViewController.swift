@@ -532,6 +532,23 @@ final class MainSplitViewController: NSViewController {
     private var embeddedEditorPath: String?
     private var embeddedEditorSource: EditorDocumentSource = .fileSystem
     private var embeddedEditorIsDirty = false
+    /// Печать встроенного редактора — её кладёт сам редактор (Monaco или RTF).
+    private let embeddedEditorPrint = PrintHandle()
+
+    /// Клавиатура сейчас у встроенного редактора.
+    var embeddedEditorHasKeyboard: Bool {
+        guard isEditorEmbedded, let hosting = embeddedEditorHosting,
+              let responder = view.window?.firstResponder as? NSView else { return false }
+        return responder.isDescendant(of: hosting)
+    }
+
+    /// ⌥⌘P, пока клавиатура у встроенного редактора: печатается его текст как есть. false — не у
+    /// него, пусть печатает панель.
+    func printEmbeddedEditorIfFocused() -> Bool {
+        guard embeddedEditorHasKeyboard, let action = embeddedEditorPrint.action else { return false }
+        action()
+        return true
+    }
 
     func showEmbeddedEditor(filePath: String,
                             source: EditorDocumentSource = .fileSystem,
@@ -548,7 +565,8 @@ final class MainSplitViewController: NSViewController {
         embeddedEditorIsDirty = false
         let editor = EmbeddedEditorPanel(filePath: filePath, source: source,
                                          operations: operations, onClose: onClose,
-                                         onDirtyChange: { [weak self] in self?.embeddedEditorIsDirty = $0 })
+                                         onDirtyChange: { [weak self] in self?.embeddedEditorIsDirty = $0 },
+                                         printHandle: embeddedEditorPrint)
         let hostingView = NSHostingView(rootView: editor.focusEffectDisabled())
         hostingView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -582,7 +600,8 @@ final class MainSplitViewController: NSViewController {
         embeddedEditorSource = .fileSystem
         embeddedEditorIsDirty = false
         let editor = RTFEditorPanel(filePath: filePath, onClose: onClose,
-                                    onDirtyChange: { [weak self] in self?.embeddedEditorIsDirty = $0 })
+                                    onDirtyChange: { [weak self] in self?.embeddedEditorIsDirty = $0 },
+                                    printHandle: embeddedEditorPrint)
         let hostingView = NSHostingView(rootView: editor.focusEffectDisabled())
         hostingView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -614,6 +633,7 @@ final class MainSplitViewController: NSViewController {
         guard isEditorEmbedded else { return }
         embeddedEditorHosting?.removeFromSuperview()
         embeddedEditorHosting = nil
+        embeddedEditorPrint.action = nil
         leftPanelVC.view.isHidden = false
         rightPanelVC.view.isHidden = false
         isEditorEmbedded = false

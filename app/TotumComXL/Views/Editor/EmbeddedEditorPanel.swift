@@ -13,6 +13,8 @@ struct EmbeddedEditorPanel: View {
     let onClose: () -> Void
     /// Reports the unsaved (dirty) state outward so the disk-eject flow can warn about it.
     var onDirtyChange: ((Bool) -> Void)? = nil
+    /// Сюда редактор кладёт свою печать — для ⌥⌘P из окна программы.
+    var printHandle: PrintHandle? = nil
     @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
     private var accent: Color { PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple) }
 
@@ -58,7 +60,8 @@ struct EmbeddedEditorPanel: View {
             // Toolbar — общая с окном F4: у каждой кнопки значок и подпись.
             EditorToolbar(options: controller.options,
                           onFind: { controller.monaco?.showFind() },
-                          onReplace: { controller.monaco?.showReplace() })
+                          onReplace: { controller.monaco?.showReplace() },
+                          onPrint: { printText() })
 
             Divider()
 
@@ -89,6 +92,7 @@ struct EmbeddedEditorPanel: View {
         .onAppear {
             controller.source = source
             controller.options.language = MonacoEditorController.detectLanguage(for: filePath)
+            printHandle?.action = { printText() }
         }
         .onChange(of: isDirty) { newDirty in onDirtyChange?(newDirty) }
         .onReceive(NotificationCenter.default.publisher(for: .fcxlRequestEditorClose)) { _ in
@@ -97,6 +101,15 @@ struct EmbeddedEditorPanel: View {
     }
 
     // MARK: - Helpers
+
+    /// Текст как есть — с несохранёнными правками.
+    private func printText() {
+        guard let monaco = controller.monaco else { return }
+        let title = (filePath as NSString).lastPathComponent
+        Task { @MainActor in
+            PrintService.print(text: await monaco.getContentAsync(), title: title)
+        }
+    }
 
     private func handleClose() {
         Task { @MainActor in

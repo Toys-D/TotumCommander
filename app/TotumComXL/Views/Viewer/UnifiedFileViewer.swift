@@ -546,6 +546,35 @@ struct UnifiedFileViewer: View {
             .help(L("viewer.mode.choose"))
 
             Spacer()
+            printButton
+        }
+    }
+
+    /// Печать показанного (⌥⌘P в окне программы печатает то же): текст — каким он здесь виден,
+    /// в выбранной кодировке; остальное — самим файлом (PrintService).
+    @ViewBuilder
+    private var printButton: some View {
+        if let item = targetItem, !item.isDirectory,
+           (effectiveMode == .text && plainText != nil) || PrintService.canPrint(item.path) {
+            Button {
+                if effectiveMode == .text, let plainText {
+                    PrintService.print(text: plainText, title: item.name)
+                } else {
+                    PrintService.print(files: [item.path])
+                }
+            } label: {
+                Label(L("print.button"), systemImage: "printer")
+                    .font(.caption)
+                    .lineLimit(1)
+                    .padding(.horizontal, 7)
+                    .frame(minHeight: 30)
+                    .contentShape(Rectangle())
+                    .overlay(RoundedRectangle(cornerRadius: 5)
+                        .stroke(Color.secondary.opacity(0.25), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .opacity(0.7)
+            .help(L("print.button.tip"))
         }
     }
 

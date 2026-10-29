@@ -203,6 +203,7 @@ enum ContextMenuCatalogue {
         "context.createLink",
         "context.followSymlink",
         "context.sendTo",
+        "context.print",
         "context.openInTerminal",
         ContextMenuLayout.separatorID,
         "context.changeAttributes",
@@ -213,6 +214,7 @@ enum ContextMenuCatalogue {
     static let symbols: [String: String] = [
         "context.installApp": "arrow.down.app",
         "context.enterPackage": "shippingbox",
+        "context.print": "printer",
         "menu.selectSameType": "square.on.square.dashed",
         "context.open": "arrow.right.circle",
         "context.openWith": "arrow.up.forward.app",

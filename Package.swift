@@ -199,6 +199,7 @@ let package = Package(
                 "Models/RemoteSession.swift",
                 "Services/CoreBridgeService.swift",
                 "Services/OperationDisks.swift",
+                "Services/PrintService.swift",
                 "Services/SpotlightQueryBuilder.swift",
                 "Services/SpotlightSearchService.swift",
                 "Services/CoreErrorCode.swift",
@@ -748,6 +749,7 @@ let package = Package(
                 "ViewModelTests/AdoptedQueueOperationTests.swift",
                 "ViewModelTests/OperationDisksTests.swift",
                 "ViewModelTests/TabsVolumeReturnTests.swift",
+                "ViewModelTests/PrintServiceTests.swift",
                 "ViewModelTests/LocalizationTests.swift",
                 "ViewModelTests/DarwinFileOperationsTests.swift",
             ]

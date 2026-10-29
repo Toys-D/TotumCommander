@@ -304,6 +304,14 @@
 "pack.links.followOutside.note" = "A link leading outside — by a full path or above what is packed — is stored as what it points to. Links inside stay links.";
 "pack.links.followAll.note" = "Each link is replaced by what it points to: a file or a whole folder.";
 "pack.links.dmg.note" = "A DMG image always keeps links as links.";
+"context.print" = "Print…";
+"print.title" = "Print";
+"print.button" = "Print";
+"print.button.tip" = "Print (⌥⌘P)";
+"print.nothing" = "Nothing among the selection can be printed. Documents, PDFs, pictures, text and DjVu scans can.";
+"print.someFailed" = "Could not prepare for printing:\n%@\n\nThe rest is being printed.";
+"print.allFailed" = "Could not prepare for printing:\n%@";
+"print.jobTitle.files" = "Files: %d";
 "pack.browseFolder" = "Choose folder";
 "pack.defaultName" = "archive";
 

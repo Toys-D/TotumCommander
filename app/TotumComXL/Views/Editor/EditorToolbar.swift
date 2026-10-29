@@ -126,6 +126,8 @@ struct EditorToolbar: View {
     /// Поиск и замена — у каждого редактора свои (EditorFindModel).
     let onFind: () -> Void
     let onReplace: () -> Void
+    /// Печать текста как есть — с несохранёнными правками (PrintService).
+    var onPrint: (() -> Void)? = nil
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -147,6 +149,12 @@ struct EditorToolbar: View {
                     FCXLBarLabel(title: L("editor.toolbar.replace"), symbol: "arrow.left.arrow.right")
                 }
                 .help(L("editor.toolbar.replace.tip"))
+                if let onPrint {
+                    Button(action: onPrint) {
+                        FCXLBarLabel(title: L("print.button"), symbol: "printer")
+                    }
+                    .help(L("print.button.tip"))
+                }
                 separator
                 Button { options.wordWrap.toggle() } label: {
                     FCXLBarLabel(title: L("editor.toolbar.wordWrap"), symbol: "arrow.turn.down.left")

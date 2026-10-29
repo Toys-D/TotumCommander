@@ -56,6 +56,18 @@ extension MainWindowController {
         panelDidRequestDeletePermanently(panel, items: items)
     }
 
+    /// Печать (⌥⌘P). Клавиатура у редактора рядом с панелью — его текст как есть, с
+    /// несохранёнными правками; иначе выделенные файлы панели, без выделения — файл под курсором.
+    @objc func menuPrint(_ sender: Any?) {
+        if splitVC.printEmbeddedEditorIfFocused() { return }
+        PrintService.print(files: printTargets.map(\.path), window: window)
+    }
+
+    /// Что из выделенного (или файла под курсором) можно напечатать.
+    private var printTargets: [FileItem] {
+        panel.selectedOrCursorItems().filter { !$0.isDirectory && PrintService.canPrint($0.path) }
+    }
+
     @objc func menuPack(_ sender: Any?) {
         panelDidRequestPack(panel, items: panel.selectedOrCursorItems())
     }
@@ -293,6 +305,8 @@ extension MainWindowController {
         case #selector(menuCopy(_:)), #selector(menuMove(_:)), #selector(menuDelete(_:)),
              #selector(menuDeletePermanently(_:)):
             return !targets.isEmpty
+        case #selector(menuPrint(_:)):
+            return splitVC.embeddedEditorHasKeyboard || (local && !printTargets.isEmpty)
         case #selector(menuPack(_:)), #selector(menuPackInPlace(_:)):
             return !vm.insideArchive && !targets.isEmpty
         case #selector(menuUnpack(_:)):
@@ -413,6 +427,7 @@ extension MainWindowController {
         #selector(menuView(_:)), #selector(menuEdit(_:)), #selector(menuRename(_:)),
         #selector(menuCopy(_:)), #selector(menuMove(_:)), #selector(menuDelete(_:)),
         #selector(menuDeletePermanently(_:)), #selector(menuPack(_:)), #selector(menuUnpack(_:)),
+        #selector(menuPrint(_:)),
         #selector(menuPackInPlace(_:)), #selector(menuCreateSymlink(_:)), #selector(menuCreateAlias(_:)),
         #selector(menuCreateHardlink(_:)), #selector(menuCopyFilePath(_:)), #selector(menuCopyFolderPath(_:)),
         #selector(menuChangeAttributes(_:)), #selector(menuProperties(_:)),

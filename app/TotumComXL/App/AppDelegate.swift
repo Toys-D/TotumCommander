@@ -499,6 +499,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         add(fileMenu, L("context.properties"), #selector(MainWindowController.menuProperties(_:)),
             key: "i", symbol: "info.circle")
         fileMenu.addItem(.separator())
+        // ⌘P — палитра команд, печать — ⌥⌘P везде: в панелях, в просмотре, в редакторах.
+        add(fileMenu, L("context.print"), #selector(MainWindowController.menuPrint(_:)),
+            key: "p", mods: [.command, .option], symbol: "printer")
+        fileMenu.addItem(.separator())
         let networkItem = fileMenu.addItem(withTitle: L("network.connectToServer"),
                                            action: #selector(MainWindowController.handleNetworkMenu(_:)),
                                            keyEquivalent: "n")

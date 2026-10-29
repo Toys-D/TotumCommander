@@ -398,6 +398,19 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
     @objc private func tabClicked(_ sender: NSButton) { switchToTab(sender.tag) }
     @objc private func closeTabClicked(_ sender: NSButton) { closeTab(sender.tag) }
 
+    // MARK: - Print
+
+    /// Печать (⌥⌘P и кнопка полосы): текст открытой вкладки как есть — с несохранёнными правками.
+    @objc func menuPrint(_ sender: Any?) { printCurrent() }
+
+    private func printCurrent() {
+        let title = (currentPath as NSString).lastPathComponent
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            PrintService.print(text: await monaco.getContentAsync(), title: title, window: window)
+        }
+    }
+
     // MARK: - Toolbar
 
     /// Полоса над текстом — общая с панелью напротив (EditorToolbar): слова, а не значки.
@@ -405,7 +418,8 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
         let host = NSHostingView(rootView: EditorToolbar(
             options: viewOptions,
             onFind: { [weak self] in self?.monaco.showFind() },
-            onReplace: { [weak self] in self?.monaco.showReplace() })
+            onReplace: { [weak self] in self?.monaco.showReplace() },
+            onPrint: { [weak self] in self?.printCurrent() })
             .editorChrome(viewOptions)
             .focusEffectDisabled())
         host.frame = NSRect(x: 0, y: 0, width: 900, height: 30)

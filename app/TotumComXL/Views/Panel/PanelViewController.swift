@@ -5659,6 +5659,16 @@ final class PanelViewController: NSViewController,
             }
         }
 
+        // Печать — того из выделенного, что можно напечатать, одним заданием (PrintService).
+        if !viewModel.insideArchive && !viewModel.insideRemote {
+            let printable = selectedOrCursorItems().filter { !$0.isDirectory && PrintService.canPrint($0.path) }
+            if !printable.isEmpty {
+                menu.addStyledItem(title: L("context.print"), symbolName: "printer", id: "context.print") { [weak self] in
+                    PrintService.print(files: printable.map(\.path), window: self?.view.window)
+                }
+            }
+        }
+
         // Open a FOLDER in the external terminal — local panels only: a remote listing or
         // an archive has no working directory a shell could stand in.
         if item.isDirectory, !viewModel.insideArchive, !viewModel.insideRemote,

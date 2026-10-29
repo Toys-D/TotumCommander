@@ -342,6 +342,7 @@ The command "Tools ▸ Uninstall the program…" or F8 on a single `.app` (or th
 - **Create Link**: symbolic, alias, hard (not for folders).
 - **Tags** (Tools ▸ Tags, context menu): the seven Finder colours, a check mark — already set, "Clear tags".
 - **Send to** — the system share sheet (AirDrop, Mail, Telegram…). SVG for Telegram is packed.
+- **Print** (⌥⌘P, "File ▸ Print…", the context menu; a "Print" button in the F3 viewer and in the editors) — the system print dialog: printer, copies, pages, two-sided printing, paper, preview. Selected files are printed as one job, one after another: PDFs, pictures, text and code, Markdown formatted, Word, RTF, OpenDocument and HTML, DjVu scans, EPS and PostScript. An editor prints its text as it is, with unsaved changes; the viewer prints text in the chosen encoding. Whatever could not be prepared is named before the print dialog.
 - **Open With…** — choose a program with an "Always open this way" checkbox (the rule changes for the whole Mac, like in Finder).
 - **Show in Finder**, **Open in Terminal** (the external terminal is chosen in settings), **Copy file path**, **Copy path**.
 
