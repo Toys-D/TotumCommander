@@ -14,6 +14,8 @@ struct SettingsSidebar: View {
     @Binding var query: String
     @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
     @FocusState private var listFocused: Bool
+    /// Откуда число у «Обновлений». Подменяется в тестах вида.
+    @ObservedObject var updates = UpdateChecker.shared
 
     var body: some View {
         // Resolve the colours ONCE per render (not per row).
@@ -54,6 +56,9 @@ struct SettingsSidebar: View {
                                 Text(section.title)
                                     .foregroundStyle(isSelected ? onAccent : .primary)
                                 Spacer(minLength: 0)
+                                if section == .updates, let badge = Self.badgeText(count: updates.newer.count) {
+                                    badgeView(badge)
+                                }
                             }
                             .padding(.vertical, 5)
                             .padding(.horizontal, 8)
@@ -82,6 +87,25 @@ struct SettingsSidebar: View {
                 .keyboardShortcut("f", modifiers: .command).opacity(0))
         }
         .frame(width: 200)
+    }
+
+    /// Сколько версий вышло после установленной — число в кружке у раздела «Обновления».
+    /// Нет новых — нет и кружка.
+    static func badgeText(count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return count > 99 ? "99+" : String(count)
+    }
+
+    /// Красный, как точка на шестерёнке: кружок продолжает её — точка ведёт в настройки,
+    /// кружок показывает, в какой раздел.
+    private func badgeView(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 5)
+            .frame(minWidth: 18, minHeight: 18)
+            .background(Capsule().fill(Color(nsColor: .systemRed)))
     }
 
     /// Move the pill one step and keep it on screen. Clamped at both ends — wrapping around

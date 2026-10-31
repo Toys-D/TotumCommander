@@ -34,7 +34,6 @@ struct SettingsGeneralView: View {
     @AppStorage(ToolbarLook.defaultsKey) private var toolbarLook: String = ToolbarLook.icons.rawValue
     @AppStorage(ToolbarLook.separatorsKey) private var toolbarSeparators: Bool = false
     @AppStorage(WindowLaunchMode.defaultsKey) private var windowLaunch: String = WindowLaunchMode.asLeft.rawValue
-    @AppStorage(UpdateChecker.enabledKey) private var checkUpdates: Bool = true
 
     var body: some View {
         Form {
@@ -202,13 +201,6 @@ struct SettingsGeneralView: View {
             }
             Section(L("settings.section.breadcrumbs")) {
                 Toggle(L("settings.breadcrumbSelectAll"), isOn: $breadcrumbSelectAll).settingAnchor("settings.breadcrumbSelectAll")
-            }
-            // The last word in the section: a check that runs by itself, out of the way.
-            Section(L("settings.section.updates")) {
-                Toggle(L("settings.updates.check"), isOn: $checkUpdates).settingAnchor("settings.updates.check")
-                Text(L("settings.updates.hint"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
             }
         }
         .formStyle(.grouped)

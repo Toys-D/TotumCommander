@@ -2,68 +2,10 @@ import AppKit
 import SwiftUI
 
 /// "About" section: what this app is, which build is running, who made it, and where the source
-/// lives. Version and build come from the bundle and the APP_BUILD constant.
+/// lives. Version and build come from the bundle and the APP_BUILD constant. Checking for and
+/// installing a newer version live in a section of their own, "Updates".
 struct SettingsAboutView: View {
     private let repositoryURL = AppIdentity.repositoryURL
-    @ObservedObject private var updates = UpdateChecker.shared
-    @ObservedObject private var updater = AppUpdater.shared
-
-    /// Новая версия: кнопка «Обновить», ход дела, а после срыва — объяснение и повтор.
-    /// Ссылка на страницу выпуска остаётся всегда: ручной путь никуда не делся.
-    @ViewBuilder
-    private func updateRow(_ release: UpdateChecker.Release) -> some View {
-        switch updater.stage {
-        case .idle:
-            HStack(spacing: 10) {
-                // Красная: вышла новая версия — кнопка должна бросаться в глаза.
-                Button(String(format: L("about.updates.install"), release.version)) {
-                    Task { await updater.update(to: release) }
-                }
-                .buttonStyle(FCXLChipButtonStyle(compact: true, fill: .red))
-                releasePageLink(release)
-            }
-        case .downloading(let fraction):
-            VStack(alignment: .leading, spacing: 4) {
-                Text(String(format: L("updates.stage.downloading"), Int((fraction * 100).rounded())))
-                    .foregroundStyle(.secondary).monospacedDigit()
-                ProgressView(value: fraction)
-                    .tint(PanelAppearanceSettings.accentColor)
-                    .progressViewStyle(.linear)
-                    .frame(maxWidth: 260)
-            }
-        case .verifying, .installing, .relaunching:
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(stageTitle).foregroundStyle(.secondary)
-            }
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 6) {
-                Text(message)
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 10) {
-                    Button(L("updates.retry")) { updater.reset() }
-                        .buttonStyle(FCXLChipButtonStyle(compact: true))
-                    releasePageLink(release)
-                }
-            }
-        }
-    }
-
-    private var stageTitle: String {
-        switch updater.stage {
-        case .verifying: return L("updates.stage.verifying")
-        case .installing: return L("updates.stage.installing")
-        case .relaunching: return L("updates.stage.relaunching")
-        default: return ""
-        }
-    }
-
-    private func releasePageLink(_ release: UpdateChecker.Release) -> some View {
-        Link(L("about.updates.page"), destination: release.url)
-            .font(.system(size: 12))
-            .pointerStyle(.link)
-    }
 
     private var appName: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
@@ -120,18 +62,6 @@ struct SettingsAboutView: View {
                 LabeledContent(L("about.releases")) {
                     Link(L("about.releases.open"), destination: AppIdentity.releasesURL)
                         .pointerStyle(.link)
-                }
-                LabeledContent(L("about.updates")) {
-                    if let release = updates.available {
-                        updateRow(release)
-                    } else {
-                        HStack(spacing: 10) {
-                            Text(updates.lastChecked == nil ? L("about.updates.never") : L("about.updates.upToDate"))
-                                .foregroundStyle(.secondary)
-                            Button(L("about.updates.checkNow")) { Task { await updates.checkNow() } }
-                                .buttonStyle(FCXLChipButtonStyle(compact: true))
-                        }
-                    }
                 }
             }
 

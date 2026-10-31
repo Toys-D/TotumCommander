@@ -448,7 +448,6 @@ The colours of the interface, cursor and tabs, the file-colour rules and the fol
 - **Confirmation dialogs** — whether to ask before copying and moving (drag and drop too), deleting, creating an archive, unpacking.
 - **Operation queue ▸ Simultaneous operations** — how many operations the queue runs at once, network and disk alike. On different disks operations run together; on one external or network disk, one at a time: together they only get in each other's way there. On the internal disk they run together. At most as many connections to one server; if it refuses one, the program switches to one at a time by itself.
 - **Breadcrumbs** — select all text when editing the path.
-- **Updates** — check at launch and every three days: one request to GitHub with nothing about you. When a new version is out, a red "Update to …" button appears in About and a red dot on the Settings button.
 
 ### Keys
 - **Space key** — quick view (the default) or selecting the file, like Insert in Total Commander. **Quick view** — native Apple Quick Look or the built-in one, with modes.
@@ -521,8 +520,11 @@ An item still shows only when it applies to the file: "Unpack" for an archive, "
 - **Send remote operations directly to queue** — transfers with servers go straight into the operation queue (section 4.5) and run in the background.
 - **NTFS writing** — the administrator password can be saved in the Keychain, after which the program stops asking for it on every write; "Remove password" deletes it.
 
+### Updates
+The installed version and build, when the last check was, "Check", "You have the latest version" or a red **"Update to …"** button — the image is downloaded from GitHub, verified against the published checksum, put in place of the previous version, and the program relaunches; a program running straight from the image or from a temporary copy is first asked to be moved to Applications. **Check for updates** — at launch and every three days: one request to GitHub with nothing about you. When a new version is out, the Settings button gets a red dot, the section a red circle with the number of versions that came out, and below, under "What's new", the notes of each of them, newest first.
+
 ### About
-Version and build, developer, company, licence, repository, contact, an "All releases on GitHub" button. **Updates**: "Check", "You have the latest version" or a red **"Update to …"** button — the image is downloaded from GitHub, verified against the published checksum, put in place of the previous version, and the program relaunches; a program running straight from the image or from a temporary copy is first asked to be moved to Applications. Below — a word on supporting the project through PayPal; nothing in the program depends on it.
+Version and build, developer, company, licence, repository, contact, an "All releases on GitHub" button. Below — a word on supporting the project through PayPal; nothing in the program depends on it.
 
 ---
 

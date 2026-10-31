@@ -13,7 +13,7 @@ extension Binding where Value == Double {
 /// One entry in the settings sidebar. Order of `allCases` = order in the sidebar.
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general, keys, terminal, list, colors, fileColors, cursor, folders, font, tabs,
-         divider, contextMenu, networkNTFS, about
+         divider, contextMenu, networkNTFS, updates, about
 
     var id: String { rawValue }
 
@@ -41,6 +41,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .divider:     return "settings.section.divider"
         case .contextMenu: return "settings.section.contextMenu"
         case .networkNTFS: return "settings.section.networkNtfs"
+        case .updates:     return "settings.section.updates"
         case .about:       return "settings.section.about"
         }
     }
@@ -68,6 +69,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .divider:     return "rectangle.split.2x1"
         case .contextMenu: return "filemenu.and.cursorarrow"
         case .networkNTFS: return "network"
+        case .updates:     return "arrow.down.circle"
         case .about:       return "info.circle"
         }
     }

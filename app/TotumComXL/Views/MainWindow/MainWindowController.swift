@@ -905,7 +905,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
     }
 
     /// The Settings gear — with a red dot at its corner while a newer release is known, the same
-    /// red as the "Update to …" button in About. A dot, not a number: there is nothing to count.
+    /// red as the "Update to …" button. A dot, not a number: the count of missed versions stands
+    /// beside the Updates section, where the dot leads.
     static func settingsSymbol(updateAvailable: Bool, appearance: NSAppearance? = nil) -> NSImage {
         let gear = NSImage(systemSymbolName: "gear", accessibilityDescription: nil)!
         guard updateAvailable else { return gear }

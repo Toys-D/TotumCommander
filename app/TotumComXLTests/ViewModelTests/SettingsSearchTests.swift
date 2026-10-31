@@ -55,7 +55,7 @@ final class SettingsSearchTests: XCTestCase {
             (.list, "SettingsListView"), (.colors, "SettingsColorsView"), (.fileColors, "SettingsFileColorsView"),
             (.cursor, "SettingsCursorView"), (.folders, "SettingsFoldersView"), (.font, "SettingsFontView"),
             (.tabs, "SettingsTabsView"), (.divider, "SettingsDividerView"), (.contextMenu, "SettingsContextMenuView"),
-            (.networkNTFS, "SettingsNetworkNTFSView"), (.about, "SettingsAboutView")]
+            (.networkNTFS, "SettingsNetworkNTFSView"), (.updates, "SettingsUpdatesView"), (.about, "SettingsAboutView")]
         let excluded = try NSRegularExpression(pattern: SettingsSearch.excludedKeyPattern)
         let call = try NSRegularExpression(pattern: #"\bL\("([^"]+)""#)
         for (section, name) in files {

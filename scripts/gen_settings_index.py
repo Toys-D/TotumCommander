@@ -16,7 +16,8 @@ FILES = [("general", "SettingsGeneralView"), ("keys", "SettingsKeysView"),
          ("cursor", "SettingsCursorView"), ("folders", "SettingsFoldersView"),
          ("font", "SettingsFontView"), ("tabs", "SettingsTabsView"),
          ("divider", "SettingsDividerView"), ("contextMenu", "SettingsContextMenuView"),
-         ("networkNTFS", "SettingsNetworkNTFSView"), ("about", "SettingsAboutView")]
+         ("networkNTFS", "SettingsNetworkNTFSView"), ("updates", "SettingsUpdatesView"),
+         ("about", "SettingsAboutView")]
 # Та же строка, что SettingsSearch.excludedKeyPattern — тест сверяет оба.
 EXCLUDED = re.compile(r"(?i)(hint|message|restart|failed|placeholder|browse|\.now$|\.later$|^unit\.|^button\.|^common\.|^dialog|\.title$|\.ok$|\.cancel$|\.remove$|\.add$|\.delete$|\.reset|\.help$|\.verdict|\.summary|\.stage\.|\.error\.|\.obstacle\.|\.page$|\.install$|\.link$|\.example|\.none$|\.tooltip$)")
 GROUP = re.compile(r"\.section\.")

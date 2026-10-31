@@ -39,6 +39,7 @@ struct SettingsDetailView: View {
         case .divider:     SettingsDividerView()
         case .contextMenu: SettingsContextMenuView()
         case .networkNTFS: SettingsNetworkNTFSView()
+        case .updates:     SettingsUpdatesView()
         case .about:       SettingsAboutView()
         }
     }

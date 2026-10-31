@@ -11,18 +11,21 @@ extension Notification.Name {
 /// stays open — and a word about it, nothing more.
 ///
 /// No Sparkle, no keys, no server: GitHub's releases API is open, one anonymous request
-/// compares the latest tag with the running version, and the answer shows as a line in About
-/// and a dot on the toolbar's Settings button. Downloading and installing stay with the
-/// person, exactly as the first launch did.
+/// brings the list of releases, and the ones newer than the running version show in the
+/// Updates section of Settings — with their notes and a count beside the section — and as a
+/// dot on the toolbar's Settings button.
 @MainActor
 final class UpdateChecker: ObservableObject {
     static let shared = UpdateChecker()
 
-    struct Release: Equatable {
+    struct Release: Equatable, Codable {
         /// "1.1" — the tag without its "v".
         let version: String
         /// The release page, where the DMG is.
         let url: URL
+        /// Что нового — текст выпуска с GitHub, обе половины: английская и русская.
+        var notes: String = ""
+        var published: Date?
     }
 
     static let enabledKey = "fcxl.updates.check"
@@ -31,13 +34,21 @@ final class UpdateChecker: ObservableObject {
     static let lastCheckKey = "fcxl.updates.lastCheck"
     static let latestVersionKey = "fcxl.updates.latestVersion"
     static let latestURLKey = "fcxl.updates.latestURL"
+    /// Выпуски новее установленной версии на момент проверки, с заметками: что показать в
+    /// разделе и сколько их. Записи прошлых версий программы этого ключа не знают.
+    static let newerKey = "fcxl.updates.newer"
     /// A hook for LOOKING at the notice without publishing a release: the version the program
     /// pretends to run. `defaults write com.fcxl.filecommander fcxl.updates.pretendVersion 0.9`
     static let pretendVersionKey = "fcxl.updates.pretendVersion"
     static let interval: TimeInterval = 3 * 24 * 60 * 60
     static let latestURL = URL(string: "https://api.github.com/repos/\(AppIdentity.repositorySlug)/releases/latest")!
+    /// Тридцать последних выпусков — больше пропустить не выйдет: число у раздела честное.
+    static let listURL = URL(string: "https://api.github.com/repos/\(AppIdentity.repositorySlug)/releases?per_page=30")!
 
+    /// Самый новый выпуск, если он новее установленного, — его ставит «Обновить».
     @Published private(set) var available: Release?
+    /// Все выпуски новее установленного, новые сверху. Их число стоит у раздела «Обновления».
+    @Published private(set) var newer: [Release] = []
     @Published private(set) var lastChecked: Date?
 
     private let defaults: UserDefaults
@@ -49,11 +60,11 @@ final class UpdateChecker: ObservableObject {
                                 category: "Updates")
 
     init(defaults: UserDefaults = .standard,
-         fetch: @escaping () async throws -> Data = UpdateChecker.fetchFromGitHub) {
+         fetch: @escaping () async throws -> Data = UpdateChecker.fetchListFromGitHub) {
         self.defaults = defaults
         self.fetch = fetch
         lastChecked = defaults.object(forKey: Self.lastCheckKey) as? Date
-        // What the last check found, so About can say it before today's check has run.
+        // What the last check found, so Settings can say it before today's check has run.
         recomputeAvailability()
     }
 
@@ -115,16 +126,42 @@ final class UpdateChecker: ObservableObject {
 
     /// The release in GitHub's `releases/latest` answer: its tag and page.
     static func release(from data: Data) -> Release? {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let tag = json["tag_name"] as? String, !tag.isEmpty,
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return release(from: json)
+    }
+
+    /// Выпуски из ответа `releases`, новые по номеру сверху. Черновик и предвыпуск — не
+    /// новость для того, кто ставит программу. Одиночный ответ — список из одного.
+    static func releases(from data: Data) -> [Release] {
+        guard let json = try? JSONSerialization.jsonObject(with: data) else { return [] }
+        let items = (json as? [[String: Any]]) ?? (json as? [String: Any]).map { [$0] } ?? []
+        return items
+            .filter { ($0["draft"] as? Bool) != true && ($0["prerelease"] as? Bool) != true }
+            .compactMap(release(from:))
+            .sorted { isNewer($0.version, than: $1.version) }
+    }
+
+    private static func release(from json: [String: Any]) -> Release? {
+        guard let tag = json["tag_name"] as? String, !tag.isEmpty,
               let page = (json["html_url"] as? String).flatMap(URL.init(string:)) else { return nil }
         var version = tag
         if version.lowercased().hasPrefix("v") { version.removeFirst() }
-        return Release(version: version, url: page)
+        let published = (json["published_at"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
+        return Release(version: version, url: page, notes: json["body"] as? String ?? "", published: published)
     }
 
+    /// Последний выпуск с его файлами — то, что скачивает «Обновить».
     static func fetchFromGitHub() async throws -> Data {
-        var request = URLRequest(url: latestURL, timeoutInterval: 10)
+        try await fetch(latestURL)
+    }
+
+    /// Список выпусков — то, что сверяет проверка.
+    static func fetchListFromGitHub() async throws -> Data {
+        try await fetch(listURL)
+    }
+
+    private static func fetch(_ url: URL) async throws -> Data {
+        var request = URLRequest(url: url, timeoutInterval: 10)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("TotumCommander", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -173,34 +210,47 @@ final class UpdateChecker: ObservableObject {
     func checkNow() async -> Release? {
         do {
             let data = try await fetch()
-            guard let latest = Self.release(from: data) else {
+            let releases = Self.releases(from: data)
+            guard let latest = releases.first else {
                 logger.error("update.check: unreadable answer")
                 return available
             }
             defaults.set(latest.version, forKey: Self.latestVersionKey)
             defaults.set(latest.url.absoluteString, forKey: Self.latestURLKey)
+            // Хранится только новое: у установленной версии заметки уже не нужны, а тридцать
+            // текстов выпусков в настройках — лишний вес.
+            let current = Self.currentVersion(defaults)
+            let unseen = releases.filter { Self.isNewer($0.version, than: current) }
+            defaults.set(try? JSONEncoder().encode(unseen), forKey: Self.newerKey)
             let now = Date()
             defaults.set(now, forKey: Self.lastCheckKey)
             lastChecked = now
             recomputeAvailability()
-            logger.notice("update.check current=\(Self.currentVersion(self.defaults), privacy: .public) latest=\(latest.version, privacy: .public) newer=\(self.available != nil, privacy: .public)")
+            logger.notice("update.check current=\(current, privacy: .public) latest=\(latest.version, privacy: .public) newer=\(self.newer.count, privacy: .public)")
         } catch {
             logger.error("update.check failed: \(error.localizedDescription, privacy: .public)")
         }
         return available
     }
 
-    /// From what is stored: the newest known release, if it beats the running version.
+    /// From what is stored: the releases that beat the running version, newest first. After an
+    /// update the same record gives fewer of them — the installed one and older drop out.
     private func recomputeAvailability() {
-        let before = available
-        if let version = defaults.string(forKey: Self.latestVersionKey),
-           let url = defaults.string(forKey: Self.latestURLKey).flatMap(URL.init(string:)),
-           Self.isNewer(version, than: Self.currentVersion(defaults)) {
-            available = Release(version: version, url: url)
+        let before = newer
+        let current = Self.currentVersion(defaults)
+        if let data = defaults.data(forKey: Self.newerKey),
+           let stored = try? JSONDecoder().decode([Release].self, from: data) {
+            newer = stored.filter { Self.isNewer($0.version, than: current) }
+        } else if let version = defaults.string(forKey: Self.latestVersionKey),
+                  let url = defaults.string(forKey: Self.latestURLKey).flatMap(URL.init(string:)),
+                  Self.isNewer(version, than: current) {
+            // Записано прошлой версией программы: известен только последний выпуск.
+            newer = [Release(version: version, url: url)]
         } else {
-            available = nil
+            newer = []
         }
-        if available != before {
+        available = newer.first
+        if newer != before {
             NotificationCenter.default.post(name: .fcxlUpdateAvailabilityChanged, object: nil)
         }
     }
