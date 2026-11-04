@@ -1,0 +1,86 @@
+import XCTest
+import AppKit
+
+@testable import TotumComXLApp
+
+/// Coming back from another desktop left the window behind whatever else was open there — and
+/// the first fix went too far the other way, shouldering the app in front on EVERY switch. The
+/// rule has to be narrow twice over: the user must have arrived at the desktop the window stands
+/// on, AND the app must be the one macOS put in front there.
+final class SpaceSwitchFocusTests: XCTestCase {
+
+    func testTheWindowOnTheDesktopTheUserArrivedAtIsFronted() {
+        XCTAssertTrue(MainWindowController.shouldReclaimFocus(
+            isVisible: true, isMiniaturized: false, isOnActiveSpace: true, isAppActive: true))
+    }
+
+    /// The complaint that narrowed it: the window follows the user everywhere, so "arrived at its
+    /// desktop" is true on every switch. If the app was NOT the one in front, it must stay where
+    /// it was — behind whatever the user had covering it.
+    func testAnAppThatWasNotInFrontStaysWhereItWas() {
+        XCTAssertFalse(MainWindowController.shouldReclaimFocus(
+            isVisible: true, isMiniaturized: false, isOnActiveSpace: true, isAppActive: false))
+    }
+
+    /// The regression guard: fronting a window that lives elsewhere would yank the user off the
+    /// desktop they just chose — exactly what .moveToActiveSpace was added to stop.
+    func testAWindowOnAnotherDesktopIsLeftAlone() {
+        XCTAssertFalse(MainWindowController.shouldReclaimFocus(
+            isVisible: true, isMiniaturized: false, isOnActiveSpace: false, isAppActive: true))
+    }
+
+    func testMinimisedStaysMinimised() {
+        XCTAssertFalse(MainWindowController.shouldReclaimFocus(
+            isVisible: true, isMiniaturized: true, isOnActiveSpace: true, isAppActive: true))
+    }
+
+    func testAClosedWindowIsNotResurrected() {
+        XCTAssertFalse(MainWindowController.shouldReclaimFocus(
+            isVisible: false, isMiniaturized: false, isOnActiveSpace: true, isAppActive: true))
+    }
+}
+
+/// Возвращение в программу — с другого стола, из другой программы, из Dock — не отбирает
+/// клавиатуру у того, кто её держал. Был в терминале — вернулся в терминал. Список берёт фокус,
+/// только когда его не держит никто: иначе после запуска в фоне стрелки молчали до щелчка.
+@MainActor
+final class ReturnFocusTests: XCTestCase {
+
+    private func window() -> NSWindow {
+        NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
+                 styleMask: .borderless, backing: .buffered, defer: false)
+    }
+
+    func test_whenTerminalHeldFocus_shouldStayThere() {
+        let window = window()
+        let terminal = NSTextView(frame: NSRect(x: 0, y: 0, width: 100, height: 50))
+        window.contentView?.addSubview(terminal)
+        XCTAssertFalse(MainWindowController.focusIsParked(terminal, in: window))
+    }
+
+    func test_whenNobodyHeldFocus_shouldGiveItToTheList() {
+        let window = window()
+        XCTAssertTrue(MainWindowController.focusIsParked(nil, in: window))
+        XCTAssertTrue(MainWindowController.focusIsParked(window, in: window), "фокус у самого окна")
+    }
+
+    /// Терминал закрыли, а фокус остался на спрятанном виде — клавиши в него не дойдут.
+    func test_whenFocusedViewIsHidden_shouldGiveItToTheList() {
+        let window = window()
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 100, height: 50))
+        let terminal = NSTextView(frame: container.bounds)
+        container.addSubview(terminal)
+        window.contentView?.addSubview(container)
+        container.isHidden = true
+        XCTAssertTrue(MainWindowController.focusIsParked(terminal, in: window))
+    }
+
+    func test_whenFocusedViewLeftTheWindow_shouldGiveItToTheList() {
+        let window = window()
+        let other = self.window()
+        let stray = NSTextView(frame: NSRect(x: 0, y: 0, width: 100, height: 50))
+        other.contentView?.addSubview(stray)
+        XCTAssertTrue(MainWindowController.focusIsParked(stray, in: window))
+        XCTAssertTrue(MainWindowController.focusIsParked(NSTextView(), in: window), "вид без окна")
+    }
+}
