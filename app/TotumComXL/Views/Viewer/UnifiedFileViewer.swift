@@ -37,6 +37,12 @@ private struct EncodingProbe {
     let value: String.Encoding
 }
 
+/// Режим, выбранный по содержимому файла, и для какого файла.
+private struct SniffedMode {
+    let path: String
+    let mode: PreviewMode
+}
+
 // MARK: - UnifiedFileViewer
 
 struct UnifiedFileViewer: View {
@@ -44,6 +50,9 @@ struct UnifiedFileViewer: View {
     var onClose: (() -> Void)?
     /// Needed to extract the file under the cursor when previewing inside an archive.
     var operations: FileOperationsService?
+    /// «Править» — тот же путь, что F4 (редактор в панели или окне, внешний, архивы, RTF).
+    /// nil — кнопки нет: открывшему просмотр некуда передать правку.
+    var onEdit: (() -> Void)? = nil
     @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
     /// The page strip beside a PDF. Remembered between files and between launches — a person
     /// who works with documents wants it every time, and one who does not never sees it again.
@@ -79,6 +88,13 @@ struct UnifiedFileViewer: View {
     /// доходила вовсе. Кнопка была, отмены не было.
     @State private var remoteCancel = CancelBox()
     @State private var forcedMode: PreviewMode? = nil
+    /// HTML показан кодом, а не страницей — человек нажал «Код HTML». Новый файл снова страницей.
+    @State private var showsHTMLSource = false
+    /// Чем показывать файл, о котором молчит имя (HEAD, config, index из .git), — по его
+    /// первым байтам (contentMode). Для одного файла: того, что сейчас на экране.
+    @State private var sniffed: SniffedMode?
+    /// Кнопка «в конец» / «в начало» над текстом, Markdown и страницей HTML.
+    @StateObject private var scrollJump = ScrollJumpController()
     @State private var encoding: String = "UTF-8"
     /// Текст файла до 256 КБ, уже раскодированный. nil — текста нет (не загружен или файл
     /// большой и показывается прямо с диска).
@@ -379,11 +395,40 @@ struct UnifiedFileViewer: View {
         // widths of 700 and 1400), so most of the panel stays empty. Our own HTML rendering fills
         // the width, reflows and allows text selection; Quick Look stays one click away.
         if isWordProcessingDocument(extension: ext) { return .document }
-        return autoMode(for: currentCategory)
+        return naturalMode
     }
 
     private var effectiveMode: PreviewMode {
         forcedMode ?? autoResolvedMode
+    }
+
+    /// Имя файла не решает, чем его показывать, — решит содержимое.
+    private var needsSniff: Bool {
+        guard let item = targetItem, !item.isDirectory else { return false }
+        return needsContentSniff(fileName: item.name)
+    }
+
+    /// Что сказало содержимое этого файла; nil — ещё не заглянули.
+    private var sniffedMode: PreviewMode? {
+        guard let item = targetItem, let sniffed, sniffed.path == item.path else { return nil }
+        return sniffed.mode
+    }
+
+    /// Режим, который этому файлу подходит сам по себе: по виду файла, а когда имя молчит —
+    /// по содержимому (.auto, пока не заглянули: на экране крутилка, а не карточка).
+    private var naturalMode: PreviewMode {
+        needsSniff ? (sniffedMode ?? .auto) : autoMode(for: currentCategory)
+    }
+
+    /// Файл — страница HTML (а не просто текст с тегами).
+    private var isHTMLFile: Bool {
+        guard let item = targetItem, !item.isDirectory else { return false }
+        return HTMLPage.isPage(fileName: item.name)
+    }
+
+    /// HTML на экране страницей: текстовый режим, и код не просили.
+    private var showsHTMLPage: Bool {
+        effectiveMode == .text && isHTMLFile && !showsHTMLSource
     }
 
     private var formattedFileSize: String {
@@ -451,6 +496,7 @@ struct UnifiedFileViewer: View {
             bookStart = nil
             djvuPage = 0
             forcedMode = nil
+            showsHTMLSource = false
             pictureText = []
             selectedKeys = []
             readingDocPage = nil
@@ -530,7 +576,7 @@ struct UnifiedFileViewer: View {
     private var modeBar: some View {
         HStack(spacing: 6) {
             quickModeButton(.auto)
-            let natural = autoMode(for: currentCategory)
+            let natural = naturalMode
             if natural != .auto, natural != .quickLook {
                 quickModeButton(natural)
             }
@@ -547,8 +593,35 @@ struct UnifiedFileViewer: View {
             .fixedSize()
             .help(L("viewer.mode.choose"))
 
+            if isHTMLFile, effectiveMode == .text {
+                htmlSourceButton
+            }
+
             Spacer()
+            editButton
             printButton
+        }
+    }
+
+    /// Код HTML вместо страницы — и обратно. Горит, пока показан код.
+    private var htmlSourceButton: some View {
+        modeChip(L("viewer.html.code"), symbol: "chevron.left.forwardslash.chevron.right",
+                 selected: showsHTMLSource, disabled: false,
+                 help: L(showsHTMLSource ? "viewer.html.showPage" : "viewer.html.showSource")) {
+            showsHTMLSource.toggle()
+            returnFocusToPanel()
+        }
+    }
+
+    /// «Править» — сразу в редактор, как F4. Только у того, что F4 открывает как текст.
+    @ViewBuilder
+    private var editButton: some View {
+        if let onEdit, let item = viewModel.cursorItem, item.name != "..",
+           viewerOffersEdit(fileName: item.name, fileExtension: item.fileExtension,
+                            isDirectory: item.isDirectory, insideRemote: viewModel.insideRemote,
+                            looksLikeText: sniffedMode == .text) {
+            sideButton(L("viewer.edit"), symbol: "pencil", action: onEdit)
+                .help(L("viewer.edit.tip"))
         }
     }
 
@@ -559,7 +632,10 @@ struct UnifiedFileViewer: View {
         if let item = targetItem, !item.isDirectory,
            (effectiveMode == .text && plainText != nil) || PrintService.canPrint(item.path) {
             sideButton(L("print.button"), symbol: "printer") {
-                if effectiveMode == .text, let plainText {
+                if showsHTMLPage {
+                    // Страница — оформленным документом, как её видно, а не кодом.
+                    PrintService.print(files: [item.path])
+                } else if effectiveMode == .text, let plainText {
                     PrintService.print(text: plainText, title: item.name)
                 } else {
                     PrintService.print(files: [item.path])
@@ -592,12 +668,16 @@ struct UnifiedFileViewer: View {
 
     /// Кнопка режима «в один щелчок» — для тех двух, что нужны почти всегда.
     private func quickModeButton(_ mode: PreviewMode) -> some View {
-        let selected = isModeSelected(mode)
-        let disabled = isModeDisabled(mode)
-        return Button {
-            applyMode(mode)
-        } label: {
-            Label(mode.quickViewLabel, systemImage: mode.iconName)
+        modeChip(mode.quickViewLabel, symbol: mode.iconName,
+                 selected: isModeSelected(mode), disabled: isModeDisabled(mode),
+                 help: mode.title) { applyMode(mode) }
+    }
+
+    /// Плашка полосы режимов: «Авто», режим файла, «Код HTML» — один вид на всех.
+    private func modeChip(_ title: String, symbol: String, selected: Bool, disabled: Bool,
+                          help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
                 .font(.caption)
                 .lineLimit(1)
                 .padding(.horizontal, 7)
@@ -614,7 +694,7 @@ struct UnifiedFileViewer: View {
         .buttonStyle(.plain)
         .opacity(selected ? 1.0 : disabled ? 0.2 : 0.7)
         .disabled(disabled)
-        .help(mode.title)
+        .help(help)
     }
 
     // MARK: - Content
@@ -632,6 +712,14 @@ struct UnifiedFileViewer: View {
                         ProgressView()
                             .controlSize(.large)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    // Правее — полоса прокрутки, её кнопка не закрывает.
+                    if effectiveMode == .text, !isLoading {
+                        ScrollJumpButton(controller: scrollJump) { returnFocusToPanel() }
+                            .padding(.trailing, 20)
+                            .padding(.bottom, 14)
                     }
                 }
             }
@@ -824,10 +912,13 @@ struct UnifiedFileViewer: View {
 
     private var textContent: some View {
         Group {
-            if isMarkdownFile, let markdownContent {
+            if showsHTMLPage, let item = targetItem {
+                HTMLPagePreview(url: URL(fileURLWithPath: item.path), zoom: documentZoom,
+                                scroll: scrollJump, openLink: openPageLink)
+            } else if isMarkdownFile, let markdownContent {
                 // Not a SwiftUI Text: a document-sized one took seconds to lay out — see
                 // MarkdownStyler.
-                MarkdownPreview(content: markdownContent)
+                MarkdownPreview(content: markdownContent, scrollJump: scrollJump)
             } else {
                 plainTextContent
             }
@@ -837,11 +928,12 @@ struct UnifiedFileViewer: View {
     private var plainTextContent: some View {
         Group {
             if useFastPreview {
-                FastTextPreview(filePath: fastPreviewFilePath, encoding: encoding)
+                FastTextPreview(filePath: fastPreviewFilePath, encoding: encoding,
+                                scrollJump: scrollJump)
             } else if let plainText {
                 // Не список строк SwiftUI: тот на длинных строках проседал и отставал от
                 // трекпада — см. NumberedTextView.
-                NumberedTextPreview(text: plainText)
+                NumberedTextPreview(text: plainText, scrollJump: scrollJump)
             } else if !isLoading {
                 Text(L("viewer.emptyFile"))
                     .foregroundStyle(.secondary)
@@ -868,9 +960,9 @@ struct UnifiedFileViewer: View {
            ImageSaveFormat.matching(extension: item.fileExtension) != nil {
             VStack(spacing: 0) {
                 if annotating { imageAnnotationToolbar; Divider() }
-                HStack(spacing: 14) {
+                // Тесно — значки сходятся, а подписи кнопок справа остаются целыми (FCXLToolbarRow).
+                FCXLToolbarRow(spacing: 14) {
                     imageEditGeometryButtons
-                    Spacer(minLength: 0)
                     imageEditSaveButtons
                 }
                 .padding(.horizontal, 12)
@@ -904,23 +996,13 @@ struct UnifiedFileViewer: View {
                            L("viewer.image.flipVertical")) { changeImage { $0.flipOnScreen(horizontal: false) } }
 
             editButton("circle.righthalf.filled", L("viewer.image.invert")) { changeImage { $0.invert.toggle() } }
-            Button { changeImage { $0.autoEnhance.toggle() } } label: {
-                Image(systemName: "wand.and.stars").font(.system(size: 14))
-                    .foregroundStyle(imageEdits.autoEnhance ? Color.accentColor : Color.primary)
+            editButton("wand.and.stars", L("viewer.image.auto"), lit: imageEdits.autoEnhance) {
+                changeImage { $0.autoEnhance.toggle() }
             }
-            .buttonStyle(.borderless)
-            .help(L("viewer.image.auto"))
-            .disabled(imageSaving)
-            Button {
-                    if effectiveMode != .image { forcedMode = .image }
-                    showImageColours.toggle()
-            } label: {
-                    Image(systemName: "slider.horizontal.3").font(.system(size: 14))
-                        .foregroundStyle(imageEdits.hasColourChanges ? Color.accentColor : Color.primary)
+            editButton("slider.horizontal.3", L("viewer.image.colours"), lit: imageEdits.hasColourChanges) {
+                if effectiveMode != .image { forcedMode = .image }
+                showImageColours.toggle()
             }
-            .buttonStyle(.borderless)
-            .help(L("viewer.image.colours"))
-            .disabled(imageSaving)
             .fcxlPopover(isPresented: $showImageColours, arrowEdge: .top) { imageColourPanel }
         }
     }
@@ -935,18 +1017,13 @@ struct UnifiedFileViewer: View {
             }
             .fixedSize()
             .help(L("viewer.image.crop"))
+            .accessibilityLabel(L("viewer.image.crop"))
             .disabled(imageSaving)
-            Button {
+            editButton("pencil.tip.crop.circle", L("viewer.draw.title"),
+                       lit: annotating || !imageEdits.annotations.isEmpty) {
                 if effectiveMode != .image { forcedMode = .image }
                 annotating.toggle()
-            } label: {
-                Image(systemName: "pencil.tip.crop.circle").font(.system(size: 14))
-                    .foregroundStyle(annotating || !imageEdits.annotations.isEmpty
-                                     ? Color.accentColor : Color.primary)
             }
-            .buttonStyle(.borderless)
-            .help(L("viewer.draw.title"))
-            .disabled(imageSaving)
             editButton("info.circle", L("viewer.exif.title")) { showImageInfo.toggle() }
                     .fcxlPopover(isPresented: $showImageInfo, arrowEdge: .top) { imageInfoPanel }
             editButton("doc.on.clipboard", L("viewer.image.copy")) { copyImageToClipboard() }
@@ -954,50 +1031,56 @@ struct UnifiedFileViewer: View {
         }
     }
 
-    @ViewBuilder
+    /// Правая группа полосы — ОДИН вид: FCXLToolbarRow ставит его справа целиком.
     private var imageEditSaveButtons: some View {
-        Group {
+        HStack(spacing: 8) {
             if imageSaving { ProgressView().controlSize(.small) }
-                if let note = imageSaveNote {
-                    Text(note).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                }
+            if let note = imageSaveNote {
+                Text(note).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            // Три кнопки — одна плашка программы, одна ширина, подпись в одну строку.
+            FCXLEqualWidthRow(spacing: 8) {
                 // Не Button: он забирает нажатие себе, и жест удержания поверх него не
                 // приходил — «Было» просто не срабатывало. Своё вью со своим жестом,
-                // который видит и нажатие, и отпускание.
-                Text(L("viewer.image.compare"))
-                    .font(.system(size: 12))
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 3)
-                    .background(showingOriginal ? Color.accentColor.opacity(0.3)
-                                                : Color.primary.opacity(0.08),
-                                in: RoundedRectangle(cornerRadius: 6))
-                    .opacity(imageEdits.isIdentity ? 0.4 : 1)
-                    .contentShape(Rectangle())
-                    .help(L("viewer.image.compareTip"))
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { _ in
-                                guard !imageEdits.isIdentity, !imageSaving else { return }
-                                if !showingOriginal { showingOriginal = true }
-                            }
-                            .onEnded { _ in showingOriginal = false }
-                    )
-                Button(L("viewer.image.reset")) { resetImageEdits() }
+                // который видит и нажатие, и отпускание; вид — та же плашка, что у соседей.
+                FCXLChip(isPressed: showingOriginal, compact: true) {
+                    imageActionTitle(L("viewer.image.compare"))
+                }
+                .help(L("viewer.image.compareTip"))
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { _ in
+                            guard !imageEdits.isIdentity, !imageSaving else { return }
+                            if !showingOriginal { showingOriginal = true }
+                        }
+                        .onEnded { _ in showingOriginal = false }
+                )
+                .disabled(imageEdits.isIdentity || imageSaving)
+                Button { resetImageEdits() } label: { imageActionTitle(L("viewer.image.reset")) }
+                    .buttonStyle(FCXLChipButtonStyle(compact: true))
                     .help(L("viewer.image.resetTip"))
                     .disabled(imageEdits.isIdentity || imageSaving)
                 // One place for every way out, spelled out: replace the file, put a copy
                 // beside it, or write it in another format. A bare "Save" that silently
                 // overwrote the original told the person nothing about what it was doing.
-                ProgramMenuButton(makeMenu: saveMenu) {
+                ProgramMenuButton(chipStyle: FCXLChipButtonStyle(compact: true), makeMenu: saveMenu) {
                     HStack(spacing: 4) {
                         Text(L("viewer.image.save"))
                         MenuChevron()
                     }
+                    .lineLimit(1)
+                    .fixedSize()
+                    .frame(maxWidth: .infinity)
                 }
-            .fixedSize()
-            .help(L("viewer.image.saveTip"))
-            .disabled(imageEdits.isIdentity || imageSaving)
+                .help(L("viewer.image.saveTip"))
+                .disabled(imageEdits.isIdentity || imageSaving)
+            }
         }
+    }
+
+    /// Подпись кнопки правой группы: одной строкой, во всю ширину плашки (FCXLEqualWidthRow).
+    private func imageActionTitle(_ title: String) -> some View {
+        Text(title).lineLimit(1).fixedSize().frame(maxWidth: .infinity)
     }
 
     private var imageAnnotationToolbar: some View {
@@ -1178,12 +1261,19 @@ struct UnifiedFileViewer: View {
         }
     }
 
-    private func editButton(_ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
+    /// Значок полосы правки. `lit` — правка этого рода уже действует: значок цвета акцента.
+    private func editButton(_ symbol: String, _ help: String, lit: Bool = false,
+                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: 14))
+                .foregroundStyle(lit ? Color.accentColor : Color.primary)
         }
         .buttonStyle(.borderless)
         .help(help)
+        // Имя для чтения с экрана — подсказка. Без него кнопка называлась описанием символа на
+        // языке системы: «Копировать картинку» — «Вставить», «Негатив» — «Круг С Заливкой
+        // Правой Половины», и по-русски даже при английском интерфейсе.
+        .accessibilityLabel(help)
         .disabled(imageSaving)
     }
 
@@ -2089,8 +2179,27 @@ struct UnifiedFileViewer: View {
 
     // MARK: - Hex Content
 
+    /// Ширина колонки байтов — в символах моноширинного шрифта, а не в точках: 16 пар цифр
+    /// через пробел. Раньше здесь стояло 16 × 3 + 4 ТОЧКИ, и строка ломалась по два байта
+    /// в столбик, хотя справа было пусто.
+    private var hexBytesColumnWidth: CGFloat {
+        CGFloat(bytesPerHexLine * 3 - 1) * Self.digitWidth(Self.hexFontSize) + 4
+    }
+
+    /// Байты и текст — 12 pt: при обычной ширине панели строка из 16 байт помещается целиком,
+    /// уже — прокручивается вбок. Адрес — мельче, колонка ровно под восемь цифр.
+    private static let hexFontSize: CGFloat = 12
+    private static let hexOffsetFontSize: CGFloat = 10
+
+    private static func digitWidth(_ size: CGFloat) -> CGFloat {
+        let font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        return ("0" as NSString).size(withAttributes: [.font: font]).width
+    }
+
     private var hexContent: some View {
-        ScrollView {
+        // По обеим осям: строка HEX шире узкой панели, и колонки не должны ломаться по
+        // символу — тогда строка вырастает в столбец и текст справа пропадает.
+        ScrollView([.vertical, .horizontal]) {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if hexLines.isEmpty && !isLoading {
                     Text(L("viewer.emptyFile"))
@@ -2100,15 +2209,18 @@ struct UnifiedFileViewer: View {
                     ForEach(hexLines) { line in
                         HStack(alignment: .top, spacing: 12) {
                             Text(String(format: "%08llX", line.offset))
-                                .font(.system(.caption, design: .monospaced))
+                                .font(.system(size: Self.hexOffsetFontSize, design: .monospaced))
                                 .foregroundStyle(.secondary)
-                                .frame(width: 84, alignment: .trailing)
+                                .frame(width: ceil(8 * Self.digitWidth(Self.hexOffsetFontSize)) + 2,
+                                       alignment: .trailing)
                             Text(line.bytesText)
-                                .font(.system(.body, design: .monospaced))
-                                .frame(width: CGFloat(bytesPerHexLine) * 3 + 4, alignment: .leading)
+                                .font(.system(size: Self.hexFontSize, design: .monospaced))
+                                .lineLimit(1)
+                                .frame(width: hexBytesColumnWidth, alignment: .leading)
                             Text(line.asciiText)
-                                .font(.system(.body, design: .monospaced))
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .font(.system(size: Self.hexFontSize, design: .monospaced))
+                                .lineLimit(1)
+                                .fixedSize()
                         }
                         .id(line.id)
                         .padding(.horizontal, 10)
@@ -2239,6 +2351,19 @@ struct UnifiedFileViewer: View {
                     loadError = error.localizedDescription
                 }
                 isLoading = false
+            }
+            return
+        }
+
+        // Имя молчит — сначала заглянуть в начало файла, потом показывать.
+        if forcedMode == nil, needsSniff, sniffedMode == nil {
+            isLoading = true
+            let path = item.path
+            loadTask = Task {
+                let mode = await sniffContentMode(path: path)
+                if Task.isCancelled { return }
+                sniffed = SniffedMode(path: path, mode: mode)
+                startLoadingPreview()
             }
             return
         }
@@ -2582,6 +2707,16 @@ struct UnifiedFileViewer: View {
 
     // MARK: - Keyboard
 
+    /// Ссылка, нажатая на странице HTML: файл — программой по умолчанию, как Enter в панели;
+    /// адрес в сети и почта — браузером и почтой.
+    private func openPageLink(_ url: URL) {
+        if url.isFileURL, let operations {
+            operations.openWithSystem(url.path)
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     private func installKeyMonitor() {
         keyMonitor.install(matching: [.keyDown]) { [self] event in
             // A local monitor sees the keys of EVERY window of the app, this one included but
@@ -2724,11 +2859,12 @@ struct UnifiedFileViewer: View {
     }
 
     private func handleZoomKey(_ event: NSEvent) -> Bool {
-        let zoomable = effectiveMode == .image || effectiveMode == .postScript || effectiveMode == .document
+        let isDocument = effectiveMode == .document || showsHTMLPage
+        let zoomable = effectiveMode == .image || effectiveMode == .postScript || isDocument
         guard zoomable else { return false }
-        // The document renders in a WKWebView, which owns its own magnification; images and
-        // PostScript scale through imgScale. Route each key to whichever applies.
-        let isDocument = effectiveMode == .document
+        // The document (and an HTML page) renders in a WKWebView, which owns its own
+        // magnification; images and PostScript scale through imgScale. Route each key to
+        // whichever applies.
         switch event.keyCode {
         case 24, 69: // +
             if event.modifierFlags.contains(.command) || event.modifierFlags.contains(.shift) || event.keyCode == 69 {
@@ -3180,9 +3316,16 @@ private struct PDFKitPreviewView: NSViewRepresentable {
 private struct FastTextPreview: NSViewRepresentable {
     let filePath: String
     let encoding: String
+    /// Кнопка «в конец» просмотрщика.
+    var scrollJump: ScrollJumpController? = nil
 
     final class Coordinator {
         var loadedPath: String = ""
+        let jump = ScrollJumpLink()
+    }
+
+    static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
+        coordinator.jump.detach()
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -3207,6 +3350,7 @@ private struct FastTextPreview: NSViewRepresentable {
         tv.layoutManager?.allowsNonContiguousLayout = true
 
         loadFile(into: tv, context: context)
+        context.coordinator.jump.attach(scrollJump, to: scrollView)
         return scrollView
     }
 

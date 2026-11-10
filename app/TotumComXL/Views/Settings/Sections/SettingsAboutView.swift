@@ -26,6 +26,8 @@ struct SettingsAboutView: View {
                         Text(appName).font(.system(size: 20, weight: .semibold))
                         Text("\(L("about.version")) \(version) (\(L("about.build")) \(APP_BUILD))")
                             .font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
+                        Text(AppIdentity.copyright)
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
                     }
                     Spacer()
                 }

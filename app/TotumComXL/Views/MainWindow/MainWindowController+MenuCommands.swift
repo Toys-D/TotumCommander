@@ -351,7 +351,8 @@ extension MainWindowController {
             refreshState(of: item)
             return local
         case #selector(menuMonitor(_:)):
-            item.state = panel.isMonitorMode ? .on : .off
+            // On while a monitor shows in either panel: choosing the item then closes it.
+            item.state = splitVC.monitorPanelVC != nil ? .on : .off
             return true
         case #selector(menuGoBack(_:)):
             return vm.canGoBack

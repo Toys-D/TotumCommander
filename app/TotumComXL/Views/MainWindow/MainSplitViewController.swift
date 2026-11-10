@@ -50,6 +50,8 @@ final class MainSplitViewController: NSViewController {
     var onDividerView: (() -> Void)?
     var onDividerEdit: (() -> Void)?
     var onDividerNetwork: (() -> Void)?
+    /// «Править» во встроенном просмотре: файл под курсором его панели — в редактор (F4).
+    var onViewerEdit: ((PanelViewModel) -> Void)?
     var queueVM: OperationQueueViewModel?
     var onShowQueuePanel: (() -> Void)?
 
@@ -252,6 +254,14 @@ final class MainSplitViewController: NSViewController {
                 return nil
             }
 
+            // The system monitor goes away on Esc even when the other panel has the cursor.
+            if let monitorPanel = self.monitorPanelVC,
+               Self.escClosesMonitor(firstResponder: window.firstResponder,
+                                     monitorView: monitorPanel.monitorView) {
+                monitorPanel.toggleMonitor()
+                return nil
+            }
+
             // Not consumed — let PanelViewController handle it (clear selection, etc.)
             return event
         }
@@ -426,13 +436,34 @@ final class MainSplitViewController: NSViewController {
         activePanel == .left ? rightPanelVC : leftPanelVC
     }
 
-    /// Toggle the system monitor in the ACTIVE panel, keeping it unique in the app: opening it in
-    /// one panel closes it in the other, so the sampler only ever runs once and the second panel
-    /// always keeps showing files.
+    /// The system monitor is one per window. The button, the menu item and the shortcut all come
+    /// here: when a monitor is showing — in either panel — they close it; only when none is
+    /// showing do they open one, in the ACTIVE panel. Closing it in the other panel and opening a
+    /// second one in this panel looked like a monitor that cannot be switched off.
     func toggleMonitorInActivePanel() {
-        let other = inactivePanelVC
-        if other.isMonitorMode { other.toggleMonitor() }
-        activePanelVC.toggleMonitor()
+        if let showing = monitorPanelVC {
+            showing.toggleMonitor()
+        } else {
+            activePanelVC.toggleMonitor()
+        }
+    }
+
+    /// The panel that shows the system monitor, if any.
+    var monitorPanelVC: PanelViewController? {
+        [leftPanelVC, rightPanelVC].compactMap { $0 }.first { $0.isMonitorMode }
+    }
+
+    /// Esc closes the monitor whichever panel has the keyboard — except while the user is typing
+    /// somewhere outside it (renaming a file, the quick filter, the path bar): there Esc belongs
+    /// to that field.
+    static func escClosesMonitor(firstResponder: NSResponder?, monitorView: NSView?) -> Bool {
+        guard let editor = firstResponder as? NSTextView, editor.isFieldEditor || editor.isEditable else {
+            return true
+        }
+        // The field editor sits in the window, not in the field; its delegate is the field.
+        let owner = (editor.delegate as? NSView) ?? editor
+        guard let monitorView else { return false }
+        return owner.isDescendant(of: monitorView)
     }
 
     // MARK: - Embedded Viewer
@@ -468,6 +499,14 @@ final class MainSplitViewController: NSViewController {
         openViewerNow(request)
     }
 
+    /// Сделать что-то на месте встроенной правки — когда она закроется своим путём: про
+    /// несохранённое спросят, и до ответа место не освободится. Правки нет — сразу.
+    func afterEmbeddedEditorCloses(_ action: @escaping () -> Void) {
+        guard isEditorEmbedded else { action(); return }
+        afterEditorCloses = action
+        NotificationCenter.default.post(name: .fcxlRequestEditorClose, object: nil)
+    }
+
     /// Кто сейчас занимает место рядом с панелью.
     private var slotOccupant: PanelSlot.Occupant {
         if isEditorEmbedded { return .editor }
@@ -491,7 +530,12 @@ final class MainSplitViewController: NSViewController {
             let panel = EmbeddedViewerPanel(viewModel: viewModel, onClose: onClose, operations: operations)
             hostingView = NSHostingView(rootView: panel.focusEffectDisabled())
         } else {
-            let viewer = UnifiedFileViewer(viewModel: viewModel, onClose: onClose, operations: operations)
+            let viewer = UnifiedFileViewer(
+                viewModel: viewModel, onClose: onClose, operations: operations,
+                onEdit: { [weak self, weak viewModel] in
+                    guard let viewModel else { return }
+                    self?.onViewerEdit?(viewModel)
+                })
             hostingView = NSHostingView(rootView: viewer.focusEffectDisabled())
         }
 

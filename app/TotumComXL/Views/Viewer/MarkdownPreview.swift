@@ -296,9 +296,16 @@ enum MarkdownStyler {
 /// строк и ленивой раскладкой — тот же порядок, что и у обычного текстового просмотра.
 struct MarkdownPreview: NSViewRepresentable {
     let content: NSAttributedString
+    /// Кнопка «в конец» просмотрщика.
+    var scrollJump: ScrollJumpController? = nil
 
     final class Coordinator {
         var shown: NSAttributedString?
+        let jump = ScrollJumpLink()
+    }
+
+    static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
+        coordinator.jump.detach()
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -316,6 +323,7 @@ struct MarkdownPreview: NSViewRepresentable {
         textView.isGrammarCheckingEnabled = false
         textView.layoutManager?.allowsNonContiguousLayout = true
         show(content, in: textView, context: context)
+        context.coordinator.jump.attach(scrollJump, to: scrollView)
         return scrollView
     }
 

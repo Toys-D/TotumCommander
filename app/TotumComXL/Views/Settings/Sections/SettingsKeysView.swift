@@ -7,6 +7,10 @@ struct SettingsKeysView: View {
     @AppStorage("fcxl.cmdQToQuit") private var cmdQToQuit: Bool = true
     @AppStorage("fcxl.viewerInPanel") private var viewerInPanel: Bool = false
     @AppStorage("fcxl.editorInPanel") private var editorInPanel: Bool = false
+    @AppStorage(FKeyCapture.enabledKey) private var captureFKeys: Bool = true
+    /// Выдано ли «Универсальный доступ». Его дают в Системных настройках, пока окно в фоне, —
+    /// перечитывается, когда программа снова впереди.
+    @State private var fkeysTrusted = FKeyCapture.isTrusted
 
     /// Набор сочетаний — тот же ключ, что пишет KeyBindings: окно правки меняет его само.
     @AppStorage(KeyBindings.profileKey) private var profileRaw: String = KeyProfile.totum.rawValue
@@ -119,6 +123,29 @@ struct SettingsKeysView: View {
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+            }
+            // F-клавиши, которые держит другая программа (заменитель Launchpad на F4).
+            Section(L("settings.keys.fkeys")) {
+                Toggle(L("settings.captureFKeys"), isOn: $captureFKeys).settingAnchor("settings.captureFKeys")
+                    .onChange(of: captureFKeys) { _ in FKeyCapture.shared.refresh() }
+                Text(L("settings.captureFKeys.hint"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if captureFKeys {
+                    HStack {
+                        Text(L(fkeysTrusted ? "settings.captureFKeys.granted" : "settings.captureFKeys.notGranted"))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        if !fkeysTrusted {
+                            Button(L("fkeys.grant")) { FKeyCapture.requestPermission() }
+                        }
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                fkeysTrusted = FKeyCapture.isTrusted
             }
             Section(L("settings.keys.cmdQ")) {
                 Toggle(L("settings.cmdQToQuit"), isOn: $cmdQToQuit).settingAnchor("settings.cmdQToQuit")

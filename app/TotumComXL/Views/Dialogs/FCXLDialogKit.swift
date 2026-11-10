@@ -381,49 +381,53 @@ struct FCXLChipButtonStyle: ButtonStyle {
     var fill: Color? = nil
 
     func makeBody(configuration: Configuration) -> some View {
-        Chip(configuration: configuration, compact: compact, fill: fill)
+        FCXLChip(isPressed: configuration.isPressed, compact: compact, fill: fill) { configuration.label }
+    }
+}
+
+/// Вид плашки FCXLChipButtonStyle сам по себе — для того, что нажимается не как кнопка:
+/// «Было» под картинкой показывает оригинал, ПОКА его держат, а Button забирает нажатие себе
+/// и жест удержания поверх него не доходит. Плашка та же, что у соседних кнопок, а не похожая.
+struct FCXLChip<Label: View>: View {
+    var isPressed: Bool = false
+    var compact: Bool = false
+    var fill: Color? = nil
+    @ViewBuilder let label: () -> Label
+    @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    private var accent: Color {
+        PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple)
     }
 
-    private struct Chip: View {
-        let configuration: Configuration
-        let compact: Bool
-        let fill: Color?
-        @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
-        @Environment(\.isEnabled) private var isEnabled
-        @State private var isHovered = false
-
-        private var accent: Color {
-            PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple)
+    private var background: Color {
+        if let fill {
+            return fill.opacity(isPressed ? 0.82 : isHovered && isEnabled ? 0.9 : 1)
         }
+        return isPressed ? accent.opacity(0.30)
+            : isHovered && isEnabled ? accent.opacity(0.18)
+            : Color.secondary.opacity(0.10)
+    }
 
-        private var background: Color {
-            if let fill {
-                return fill.opacity(configuration.isPressed ? 0.82 : isHovered && isEnabled ? 0.9 : 1)
-            }
-            return configuration.isPressed ? accent.opacity(0.30)
-                : isHovered && isEnabled ? accent.opacity(0.18)
-                : Color.secondary.opacity(0.10)
+    @ViewBuilder private var face: some View {
+        if fill != nil {
+            label().foregroundStyle(.white)
+        } else {
+            label()
         }
+    }
 
-        @ViewBuilder private var label: some View {
-            if fill != nil {
-                configuration.label.foregroundStyle(.white)
-            } else {
-                configuration.label
-            }
-        }
-
-        var body: some View {
-            label
-                .font(compact ? .system(size: 11) : .body)
-                .padding(.horizontal, compact ? 7 : 10)
-                .padding(.vertical, compact ? 3 : 5)
-                .background(RoundedRectangle(cornerRadius: 6).fill(background))
-                // Нажать нельзя — видно сразу, а не после щелчка, который ничего не сделал.
-                .opacity(isEnabled ? 1 : 0.4)
-                .contentShape(Rectangle())
-                .onHover { isHovered = $0 }
-        }
+    var body: some View {
+        face
+            .font(compact ? .system(size: 11) : .body)
+            .padding(.horizontal, compact ? 7 : 10)
+            .padding(.vertical, compact ? 3 : 5)
+            .background(RoundedRectangle(cornerRadius: 6).fill(background))
+            // Нажать нельзя — видно сразу, а не после щелчка, который ничего не сделал.
+            .opacity(isEnabled ? 1 : 0.4)
+            .contentShape(Rectangle())
+            .onHover { isHovered = $0 }
     }
 }
 

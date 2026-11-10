@@ -31,14 +31,44 @@ enum FKeyAvailability {
         }
     }
 
+    /// Проверить, когда программа впереди, и чуть погодя. Заменитель Launchpad, который знает
+    /// соглашение UsesFunctionKeys, отпускает F4, едва впереди оказывается эта программа, —
+    /// проверка в фоне застала бы его ещё с клавишей и предупредила бы зря.
+    @MainActor
+    static func warnOnceWhenActive(after delay: TimeInterval = 1.5) {
+        let check = {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard NSApp.isActive else { return }
+                warnIfPanelKeysAreTaken()
+            }
+        }
+        if NSApp.isActive { check(); return }
+        var token: NSObjectProtocol?
+        token = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+            if let token { NotificationCenter.default.removeObserver(token) }
+            check()
+        }
+    }
+
     /// Warn once per launch, and only when there is something to say. The dialog names the
-    /// keys, the likely kind of owner, and where the cure is — the app cannot take a key back,
-    /// so telling the user is the whole fix.
+    /// keys and where the cure is. Если перехват F-клавиш уже работает (FKeyCapture), клавиши и
+    /// так доходят сюда — говорить не о чем. Если он включён, но нет разрешения, — предложить
+    /// его: это и есть лекарство. Выключен человеком — только сказать, кто виноват.
     @MainActor
     static func warnIfPanelKeysAreTaken() {
+        guard !FKeyCapture.shared.isRunning else { return }
         let taken = takenKeys()
         guard !taken.isEmpty else { return }
         let list = taken.joined(separator: ", ")
+        if FKeyCapture.isEnabledInSettings {
+            let grant = DialogService.shared.showConfirmationCustom(
+                title: L("fkeys.takenTitle"),
+                message: String(format: L("fkeys.takenOffer"), list),
+                confirmTitle: L("fkeys.grant"), cancelTitle: L("fkeys.later"))
+            if grant { FKeyCapture.requestPermission() }
+            return
+        }
         DialogService.shared.showInfo(
             title: L("fkeys.takenTitle"),
             message: String(format: L("fkeys.takenMessage"), list))

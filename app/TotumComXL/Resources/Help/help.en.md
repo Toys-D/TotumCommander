@@ -251,12 +251,15 @@ The pack and unpack dialogs can be turned off in the "Confirmation dialogs" sett
 | PDF, DjVu | A page strip (show/hide), paging. |
 | Documents | Word, Excel, Pages, Numbers and the rest — through the system engine. |
 | Text | Encoding choice, big files are truncated for viewing, binaries suggest HEX. Markdown is shown formatted: headings, lists, quotes, code blocks. |
+| HTML | Shown as a page, as in a browser: styles, pictures and scripts from the same folder work, and the page never goes online — it loads nothing and sends nothing. The **HTML code** button next to the modes shows the markup and back. Links open in the browser on a click, ⌘+ / ⌘− / ⌘0 zoom. |
 | Video and audio | Built-in player. |
 | Fonts | TTF, OTF, TTC — a glyph table. |
 | Drawings | DXF (text variant). |
 | 3D models | OBJ, STL, PLY, USD/USDZ, DAE, SCN are read by macOS itself; glTF/GLB, FBX, 3DS, Blender, 3MF, STEP and dozens more — by the built-in library. Rotate and zoom with the mouse, "Show the wireframe", "Put the camera back", the number of meshes, vertices and faces. At the side (the panel button) — **size** in the model's own units (extent, surface area, volume), **nodes** with an eye to show or hide them, and **materials**. The light bulb — **light** (standard, studio, flat) and **background** (window colour, dark, light, studio gradient), remembered. An animated model gets a **playback bar** with pause. **Save as** — a copy beside it in USDZ, OBJ, STL or PLY. In the "Thumbnails" view a model shows a picture of itself. |
 | PostScript | Through Ghostscript. |
 | Books | FB2 and EPUB: contents, notes, ← → and PgUp/PgDn turn pages, bookmarks (add, remove, rename, list), "Count this page as the first" for numbering without the cover. |
+
+A round button in the bottom right corner of long text, Markdown or an HTML page: the down arrow jumps to the end, and at the end it turns up and jumps back to the beginning. The **Edit** button (next to "Print") opens the file in the editor — the same way F4 does: in the panel, in a window or in an external editor, a file from an archive too. It is there for text, code, Markdown, HTML and SVG. The embedded viewer makes way for the editor and comes back when the editor closes.
 
 The "File N of M" line — the viewer pages through the folder's files. Files from a cloud are downloaded to a temporary copy first; a big file asks whether to download.
 
@@ -342,7 +345,7 @@ The command "Tools ▸ Uninstall the program…" or F8 on a single `.app` (or th
 - **Create Link**: symbolic, alias, hard (not for folders).
 - **Tags** (Tools ▸ Tags, context menu): the seven Finder colours, a check mark — already set, "Clear tags".
 - **Send to** — the system share sheet (AirDrop, Mail, Telegram…). SVG for Telegram is packed.
-- **Print** (⌥⌘P, "File ▸ Print…", the context menu; a "Print" button in the F3 viewer and in the editors) — the system print dialog: printer, copies, pages, two-sided printing, paper, preview. Selected files are printed as one job, one after another: PDFs, pictures, text and code, Markdown formatted, Word, RTF, OpenDocument and HTML, DjVu scans, EPS and PostScript. An editor prints its text as it is, with unsaved changes; the viewer prints text in the chosen encoding. Whatever could not be prepared is named before the print dialog.
+- **Print** (⌥⌘P, "File ▸ Print…", the context menu; a "Print" button in the F3 viewer and in the editors) — the system print dialog: printer, copies, pages, two-sided printing, paper, preview. Selected files are printed as one job, one after another: PDFs, pictures, text and code, Markdown formatted, Word, RTF, OpenDocument and HTML, DjVu scans, EPS and PostScript. An editor prints its text as it is, with unsaved changes; the viewer prints text in the chosen encoding, and HTML as a page. Whatever could not be prepared is named before the print dialog.
 - **Open With…** — choose a program with an "Always open this way" checkbox (the rule changes for the whole Mac, like in Finder).
 - **Show in Finder**, **Open in Terminal** (the external terminal is chosen in settings), **Copy file path**, **Copy path**.
 
@@ -493,6 +496,7 @@ The shape, blur and mask of the cursor live in "Design", in the "Effects" group.
 
 ### Folders & icons
 - **Icon style** — Catalog V3…V9, Totum or your own. It is chosen for the theme on screen right now (the title names it) and remembered separately for light and dark.
+- **File icon style** — macOS or Totum. Totum draws its own icons: colour and symbol by kind of file (about fifty kinds — scripts, databases, keys and certificates, settings, logs, 3D models, subtitles, virtual machine images and more), with the extension at the bottom. Over a hundred programs and formats get an icon of their own: Blender, Maya, 3ds Max, Cinema 4D, Houdini, ZBrush, Substance, USD, AutoCAD, SolidWorks, Fusion, SketchUp, Revit, KiCad, 3D printing, After Effects, Premiere, Final Cut, DaVinci Resolve, Ableton, FL Studio, plug-in presets, Photoshop, Illustrator, Figma, camera RAW, Word, Excel and programming languages. Fifteen hundred extensions in all. Files without an extension are recognised by name and place: HEAD, index and everything else inside `.git`, Makefile, Dockerfile, README, LICENSE, id_rsa, .zshrc, .gitignore; a file you may run is a program (EXEC). macOS icons follow the extension, as in Finder. Light and dark themes each keep their own choice.
 - **Show custom folder pictures** — pictures assigned to folders in Finder or in "Properties" (⌘I).
 - **Icon under cursor** — enlarge it, the amount, the neighbour reach.
 
@@ -568,6 +572,8 @@ Version and build, developer, company, licence, repository, contact, an "All rel
 | Any letter or digit | Quick filter |
 
 The **Fn** button in the footer toggles the F-key mode: with it F1–F12 reach the program without the fn key. If some F-keys are captured by another program (often Parallels — F6), you are told.
+
+**When another program holds an F-key** — a Launchpad replacement for macOS 27 on F4, say, or Parallels on F6 — the system hands the press to it, and it never reaches Totum Commander. The setting "Take F-keys from other programs" (Settings ▸ Keys ▸ F-keys, on by default) brings them back: while Totum Commander is in front, its F-keys are its own; in other programs they work as before. Only keys assigned to commands are taken, and only without ⌘ and ⌃ — system shortcuts such as ⌘F5 stay with the system. It needs the Accessibility permission; when keys are taken, the program offers to grant it. Launchpad replacements that know the `UsesFunctionKeys` Info.plist convention let go of F4 themselves while Totum Commander is in front — then no permission is needed.
 
 The mode switches the whole keyboard at once — it cannot be set per key — and F10–F12 stop being sound keys. The program does their work itself: **F10** mutes, **F11** turns it down, **F12** turns it up, in the same steps macOS uses. No system volume badge appears. It does not matter who put the keyboard in that mode — the **Fn** button or your own macOS setting: once the key reaches the program, it no longer controls the sound, so the program does it instead.
 

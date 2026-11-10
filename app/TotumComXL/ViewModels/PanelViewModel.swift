@@ -717,6 +717,25 @@ final class PanelViewModel: ObservableObject {
     /// True while browsing an archive that was itself extracted OUT of another archive. Edits
     /// would land on the temp copy and silently evaporate, so they are refused while nested.
     var isNestedArchive: Bool { !archiveReturnStack.isEmpty }
+
+    /// Где строке состояния спрашивать свободное место; nil — места здесь нет, и «Свободно»
+    /// не показывается. Внутри архива путь панели «…/архив.zip::/папка» — его нет ни на одном
+    /// диске, statfs по нему не отвечал, и строка писала «Свободно: 0 КБ». Там место — тома, на
+    /// котором лежит сам архив (внешний: вложенный распакован во временную папку), тот же,
+    /// что подсвечен в полосе дисков.
+    var freeSpacePath: String? {
+        let archive = insideArchive ? (archiveReturnStack.first?.archive ?? archivePath) : nil
+        if insideArchive, archive == nil { return nil }
+        return Self.freeSpacePath(currentPath: currentPath, remote: isActivelyRemote, archive: archive)
+    }
+
+    /// Облако и места без файловой системы (Корзина, «Сеть», полка) — без «Свободно».
+    static func freeSpacePath(currentPath: String, remote: Bool, archive: String?) -> String? {
+        if remote { return nil }
+        if let archive { return archive }
+        if isVirtualLocation(currentPath) || DropStackStore.isStackPath(currentPath) { return nil }
+        return currentPath
+    }
     private var archiveOpenTask: Task<Void, Never>?
     private var archiveOpenRequestID: UUID?
     private var archivePrewarmTask: Task<Void, Never>?

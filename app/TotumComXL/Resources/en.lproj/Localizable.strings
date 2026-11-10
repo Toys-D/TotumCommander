@@ -321,7 +321,7 @@
 "fileIconStyle.macos" = "macOS";
 "fileIconStyle.totum" = "Totum";
 "fileIconStyle.outline" = "Outline icons that blend into the panel";
-"fileIconStyle.hint" = "Outline draws the thinnest line in the accent colour around macOS icons that blend into the panel colour; icons that already stand out are left alone. Totum uses its own icons: coloured by kind of file, with the extension at the bottom. The light and dark themes each remember their own choice.";
+"fileIconStyle.hint" = "Outline draws the thinnest line in the accent colour around macOS icons that blend into the panel colour; icons that already stand out are left alone. Totum uses its own icons: colour and symbol by kind of file, with the extension at the bottom; files without an extension are recognised by name — HEAD, Makefile, LICENSE, id_rsa. The light and dark themes each remember their own choice.";
 "design.titleBarColor" = "Title bar color";
 "design.tabCornerRadius" = "Tab corner radius";
 "design.tabBarBackground" = "Tab bar background";
@@ -1865,6 +1865,10 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "toolbar.label.theme" = "Theme";
 "toolbar.label.hidden" = "Hidden";
 "toolbar.label.settings" = "Settings";
+"toolbar.a11y.theme.toLight" = "Switch to light theme";
+"toolbar.a11y.theme.toDark" = "Switch to dark theme";
+"toolbar.a11y.hidden.show" = "Show hidden items";
+"toolbar.a11y.hidden.hide" = "Don’t show hidden items";
 "settings.section.toolbar" = "Toolbar";
 "settings.toolbar.look" = "Buttons";
 "settings.toolbar.icons" = "Icons only";
@@ -2031,6 +2035,16 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "fkeys.takenMessage" = "The keys %@ are held by another program as global hotkeys — the system hands them to it, and they never reach Totum Commander at all.
 
 A frequent culprit is Parallels Desktop (usually F6): open its Settings ▸ Shortcuts and remove the binding. The keys return to applications immediately.";
+"fkeys.takenOffer" = "The keys %@ are held by another program as global hotkeys — a Launchpad replacement or Parallels Desktop, for instance. The system hands them to it, and they never reach Totum Commander.
+
+Totum Commander can take its F-keys back while it is in front — that needs the Accessibility permission. You can also grant it later: Settings ▸ Keys ▸ F-keys.";
+"fkeys.grant" = "Grant permission…";
+"fkeys.later" = "Not now";
+"settings.keys.fkeys" = "F-keys";
+"settings.captureFKeys" = "Take F-keys from other programs while Totum Commander is in front";
+"settings.captureFKeys.hint" = "When another program holds an F-key globally — a Launchpad replacement on F4, Parallels on F6 — the press goes to it, not here. With this switch Totum Commander takes its own F-keys (without ⌘ and ⌃) while it is in front; in other programs they work as before. Needs the Accessibility permission; after an update macOS may ask for it again.";
+"settings.captureFKeys.granted" = "The Accessibility permission is granted.";
+"settings.captureFKeys.notGranted" = "No Accessibility permission — without it the keys are not taken.";
 "pack.password.section" = "Password";
 "pack.password.field" = "Password (AES-256)";
 "pack.password.repeat" = "Repeat password";
@@ -2613,6 +2627,13 @@ A frequent culprit is Parallels Desktop (usually F6): open its Settings ▸ Shor
 
 
 "viewer.mode.choose" = "How to show this file";
+"viewer.scroll.toEnd" = "To the end";
+"viewer.scroll.toTop" = "To the beginning";
+"viewer.html.code" = "HTML code";
+"viewer.html.showSource" = "Show the HTML code";
+"viewer.html.showPage" = "Show the page";
+"viewer.edit" = "Edit";
+"viewer.edit.tip" = "Open in the editor (F4)";
 
 /* Ассоциации файлов */
 "context.openWith.title" = "Open with";

@@ -423,7 +423,10 @@ final class ResultCell: NSTableCellView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             background = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) ?? .white
         }
-        return FileIcons.icon(forExtension: (hit.path as NSString).pathExtension, size: 20,
-                              look: FileIconLook.current(backgrounds: [background]))
+        let look = FileIconLook.current(backgrounds: [background])
+        let key = FileIcons.typeKey(name: (hit.path as NSString).lastPathComponent,
+                                    fileExtension: (hit.path as NSString).pathExtension, path: hit.path,
+                                    style: look.style)
+        return FileIcons.icon(forExtension: key, size: 20, look: look)
     }
 }

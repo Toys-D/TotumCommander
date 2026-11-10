@@ -190,11 +190,20 @@ final class NumberedTextView: NSTextView {
 /// Текст файла в просмотрщике — NumberedTextView внутри SwiftUI.
 struct NumberedTextPreview: NSViewRepresentable {
     let text: String
+    /// Кнопка «в конец» просмотрщика.
+    var scrollJump: ScrollJumpController? = nil
+
+    func makeCoordinator() -> ScrollJumpLink { ScrollJumpLink() }
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NumberedTextView.makeScrollView()
         (scroll.documentView as? NumberedTextView)?.show(text)
+        context.coordinator.attach(scrollJump, to: scroll)
         return scroll
+    }
+
+    static func dismantleNSView(_ scroll: NSScrollView, coordinator: ScrollJumpLink) {
+        coordinator.detach()
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {

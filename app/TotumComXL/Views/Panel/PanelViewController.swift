@@ -2627,6 +2627,10 @@ final class PanelViewController: NSViewController,
         isMonitorMode ? hideMonitor() : showMonitor()
     }
 
+    /// The view the monitor is drawn in while it shows — to tell typing inside it from typing
+    /// elsewhere when Esc arrives.
+    var monitorView: NSView? { monitorHosting }
+
     private func showMonitor() {
         endQuickFilter()
         scrollView.isHidden = true
@@ -4801,13 +4805,14 @@ final class PanelViewController: NSViewController,
     private func iconForFile(_ item: FileItem) -> NSImage {
         let look = resolvedFileIconLook
         let size = resolvedDetailedIconSize()
-        if let ready = FileIcons.cached(forExtension: item.fileExtension, size: size, look: look) {
+        // Ключ — расширение, а у своих значков и узнанное имя: HEAD, Makefile, id_rsa.
+        let ext = FileIcons.typeKey(for: item, style: look.style)
+        if let ready = FileIcons.cached(forExtension: ext, size: size, look: look) {
             return ready
         }
         // Без расширения — обычный документ: его значок у LaunchServices не спрашивают, и он
         // же стоит, пока настоящий не готов, — в том же стиле, что остальные.
         let placeholder = FileIcons.icon(forExtension: "", size: size, look: look)
-        let ext = FileIcons.normalized(item.fileExtension)
         guard !ext.isEmpty else { return placeholder }
 
         // Not cached yet: this row draws the generic document icon now, and the
@@ -4851,9 +4856,8 @@ final class PanelViewController: NSViewController,
         for row in visible.lowerBound..<visible.upperBound
         where viewModel.items.indices.contains(row) {
             if let renamingPath, viewModel.items[row].path == renamingPath { continue }
-            var rowExt = viewModel.items[row].fileExtension.lowercased()
-            if rowExt.hasPrefix(".") { rowExt = String(rowExt.dropFirst()) }
-            if rowExt == ext { rowsToRedraw.insert(row) }
+            let rowKey = FileIcons.typeKey(for: viewModel.items[row], style: resolvedFileIconLook.style)
+            if rowKey == ext { rowsToRedraw.insert(row) }
         }
         guard !rowsToRedraw.isEmpty else { return }
         tableView.reloadData(forRowIndexes: rowsToRedraw,

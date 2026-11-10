@@ -2273,7 +2273,7 @@ final class FileOperationsService {
             let target = try resolveEditorTarget(
                 for: item, archivePath: archivePath, insideArchive: insideArchive
             )
-            guard isEditableTextFile(name: target.displayName, fileExtension: target.fileExtension) else {
+            guard Self.isEditableTextFile(name: target.displayName, fileExtension: target.fileExtension) else {
                 DialogService.shared.showWarning(
                     title: L("error.editUnavailable"),
                     message: L("error.binaryEdit")
@@ -4744,7 +4744,9 @@ final class FileOperationsService {
         )
     }
 
-    private func isEditableTextFile(name: String, fileExtension: String) -> Bool {
+    /// Что F4 открывает в редакторе: всё, кроме известных двоичных форматов. Одно правило на
+    /// всех — по нему же кнопка «Править» в просмотре решает, показываться ли ей.
+    nonisolated static func isEditableTextFile(name: String, fileExtension: String) -> Bool {
         let normalizedExtension = fileExtension
             .lowercased()
             .trimmingCharacters(in: CharacterSet(charactersIn: "."))

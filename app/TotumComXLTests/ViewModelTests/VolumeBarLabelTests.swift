@@ -50,4 +50,10 @@ final class VolumeBarLabelTests: XCTestCase {
         XCTAssertTrue(PanelVolumeBar.systemLabel().hasPrefix("System:"))
         XCTAssertFalse(PanelVolumeBar.homeLabel().hasSuffix(" "), "no dangling separator")
     }
+
+    /// Подпись — имя самой домашней папки: у обычной учётной записи оно и есть короткое имя.
+    func test_homeLabelNamesTheHomeFolder() {
+        XCTAssertEqual(PanelVolumeBar.homeLabel(),
+                       PanelVolumeBar.homeLabel(userName: (NSHomeDirectory() as NSString).lastPathComponent))
+    }
 }

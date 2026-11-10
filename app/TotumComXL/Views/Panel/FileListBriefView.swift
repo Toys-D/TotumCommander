@@ -886,8 +886,8 @@ struct FileListBriefView: NSViewRepresentable {
                 )
             }
 
-            return FileIcons.icon(forExtension: item.fileExtension, size: parent.iconSize,
-                                  look: parent.fileIconLook)
+            return FileIcons.icon(forExtension: FileIcons.typeKey(for: item, style: parent.fileIconLook.style),
+                                  size: parent.iconSize, look: parent.fileIconLook)
         }
 
         func resetAppearanceCache() {

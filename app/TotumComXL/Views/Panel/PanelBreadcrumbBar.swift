@@ -97,7 +97,7 @@ struct PanelBreadcrumbBar: View {
     }
 
     private func commitEdit() {
-        let path = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let path = TypedPath.resolve(editText)
         if !path.isEmpty && FileManager.default.fileExists(atPath: path) {
             viewModel.pushHistory(from: state.currentPath, to: path)
             viewModel.loadDirectory(at: path, resetCursor: true)
@@ -109,6 +109,33 @@ struct PanelBreadcrumbBar: View {
     private func cancelEdit() {
         isEditing = false
         onDismiss?()
+    }
+}
+
+/// A path typed or pasted into the path bar. Finder and the shell hand a path over wrapped in
+/// quotes — '/Users/…/Правки' — and the quotes are not part of any name, so the jump went
+/// nowhere. Spaces, line breaks and quotes at either end are dropped; quotes inside the path stay.
+enum TypedPath {
+    static let quotes: Set<Character> = ["'", "\"", "`", "‘", "’", "‚", "‛", "“", "”", "„", "‟", "«", "»", "‹", "›"]
+
+    /// The text with spaces, line breaks and quotes at both ends removed.
+    static func cleaned(_ text: String) -> String {
+        var path = Substring(text)
+        while true {
+            let before = path.count
+            path = path.drop { $0.isWhitespace || quotes.contains($0) }
+            while let last = path.last, last.isWhitespace || quotes.contains(last) { path = path.dropLast() }
+            if path.count == before { break }
+        }
+        return String(path)
+    }
+
+    /// Where the path bar should go. A name may itself end in a quote (Отчёт "2026"), so the text
+    /// as typed wins when such a path exists; otherwise the cleaned one.
+    static func resolve(_ text: String, exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty, exists(trimmed) { return trimmed }
+        return cleaned(trimmed)
     }
 }
 

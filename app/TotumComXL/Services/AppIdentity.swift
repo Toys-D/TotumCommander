@@ -9,6 +9,10 @@ enum AppIdentity {
     static let developer = "Toys-D"
     /// The company behind the program, as named on GitHub.
     static let company = "Pixmap Labs"
+    /// The copyright line. "About" in Settings shows it from here; the standard About panel and
+    /// Finder's Get Info read the same line from Info.plist, which launch.sh writes (a test
+    /// keeps the two equal, and the README carries it too).
+    static let copyright = "© 2026 \(company)"
 
     static let repositorySlug = "Toys-D/TotumCommander"
     static let repositoryURL = URL(string: "https://github.com/\(repositorySlug)")!

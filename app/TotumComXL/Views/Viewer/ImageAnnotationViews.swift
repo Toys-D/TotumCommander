@@ -105,40 +105,68 @@ struct ImageAnnotationToolbar: View {
         PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple)
     }
 
+    /// Подписи не режутся. Тесно — инструменты остаются одними значками (название — в подсказке и
+    /// для чтения с экрана), как «Повернуть» и «Отразить» в полосе правки; совсем тесно —
+    /// «Убрать последнее» и «Готово» уходят второй строкой (FCXLToolbarRow). Раньше это был HStack
+    /// со Spacer, и в панели окна 1200 точек подписи обрезались до «Ar…», «U…», «D…».
     var body: some View {
-        HStack(spacing: 6) {
-            ForEach(ImageAnnotation.Tool.allCases, id: \.self) { item in
-                toolButton(item)
-            }
-            Divider().frame(height: 18).padding(.horizontal, 4)
-            ForEach(ImageAnnotation.Colour.allCases, id: \.self) { item in
-                colourButton(item)
-            }
-            Spacer(minLength: 8)
-            Button(action: onUndo) { face(L("viewer.draw.undo"), "arrow.uturn.backward", selected: false) }
-                .buttonStyle(.plain)
-                .disabled(!canUndo)
-                .opacity(canUndo ? 1 : 0.4)
-            Button(action: onDone) { face(L("viewer.draw.done"), "checkmark", selected: false) }
-                .buttonStyle(.plain)
+        ViewThatFits(in: .horizontal) {
+            row(toolTitles: true)
+            row(toolTitles: false)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
     }
 
-    private func toolButton(_ item: ImageAnnotation.Tool) -> some View {
+    private func row(toolTitles: Bool) -> some View {
+        FCXLToolbarRow(spacing: 8) {
+            HStack(spacing: 6) {
+                ForEach(ImageAnnotation.Tool.allCases, id: \.self) { item in
+                    toolButton(item, showsTitle: toolTitles)
+                }
+                Divider().frame(height: 18).padding(.horizontal, 4)
+                ForEach(ImageAnnotation.Colour.allCases, id: \.self) { item in
+                    colourButton(item)
+                }
+            }
+            HStack(spacing: 6) {
+                Button(action: onUndo) { face(L("viewer.draw.undo"), "arrow.uturn.backward", selected: false) }
+                    .buttonStyle(.plain)
+                    .disabled(!canUndo)
+                    .opacity(canUndo ? 1 : 0.4)
+                Button(action: onDone) { face(L("viewer.draw.done"), "checkmark", selected: false) }
+                    .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func toolButton(_ item: ImageAnnotation.Tool, showsTitle: Bool) -> some View {
         let selected = item == tool
-        return Button { tool = item } label: { face(L(item.titleKey), item.symbol, selected: selected) }
-            .buttonStyle(.plain)
-            .opacity(selected ? 1 : 0.75)
+        return Button { tool = item } label: {
+            face(L(item.titleKey), item.symbol, selected: selected, showsTitle: showsTitle)
+        }
+        .buttonStyle(.plain)
+        .opacity(selected ? 1 : 0.75)
+        .help(showsTitle ? "" : L(item.titleKey))
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     /// One look for every button of the row — the same as the viewer's mode buttons above
     /// the picture — so the tools and the two actions line up in size.
-    private func face(_ title: String, _ symbol: String, selected: Bool) -> some View {
-        Label(title, systemImage: symbol)
+    private func face(_ title: String, _ symbol: String, selected: Bool,
+                      showsTitle: Bool = true) -> some View {
+        Group {
+            if showsTitle {
+                Label(title, systemImage: symbol)
+            } else {
+                // Название остаётся у значка — его читает VoiceOver.
+                Label(title, systemImage: symbol).labelStyle(.iconOnly)
+            }
+        }
             .font(.caption)
             .lineLimit(1)
+            // Подпись целиком: тесно — выбирается вид без подписей, а не «Стре…».
+            .fixedSize()
             .padding(.horizontal, 7)
             .frame(minHeight: 26)
             .contentShape(Rectangle())
@@ -161,5 +189,8 @@ struct ImageAnnotationToolbar: View {
         }
         .buttonStyle(.plain)
         .help(L(item.titleKey))
+        // Кружок без подписи — имя для чтения с экрана то же, что в подсказке.
+        .accessibilityLabel(L(item.titleKey))
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

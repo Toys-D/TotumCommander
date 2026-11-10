@@ -326,7 +326,7 @@
 "fileIconStyle.macos" = "macOS";
 "fileIconStyle.totum" = "Totum";
 "fileIconStyle.outline" = "Контур у иконок, которые сливаются с панелью";
-"fileIconStyle.hint" = "Контур — самая тонкая линия акцентным цветом у иконок macOS, которые сливаются с цветом панели; где иконку и так видно, её не трогают. Totum — свои иконки: цвет по виду файла, внизу расширение. Для светлой и тёмной темы выбор свой.";
+"fileIconStyle.hint" = "Контур — самая тонкая линия акцентным цветом у иконок macOS, которые сливаются с цветом панели; где иконку и так видно, её не трогают. Totum — свои иконки: цвет и знак по виду файла, внизу расширение; файлы без расширения узнаются по имени — HEAD, Makefile, LICENSE, id_rsa. Для светлой и тёмной темы выбор свой.";
 "design.titleBarColor" = "Цвет заголовка окна";
 "design.tabCornerRadius" = "Закругление вкладок";
 "design.tabBarBackground" = "Цвет панели вкладок";
@@ -1871,6 +1871,10 @@
 "toolbar.label.theme" = "Тема";
 "toolbar.label.hidden" = "Скрытые";
 "toolbar.label.settings" = "Настройки";
+"toolbar.a11y.theme.toLight" = "Включить светлую тему";
+"toolbar.a11y.theme.toDark" = "Включить тёмную тему";
+"toolbar.a11y.hidden.show" = "Показать скрытые элементы";
+"toolbar.a11y.hidden.hide" = "Не показывать скрытые элементы";
 "settings.section.toolbar" = "Панель инструментов";
 "settings.toolbar.look" = "Кнопки";
 "settings.toolbar.icons" = "Только значки";
@@ -2037,6 +2041,16 @@
 "fkeys.takenMessage" = "Клавиши %@ заняты другой программой как глобальные сочетания — система отдаёт их ей, и до Totum Commander они не доходят вообще.
 
 Частый виновник — Parallels Desktop (обычно F6): откройте его Настройки ▸ Сочетания клавиш и снимите привязку. После этого клавиши сразу вернутся программам.";
+"fkeys.takenOffer" = "Клавиши %@ заняты другой программой как глобальные сочетания — например, заменителем Launchpad или Parallels Desktop. Система отдаёт их ей, и до Totum Commander они не доходят.
+
+Totum Commander может забирать свои F-клавиши, пока он на переднем плане, — для этого нужно разрешение «Универсальный доступ». Выдать его можно и потом: Настройки ▸ Клавиши ▸ F-клавиши.";
+"fkeys.grant" = "Выдать разрешение…";
+"fkeys.later" = "Не сейчас";
+"settings.keys.fkeys" = "F-клавиши";
+"settings.captureFKeys" = "Забирать F-клавиши у других программ, пока Totum Commander впереди";
+"settings.captureFKeys.hint" = "Если другая программа держит F-клавишу глобально — заменитель Launchpad на F4, Parallels на F6, — нажатие уходит ей, а не сюда. С этим переключателем Totum Commander забирает свои F-клавиши (без ⌘ и ⌃), пока он на переднем плане; в остальных программах они работают как раньше. Нужно разрешение «Универсальный доступ»; после обновления программы macOS может попросить его снова.";
+"settings.captureFKeys.granted" = "Разрешение «Универсальный доступ» выдано.";
+"settings.captureFKeys.notGranted" = "Разрешения «Универсальный доступ» нет — без него клавиши не забираются.";
 "pack.password.section" = "Пароль";
 "pack.password.field" = "Пароль (AES-256)";
 "pack.password.repeat" = "Повторите пароль";
@@ -2619,6 +2633,13 @@
 
 
 "viewer.mode.choose" = "Чем показывать этот файл";
+"viewer.scroll.toEnd" = "В конец";
+"viewer.scroll.toTop" = "В начало";
+"viewer.html.code" = "Код HTML";
+"viewer.html.showSource" = "Показать код HTML";
+"viewer.html.showPage" = "Показать страницу";
+"viewer.edit" = "Править";
+"viewer.edit.tip" = "Открыть в редакторе (F4)";
 
 /* Ассоциации файлов */
 "context.openWith.title" = "Открыть с помощью";

@@ -212,6 +212,43 @@ final class ToolbarLookTests: XCTestCase {
         }
     }
 
+    // MARK: - Чтение с экрана
+
+    /// Кнопка-значок называется для чтения с экрана своей подписью, а не описанием картинки:
+    /// символ SF Symbols без своего описания система называет по-своему — луна «не
+    /// беспокоить», солнце «повысить яркость», волна «линия формы волны ЭКГ», перечёркнутый
+    /// глаз «скрыть» (хотя кнопка как раз показывает), а у составного значка дисков имени нет.
+    func test_значокНазванСвоейПодписью_аНеОписаниемСимвола() {
+        for (symbol, label) in [("moon.fill", "Тема"), ("sun.max.fill", "Тема"),
+                                ("waveform.path.ecg", "Монитор"), ("eye.slash", "Скрытые")] {
+            let button = MainWindowController.toolbarButton(
+                label: label, image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil),
+                look: .icons)
+            XCTAssertEqual(button.accessibilityLabel(), label, "значок \(symbol)")
+        }
+        let disks = MainWindowController.toolbarButton(
+            label: "Диски", image: MainWindowController.diskInfoSymbol(), look: .icons)
+        XCTAssertEqual(disks.accessibilityLabel(), "Диски", "составной значок без описания")
+    }
+
+    /// Переключатель называется тем, что сделает нажатие: «Тема» не говорит, какая включится.
+    func test_переключателиНазваныПоДействию() {
+        let toLight = MainWindowController.themeToggleAccessibilityLabel(dark: true)
+        let toDark = MainWindowController.themeToggleAccessibilityLabel(dark: false)
+        XCTAssertEqual(toLight, L("toolbar.a11y.theme.toLight"), "при тёмной теме — включить светлую")
+        XCTAssertEqual(toDark, L("toolbar.a11y.theme.toDark"))
+        XCTAssertEqual(MainWindowController.hiddenFilesAccessibilityLabel(showing: false), L("toolbar.a11y.hidden.show"))
+        XCTAssertEqual(MainWindowController.hiddenFilesAccessibilityLabel(showing: true), L("toolbar.a11y.hidden.hide"))
+        for key in ["toolbar.a11y.theme.toLight", "toolbar.a11y.theme.toDark",
+                    "toolbar.a11y.hidden.show", "toolbar.a11y.hidden.hide"] {
+            XCTAssertNotEqual(L(key), key, "нет перевода \(key)")
+        }
+        let moon = NSImage(systemSymbolName: "moon.fill", accessibilityDescription: nil)
+        let button = MainWindowController.toolbarButton(label: "Тема", image: moon, look: .icons,
+                                                        accessibilityLabel: toLight)
+        XCTAssertEqual(button.accessibilityLabel(), toLight)
+    }
+
     // MARK: - macOS 26 и новее
 
     /// На macOS 26+ кнопки — своим рядом в строке заголовка: пункт панели со своим вью система

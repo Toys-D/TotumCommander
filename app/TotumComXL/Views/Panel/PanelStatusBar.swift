@@ -37,9 +37,11 @@ struct PanelStatusBar: View {
             return "\(L("status.items")): \(visibleCount)   \(L("status.selected")): \(selectedCount) / \(selectedText)"
         }
 
-        let freeText = FreeSpaceCache.shared.formattedFreeSpace(for: viewModel.currentPath)
-
-        var base = "\(L("status.items")): \(visibleCount)   \(L("status.selected")): \(selectedCount) / \(selectedText)   \(L("status.free")): \(freeText)"
+        var base = "\(L("status.items")): \(visibleCount)   \(L("status.selected")): \(selectedCount) / \(selectedText)"
+        // Не currentPath: в архиве и на полке он вымышленный, и statfs по нему давал 0.
+        if let place = viewModel.freeSpacePath {
+            base += "   \(L("status.free")): \(FreeSpaceCache.shared.formattedFreeSpace(for: place))"
+        }
 
         // Show symlink target when cursor is on a symlink
         if let cursorItem = viewModel.cursorItem, cursorItem.isSymlink, let target = cursorItem.symlinkTarget {

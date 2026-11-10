@@ -488,9 +488,10 @@ struct PanelVolumeBar: View {
         decorate("System:", with: bootVolumeName)
     }
 
-    /// "C: dimas" — the letter, then whose home it opens. The SHORT name, because that is what
-    /// the home folder is actually called on disk.
-    static func homeLabel(userName: String = NSUserName()) -> String {
+    /// "C: dimas" — the letter, then whose home it opens: the home folder's own name on disk
+    /// (for an ordinary account that is the short user name). Taken from the folder, not from
+    /// NSUserName(), so a home moved elsewhere (CFFIXED_USER_HOME) is named for what it is.
+    static func homeLabel(userName: String = (NSHomeDirectory() as NSString).lastPathComponent) -> String {
         decorate("C:", with: userName)
     }
 

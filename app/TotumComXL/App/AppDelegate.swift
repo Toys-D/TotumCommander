@@ -47,12 +47,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         QuitRequest.settingsWindow = { [weak self] in self?.settingsWindowController?.window }
         QuitRequest.install()
         installHelpShortcut()
+        // F-клавиши — этой программе, пока она впереди, даже если их держит другая (FKeyCapture).
+        FKeyCapture.shared.start()
         // Once the window is up: say out loud if another program holds any of the panel's
         // F-keys as a global hotkey. Found the hard way — Parallels held F6, and inside this
         // app that looked like a key that does nothing at all.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            FKeyAvailability.warnIfPanelKeysAreTaken()
-        }
+        FKeyAvailability.warnOnceWhenActive()
         FKeyModeManager.shared.syncOnLaunch()
         FKeyModeManager.shared.installCrashGuard()
         PanelAppearanceSettings.migrateAccentFromTabAccentIfNeeded()

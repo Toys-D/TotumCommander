@@ -165,6 +165,24 @@ enum FileIcons {
         return ext.hasPrefix(".") ? String(ext.dropFirst()) : ext
     }
 
+    /// Ключ значка файла для стиля. Свои значки узнают файл и по имени — HEAD, Makefile,
+    /// id_rsa, — значки macOS идут только по расширению; без расширения у них свой значок лишь
+    /// у программы.
+    static func typeKey(name: String, fileExtension: String, path: String = "", permissions: String = "",
+                        style: FileIconStyle) -> String {
+        let key = FileTypeCatalog.typeKey(name: name, fileExtension: fileExtension, path: path,
+                                          permissions: permissions)
+        guard style == .macos, key.hasPrefix(FileTypeCatalog.namedPrefix) else { return key }
+        return key == executableKey ? key : normalized(fileExtension)
+    }
+
+    static func typeKey(for item: FileItem, style: FileIconStyle) -> String {
+        typeKey(name: item.name, fileExtension: item.fileExtension, path: item.path,
+                permissions: item.permissions, style: style)
+    }
+
+    static let executableKey = FileTypeCatalog.namedPrefix + "exec"
+
     static func key(forExtension fileExtension: String, size: CGFloat, look: FileIconLook) -> String {
         "\(normalized(fileExtension))|\(Int((size * 2).rounded()))|\(look.cacheToken)"
     }
@@ -216,7 +234,14 @@ enum FileIcons {
         lock.lock()
         if let known = systemIcons[ext] { lock.unlock(); return known }
         lock.unlock()
-        let icon = UTType(filenameExtension: ext).map { NSWorkspace.shared.icon(for: $0) } ?? plain
+        let icon: NSImage
+        if ext == executableKey {
+            icon = NSWorkspace.shared.icon(for: .unixExecutable)
+        } else if ext.hasPrefix(FileTypeCatalog.namedPrefix) {
+            icon = plain
+        } else {
+            icon = UTType(filenameExtension: ext).map { NSWorkspace.shared.icon(for: $0) } ?? plain
+        }
         lock.lock()
         systemIcons[ext] = icon
         lock.unlock()
@@ -235,77 +260,73 @@ enum FileIcons {
     }
 }
 
-// MARK: - Вид файла — для своих значков
+// MARK: - Цвет и знак вида
 
-enum FileKind: CaseIterable {
-    case image, video, audio, archive, diskImage, pdf, document, spreadsheet, presentation
-    case book, code, text, font, other
-
-    static func of(_ fileExtension: String) -> FileKind {
-        let ext = FileIcons.normalized(fileExtension)
-        guard !ext.isEmpty else { return .other }
-        // Сначала — те, что система числит не тем: docx, xlsx и epub для неё zip-архивы,
-        // а djvu и fb2 она не знает вовсе.
-        switch ext {
-        case "doc", "docx", "pages", "rtf", "rtfd", "odt", "wpd": return .document
-        case "xls", "xlsx", "numbers", "ods", "csv", "tsv": return .spreadsheet
-        case "ppt", "pptx", "key", "odp": return .presentation
-        case "djvu", "djv", "epub", "fb2", "mobi", "azw", "azw3", "cbz", "cbr": return .book
-        case "dmg", "iso", "img", "sparseimage", "sparsebundle", "toast": return .diskImage
-        default: break
-        }
-        guard let type = UTType(filenameExtension: ext) else { return .other }
-        if type.conforms(to: .pdf) { return .pdf }
-        if type.conforms(to: .image) { return .image }
-        if type.conforms(to: .movie) || type.conforms(to: .video) { return .video }
-        if type.conforms(to: .audio) { return .audio }
-        if type.conforms(to: .diskImage) { return .diskImage }
-        if type.conforms(to: .archive) { return .archive }
-        if type.conforms(to: .spreadsheet) { return .spreadsheet }
-        if type.conforms(to: .presentation) { return .presentation }
-        if type.conforms(to: .font) { return .font }
-        if type.conforms(to: .sourceCode) || type.conforms(to: .script) || type.conforms(to: .json)
-            || type.conforms(to: .html) || type.conforms(to: .xml) { return .code }
-        if type.conforms(to: .text) { return .text }
-        return .other
-    }
-
+extension FileKind {
     var color: NSColor {
-        switch self {
-        case .image: return NSColor(srgbRed: 0.18, green: 0.66, blue: 0.41, alpha: 1)
-        case .video: return NSColor(srgbRed: 0.55, green: 0.36, blue: 0.84, alpha: 1)
-        case .audio: return NSColor(srgbRed: 0.87, green: 0.27, blue: 0.47, alpha: 1)
-        case .archive: return NSColor(srgbRed: 0.77, green: 0.53, blue: 0.16, alpha: 1)
-        case .diskImage: return NSColor(srgbRed: 0.35, green: 0.47, blue: 0.59, alpha: 1)
-        case .pdf: return NSColor(srgbRed: 0.86, green: 0.25, blue: 0.22, alpha: 1)
-        case .document: return NSColor(srgbRed: 0.18, green: 0.48, blue: 0.87, alpha: 1)
-        case .spreadsheet: return NSColor(srgbRed: 0.09, green: 0.57, blue: 0.48, alpha: 1)
-        case .presentation: return NSColor(srgbRed: 0.89, green: 0.45, blue: 0.17, alpha: 1)
-        case .book: return NSColor(srgbRed: 0.36, green: 0.37, blue: 0.83, alpha: 1)
-        case .code: return NSColor(srgbRed: 0.16, green: 0.62, blue: 0.72, alpha: 1)
-        case .text: return NSColor(srgbRed: 0.48, green: 0.51, blue: 0.55, alpha: 1)
-        case .font: return NSColor(srgbRed: 0.69, green: 0.34, blue: 0.56, alpha: 1)
-        case .other: return NSColor(srgbRed: 0.56, green: 0.58, blue: 0.61, alpha: 1)
-        }
+        let (r, g, b) = look.rgb
+        return NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
     }
 
     /// Знак вида посреди листа; у «прочего» листа его нет — только расширение.
-    var symbol: String? {
+    var symbol: String? { look.symbol }
+
+    /// Цвет и знак. Родственные виды — родственных цветов: всё про звук розовое, про
+    /// разработку — бирюзовое и синее, про ключи — золотое; различает их знак.
+    private var look: (rgb: (CGFloat, CGFloat, CGFloat), symbol: String?) {
         switch self {
-        case .image: return "photo"
-        case .video: return "play.fill"
-        case .audio: return "music.note"
-        case .archive: return "archivebox"
-        case .diskImage: return "opticaldiscdrive"
-        case .pdf: return "doc.richtext"
-        case .document: return "text.alignleft"
-        case .spreadsheet: return "tablecells"
-        case .presentation: return "chart.bar"
-        case .book: return "book.closed"
-        case .code: return "chevron.left.forwardslash.chevron.right"
-        case .text: return "text.alignleft"
-        case .font: return "textformat"
-        case .other: return nil
+        case .image: return ((0.18, 0.66, 0.41), "photo")
+        case .video: return ((0.55, 0.36, 0.84), "play.fill")
+        case .audio: return ((0.87, 0.27, 0.47), "music.note")
+        case .archive: return ((0.77, 0.53, 0.16), "archivebox")
+        case .diskImage: return ((0.35, 0.47, 0.59), "opticaldiscdrive")
+        case .pdf: return ((0.86, 0.25, 0.22), "doc.richtext")
+        case .document: return ((0.18, 0.48, 0.87), "text.alignleft")
+        case .spreadsheet: return ((0.09, 0.57, 0.48), "tablecells")
+        case .presentation: return ((0.89, 0.45, 0.17), "chart.bar")
+        case .book: return ((0.36, 0.37, 0.83), "book.closed")
+        case .code: return ((0.16, 0.62, 0.72), "chevron.left.forwardslash.chevron.right")
+        case .text: return ((0.48, 0.51, 0.55), "text.alignleft")
+        case .font: return ((0.69, 0.34, 0.56), "textformat")
+        case .other: return ((0.56, 0.58, 0.61), nil)
+
+        case .markup: return ((0.27, 0.40, 0.62), "number")
+        case .web: return ((0.90, 0.36, 0.15), "globe")
+        case .data: return ((0.12, 0.52, 0.62), "curlybraces")
+        case .config: return ((0.40, 0.47, 0.56), "gearshape")
+        case .script: return ((0.22, 0.56, 0.30), "terminal")
+        case .executable: return ((0.24, 0.27, 0.31), "terminal.fill")
+        case .binary: return ((0.42, 0.40, 0.52), "cpu")
+        case .package: return ((0.68, 0.45, 0.22), "shippingbox")
+        case .database: return ((0.25, 0.42, 0.72), "cylinder.split.1x2")
+        case .build: return ((0.55, 0.43, 0.32), "hammer")
+        case .git: return ((0.92, 0.32, 0.20), "arrow.triangle.branch")
+
+        case .security: return ((0.76, 0.56, 0.06), "key")
+        case .encrypted: return ((0.62, 0.44, 0.10), "lock")
+        case .checksum: return ((0.20, 0.55, 0.45), "checkmark.shield")
+
+        case .design: return ((0.83, 0.30, 0.62), "paintbrush.pointed")
+        case .model3d: return ((0.30, 0.47, 0.86), "cube")
+        case .cad: return ((0.20, 0.45, 0.58), "ruler")
+
+        case .subtitle: return ((0.45, 0.32, 0.72), "captions.bubble")
+        case .playlist: return ((0.78, 0.29, 0.54), "music.note.list")
+
+        case .mail: return ((0.20, 0.55, 0.90), "envelope")
+        case .contact: return ((0.55, 0.45, 0.35), "person.crop.square")
+        case .calendar: return ((0.88, 0.28, 0.25), "calendar")
+        case .link: return ((0.24, 0.50, 0.86), "link")
+        case .download: return ((0.27, 0.60, 0.36), "arrow.down.circle")
+
+        case .log: return ((0.47, 0.51, 0.40), "list.bullet.rectangle")
+        case .backup: return ((0.52, 0.53, 0.58), "clock.arrow.circlepath")
+        case .game: return ((0.44, 0.31, 0.80), "gamecontroller")
+        case .map: return ((0.24, 0.58, 0.34), "map")
+        case .virtualMachine: return ((0.31, 0.38, 0.55), "server.rack")
+        case .translation: return ((0.18, 0.54, 0.70), "character.bubble")
+        case .readme: return ((0.24, 0.49, 0.80), "info.circle")
+        case .license: return ((0.46, 0.42, 0.68), "checkmark.seal")
         }
     }
 }
@@ -462,6 +483,7 @@ enum FileIconArt {
 
     /// Что написано на полосе: расширение заглавными, до пяти букв; длиннее — первые четыре.
     static func label(for fileExtension: String) -> String {
+        if let named = FileTypeCatalog.named(fileExtension) { return named.label }
         let ext = FileIcons.normalized(fileExtension).uppercased()
         return ext.count <= 5 ? ext : String(ext.prefix(4))
     }
@@ -470,10 +492,10 @@ enum FileIconArt {
     /// вида, знак вида посередине, расширение на цветной полосе внизу. Всё — в долях размера,
     /// чтобы значок был одним и тем же в списке и в эскизах.
     static func totum(extension fileExtension: String, size: CGFloat, darkBackground: Bool) -> NSImage {
-        let kind = FileKind.of(fileExtension)
+        let face = FileTypeCatalog.face(forKey: fileExtension)
         let label = label(for: fileExtension)
         return pixelExact(size: size) { _, side, _ in
-            drawTotum(kind: kind, label: label, side: CGFloat(side), darkBackground: darkBackground)
+            drawTotum(face: face, label: label, side: CGFloat(side), darkBackground: darkBackground)
         }
     }
 
@@ -481,9 +503,9 @@ enum FileIconArt {
 
     /// Рисует в точках растра. Всё прямое — края листа, полоса, обводка, уголок — стоит на
     /// целых точках: линия, попавшая между ними, расплывается на две соседние.
-    private static func drawTotum(kind: FileKind, label: String, side: CGFloat, darkBackground dark: Bool) {
+    private static func drawTotum(face: FileTypeCatalog.Face, label: String, side: CGFloat, darkBackground dark: Bool) {
         let unit = side / 22
-        let color = kind.color
+        let color = face.color
         func mix(_ fraction: CGFloat, _ other: NSColor) -> NSColor { color.blended(withFraction: fraction, of: other) ?? color }
 
         let inset = (3 * unit).rounded(), lift = (0.5 * unit).rounded()
@@ -524,12 +546,14 @@ enum FileIconArt {
         edge.stroke()
 
         // Знак вида — над полосой; в совсем мелком значке ему места нет.
-        guard side >= 14, let name = kind.symbol else { return }
+        guard side >= 14, !face.symbols.isEmpty else { return }
         let tint = dark ? mix(0.25, .white) : color
         let config = NSImage.SymbolConfiguration(pointSize: 7 * unit, weight: .bold)
             .applying(NSImage.SymbolConfiguration(paletteColors: [tint]))
-        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-            .withSymbolConfiguration(config) else { return }
+        // Знак семейства, а если его нет в этой системе — знак вида.
+        guard let symbol = face.symbols.lazy.compactMap({
+            NSImage(systemSymbolName: $0, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        }).first else { return }
         let free = NSRect(x: page.minX, y: page.minY + band, width: page.width,
                           height: page.height - band - fold * 0.4)
         let fit = min(1, free.width * 0.8 / symbol.size.width, free.height * 0.8 / symbol.size.height)

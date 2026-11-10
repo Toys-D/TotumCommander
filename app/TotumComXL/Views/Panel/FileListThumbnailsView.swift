@@ -934,7 +934,8 @@ private final class ThumbnailProvider {
 
         // Значок файла — сразу в размер эскиза: свои значки и обводка нарисованы растром под
         // свой размер, и растянутые из 64 точек они мылились бы.
-        return FileIcons.icon(forExtension: item.fileExtension, size: fileIconSize, look: fileIconLook)
+        return FileIcons.icon(forExtension: FileIcons.typeKey(for: item, style: fileIconLook.style),
+                              size: fileIconSize, look: fileIconLook)
     }
 
     private static func scaledImage(_ image: NSImage, targetSize: NSSize) -> NSImage {

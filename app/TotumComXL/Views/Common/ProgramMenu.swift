@@ -57,18 +57,26 @@ struct RightClickMenu: NSViewRepresentable {
 ///     ProgramMenuButton(makeMenu: { saveMenu() }) { Text("Сохранить") }
 struct ProgramMenuButton<Label: View>: View {
     var edge: NSRectEdge = .minY
+    /// Плашкой программы — когда рядом стоят такие же кнопки-плашки («Сбросить» у «Сохранить»).
+    var chipStyle: FCXLChipButtonStyle? = nil
     let makeMenu: () -> NSMenu
     @ViewBuilder let label: () -> Label
     @State private var anchor = MenuAnchorBox()
 
     var body: some View {
-        Button {
+        let button = Button {
             ContextPopupMenuController.shared.show(makeMenu(), anchoredTo: anchor.view, edge: edge)
         } label: {
             label()
         }
-        // Без рамки — как системный `Menu` в стиле borderlessButton, который она заменяет.
-        .buttonStyle(.borderless)
+        Group {
+            if let chipStyle {
+                button.buttonStyle(chipStyle)
+            } else {
+                // Без рамки — как системный `Menu` в стиле borderlessButton, который она заменяет.
+                button.buttonStyle(.borderless)
+            }
+        }
         // Без синего кольца фокуса — как всё в программе.
         .focusEffectDisabled()
         .background(MenuAnchorProbe(anchor))

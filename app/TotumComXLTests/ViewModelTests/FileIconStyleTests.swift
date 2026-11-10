@@ -149,7 +149,7 @@ final class FileIconStyleTests: XCTestCase {
             "zip": .archive, "rar": .archive, "dmg": .diskImage, "iso": .diskImage, "pdf": .pdf,
             "docx": .document, "pages": .document, "xlsx": .spreadsheet, "csv": .spreadsheet,
             "pptx": .presentation, "key": .presentation, "epub": .book, "djvu": .book, "fb2": .book,
-            "swift": .code, "json": .code, "py": .code, "txt": .text, "md": .text, "ttf": .font,
+            "swift": .code, "json": .data, "py": .code, "txt": .text, "md": .markup, "ttf": .font,
             "": .other, "xyz123": .other,
         ]
         for (ext, kind) in expected {

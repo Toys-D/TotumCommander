@@ -94,6 +94,9 @@ struct FooterBar: View {
                 .buttonStyle(.plain)
                 .frame(width: 28)
                 .help(L("terminal.title") + " (Cmd+`)")
+                // Значок без подписи: без имени кнопка читалась описанием символа на языке
+                // системы — «Приглашение Командной Строки Терминала».
+                .accessibilityLabel(L("terminal.title"))
                 .background(MenuAnchorProbe(terminalAnchor))
             } else {
                 Button {
@@ -107,6 +110,7 @@ struct FooterBar: View {
                 }
                 .buttonStyle(.plain)
                 .help(L("terminal.title") + " (Cmd+`)")
+                .accessibilityLabel(L("terminal.title"))
             }
         }
         .padding(.horizontal, 6)

@@ -41,6 +41,19 @@ final class AppIdentityTests: XCTestCase {
             XCTAssertTrue(text.contains(AppIdentity.supportURL.absoluteString), "\(file) без ссылки поддержки")
         }
     }
+
+    /// Строка © одна на всех: «О программе» в настройках, стандартная панель «О программе»
+    /// и «Свойства» Finder (Info.plist, его пишет launch.sh), README на GitHub.
+    func test_копирайтОдинВезде() {
+        XCTAssertEqual(AppIdentity.copyright, "© 2026 \(AppIdentity.company)")
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let launch = (try? String(contentsOf: root.appendingPathComponent("scripts/launch.sh"), encoding: .utf8)) ?? ""
+        XCTAssertTrue(launch.contains("Set :NSHumanReadableCopyright '\(AppIdentity.copyright)'"), "launch.sh пишет другой ©")
+        XCTAssertTrue(launch.contains("Add :NSHumanReadableCopyright string '\(AppIdentity.copyright)'"), "launch.sh пишет другой ©")
+        let readme = (try? String(contentsOf: root.appendingPathComponent("README.md"), encoding: .utf8)) ?? ""
+        XCTAssertTrue(readme.contains(AppIdentity.copyright), "README без ©")
+    }
 }
 
 /// Заголовок окна: автору — номер сборки, людям — версия.

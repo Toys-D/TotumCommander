@@ -414,6 +414,58 @@ func isWordProcessingDocument(extension ext: String) -> Bool {
     wordProcessingExts.contains(ext.lowercased())
 }
 
+// MARK: - Когда имя не решает
+
+/// Расширение не говорит, чем показывать: файл попал в «прочее», но не в известное двоичное
+/// (zip, exe…). Это HEAD, config, Makefile, .gitignore из .git и проектов, лог с чужим
+/// расширением — тут надо заглянуть в само содержимое (contentMode).
+func needsContentSniff(fileName: String) -> Bool {
+    let ext = (fileName as NSString).pathExtension.lowercased()
+    return fileCategory(forFileName: fileName) == .other && !binaryExts.contains(ext)
+}
+
+/// Чем показывать такой файл по его первым байтам. Текст — текстом (правило «текст или нет»
+/// одно на программу — FileDiffService.looksBinary; метка UTF-8/16/32 — тоже текст).
+/// Двоичное — HEX, если о типе не знает и система: у index из .git нет ни расширения, ни
+/// описания, и его содержимое — всё, что о нём можно показать. Двоичное известного системе
+/// типа — карточка сведений, как раньше.
+func contentMode(forSample data: Data, fileName: String) -> PreviewMode {
+    let marks: [[UInt8]] = [[0xEF, 0xBB, 0xBF], [0xFF, 0xFE], [0xFE, 0xFF], [0x00, 0x00, 0xFE, 0xFF]]
+    let head = [UInt8](data.prefix(4))
+    if marks.contains(where: { head.starts(with: $0) }) { return .text }
+    guard FileDiffService.looksBinary(sample: data) else { return .text }
+    let ext = (fileName as NSString).pathExtension.lowercased()
+    if ext.isEmpty { return .hex }
+    guard let type = UTType(filenameExtension: ext) else { return .hex }
+    return type.isDynamic ? .hex : .info
+}
+
+/// Первые 8 КБ с диска — вне главного потока. Не прочиталось — карточка сведений.
+func sniffContentMode(path: String) async -> PreviewMode {
+    guard let sample = try? await readFileDataAsync(path: path, maxBytes: 8192) else { return .info }
+    return contentMode(forSample: sample, fileName: (path as NSString).lastPathComponent)
+}
+
+/// Показывать ли в просмотре кнопку «Править».
+///
+/// Правило F4 (FileOperationsService.isEditableTextFile) пускает в редактор всё, кроме известных
+/// двоичных форматов, — но кнопка над картинкой или видео звала бы открыть их как текст. Поэтому
+/// ещё и то, что сам просмотр считает текстом: текст и код (с HTML и RTF), Markdown, SVG.
+/// Файл на сервере или в облаке — нет: просмотр видит только его временную копию.
+func viewerOffersEdit(fileName: String, fileExtension: String,
+                      isDirectory: Bool, insideRemote: Bool, looksLikeText: Bool = false) -> Bool {
+    guard !isDirectory, !insideRemote,
+          FileOperationsService.isEditableTextFile(name: fileName, fileExtension: fileExtension)
+    else { return false }
+    switch fileCategory(forFileName: fileName) {
+    case .text, .markdown:
+        return true
+    default:
+        // HEAD, config, Makefile: имя молчит, а внутри текст (contentMode).
+        return looksLikeText || fileExtension.lowercased() == "svg"
+    }
+}
+
 func autoMode(for category: FileCategory) -> PreviewMode {
     switch category {
     case .image:

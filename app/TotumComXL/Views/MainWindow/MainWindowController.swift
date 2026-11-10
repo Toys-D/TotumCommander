@@ -173,6 +173,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         splitVC.onDividerMkdir = { [weak self] in self?.handleMkdir() }
         splitVC.onDividerView = { [weak self] in self?.handleView() }
         splitVC.onDividerEdit = { [weak self] in self?.handleEdit() }
+        splitVC.onViewerEdit = { [weak self] vm in self?.editFromViewer(vm: vm) }
         splitVC.onDividerNetwork = { [weak self] in self?.handleNetwork()
         }
 
@@ -287,7 +288,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
     /// кнопка, а не значок с подписью под ним; без подписей — один значок. Без рамки: под мышью
     /// кнопка приподнимается и берёт акцентный цвет (TitlebarButton). Своё вью у кнопки всегда,
     /// потому что только вью можно перекрасить под тёмный фон заголовка — см. dress.
-    static func toolbarButton(label: String, image: NSImage?, look: ToolbarLook) -> TitlebarButton {
+    static func toolbarButton(label: String, image: NSImage?, look: ToolbarLook,
+                              accessibilityLabel: String? = nil) -> TitlebarButton {
         let button = TitlebarButton(title: label, target: nil, action: nil)
         button.isBordered = false
         button.font = .systemFont(ofSize: 12)
@@ -298,6 +300,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         } else {
             button.imagePosition = .noImage
         }
+        // Имя для чтения с экрана — явно. Кнопка-значок отдаёт системе не подпись, а описание
+        // картинки, и у символа без своего описания оно стандартное: луна — «не беспокоить»,
+        // солнце — «повысить яркость», глаз — «скрыть»; у составного значка дисков — пусто.
+        button.setAccessibilityLabel(accessibilityLabel ?? label)
         button.restingTint = .secondaryLabelColor
         // Рамка — с полями (intrinsicContentSize): панель на Sequoia берёт размер вью по рамке.
         button.setFrameSize(button.intrinsicContentSize)
@@ -310,7 +316,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         // A line between buttons has its view already; it takes the appearance all the same —
         // a dark line on a dark titlebar is no line at all.
         guard item.view == nil else { item.view?.appearance = toolbarAppearance; return }
-        let button = Self.toolbarButton(label: item.label, image: item.image, look: look)
+        let button = Self.toolbarButton(label: item.label, image: item.image, look: look,
+                                        accessibilityLabel: accessibilityLabel(for: item.itemIdentifier))
         button.target = item.target
         button.action = item.action
         button.toolTip = item.toolTip
@@ -356,7 +363,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
             }
             // Тот же пункт, что дала бы панель: подпись, картинка, цель, подсказка — из одного места.
             guard let item = makeToolbarItem(id) else { continue }
-            let button = Self.toolbarButton(label: item.label, image: item.image, look: look)
+            let button = Self.toolbarButton(label: item.label, image: item.image, look: look,
+                                            accessibilityLabel: accessibilityLabel(for: id))
             button.target = item.target
             button.action = item.action
             button.toolTip = item.toolTip
@@ -435,6 +443,36 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
             item.toolTip = tip
             item.view?.toolTip = tip
         }
+    }
+
+    /// Имя кнопки для чтения с экрана — там же.
+    private func setTitlebarAccessibilityLabel(_ name: String, for id: NSToolbarItem.Identifier) {
+        titlebarButtons[id]?.setAccessibilityLabel(name)
+        window?.toolbar?.items.first(where: { $0.itemIdentifier == id })?.view?.setAccessibilityLabel(name)
+    }
+
+    /// Имя для чтения с экрана, если подписи мало: переключатель называется тем, что сделает
+    /// нажатие, — «Тема» не говорит, какая включится. Остальным кнопкам хватает подписи.
+    private func accessibilityLabel(for id: NSToolbarItem.Identifier) -> String? {
+        switch id {
+        case Self.themeItemID:
+            let isDark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return Self.themeToggleAccessibilityLabel(dark: isDark)
+        case Self.hiddenFilesItemID:
+            return Self.hiddenFilesAccessibilityLabel(showing: showHiddenFiles)
+        default:
+            return nil
+        }
+    }
+
+    /// Кнопка темы: при тёмной — «Включить светлую тему», при светлой — «Включить тёмную тему».
+    static func themeToggleAccessibilityLabel(dark: Bool) -> String {
+        L(dark ? "toolbar.a11y.theme.toLight" : "toolbar.a11y.theme.toDark")
+    }
+
+    /// Кнопка скрытых файлов: показаны — «Не показывать…», спрятаны — «Показать…».
+    static func hiddenFilesAccessibilityLabel(showing: Bool) -> String {
+        L(showing ? "toolbar.a11y.hidden.hide" : "toolbar.a11y.hidden.show")
     }
 
     private func makeToolbarItem(_ itemIdentifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
@@ -663,6 +701,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
 
         setTitlebarImage(NSImage(systemSymbolName: showHiddenFiles ? "eye.fill" : "eye.slash",
                                  accessibilityDescription: nil), for: Self.hiddenFilesItemID)
+        setTitlebarAccessibilityLabel(Self.hiddenFilesAccessibilityLabel(showing: showHiddenFiles),
+                                      for: Self.hiddenFilesItemID)
     }
 
     /// Quick light/dark toggle. The full 3-way choice (incl. "follow system") lives in
@@ -741,6 +781,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
     private func setThemeIcon(dark: Bool) {
         setTitlebarImage(NSImage(systemSymbolName: dark ? "moon.fill" : "sun.max.fill",
                                  accessibilityDescription: nil), for: Self.themeItemID)
+        setTitlebarAccessibilityLabel(Self.themeToggleAccessibilityLabel(dark: dark), for: Self.themeItemID)
     }
 
     /// A drive glyph with an ⓘ badge at its lower-right — "properties of the DISK", not "help".
@@ -2481,7 +2522,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
                     self?.viewerWindowController = nil
                 }
 
-                let viewer = UnifiedFileViewer(viewModel: vm, onClose: onClose, operations: operationsService)
+                // «Править»: окно просмотра уступает место правке.
+                let onEdit: () -> Void = { [weak self, weak vm] in
+                    self?.viewerWindowController?.close()
+                    self?.viewerWindowController = nil
+                    if let vm { self?.editFromViewer(vm: vm) }
+                }
+                let viewer = UnifiedFileViewer(viewModel: vm, onClose: onClose,
+                                               operations: operationsService, onEdit: onEdit)
                 let contentView: NSView = NSHostingView(rootView: viewer.focusEffectDisabled())
 
                 // NSPanel with .nonactivatingPanel — doesn't steal keyboard focus
@@ -2583,6 +2631,24 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
             return
         }
         openEditor(for: item, vm: vm)
+    }
+
+    /// «Править» в просмотре — путь F4 (openEditor: редактор в панели или в окне, внешний,
+    /// архивы, RTF), только без его переключателя: кнопка открывает правку, а не закрывает
+    /// уже открытую. Встроенный просмотр уступает место редактору и возвращается, когда тот
+    /// закроется (MainSplitViewController.stepViewerAsideForEditor).
+    func editFromViewer(vm: PanelViewModel) {
+        guard let item = vm.cursorItem, item.name != "..", !item.isDirectory else { return }
+        let editorInPanel = UserDefaults.standard.bool(forKey: "fcxl.editorInPanel")
+        guard editorInPanel, splitVC.isEditorEmbedded else {
+            openEditor(for: item, vm: vm)
+            return
+        }
+        // В панели уже правка (просмотр был отдельным окном): сначала закрыть её своим путём.
+        splitVC.afterEmbeddedEditorCloses { [weak self, weak vm] in
+            guard let self, let vm else { return }
+            self.openEditor(for: item, vm: vm)
+        }
     }
 
     /// The editor road without F4's toggle: a file that was just created must open, whatever
