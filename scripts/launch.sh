@@ -346,6 +346,29 @@ if [ -n "${FCXL_NO_LAUNCH:-}" ]; then
     exit 0
 fi
 echo "=== Launching ==="
+# Номера процессов программы, запущенной из бандла $1, — и только из него.
+#
+# Чья копия, решает файловая система (-ef — «тот же файл»), а не сравнение строк. Шаблон
+# pkill -f с именем или путём бандла подводил трижды:
+#   • скобки в «Totum Commander (новый).app» для шаблона — группа, а не сами скобки;
+#   • шаблон без полного пути совпал с /Applications/Totum Commander.app, и копию, в которой
+#     человек работал, закрыло посреди набора (2026-11-04);
+#   • Launch Services отдаёт процессу путь с разложенными буквами: «й» там — «и» и отдельная
+#     кратка (байты D0 B8 CC 86), а в скрипте и на диске она одна (D0 B9). Шаблон со словом
+#     «новый» не совпадал никогда: прежняя копия оставалась жить, `open` выводил её вперёд,
+#     и «новый пользователь» смотрел на старую сборку (2026-11-12). С путём сборки в шаблоне
+#     было бы то же в папке с «й» или «ё», а «(» или «+» в её имени шаблон попросту ломают.
+# Поэтому в шаблоне только хвост пути — общий для всех копий, без единой буквы вне ASCII.
+# LC_ALL=C: под UTF-8 pgrep не ищет вовсе, если в аргументах любого процесса в системе
+# попались байты, из которых буква не складывается (код 3, пустой список).
+running_from() {
+    local pid args exe inside="/Contents/MacOS/TotumComXL"
+    LC_ALL=C pgrep -lf "$inside" 2>/dev/null | while read -r pid args; do
+        exe="${args%%"$inside"*}$inside"            # путь без аргументов запуска
+        case "$exe" in /*) ;; *) continue ;; esac   # относительный путь — неизвестно чей
+        if [ "$exe" -ef "$1$inside" ]; then echo "$pid"; fi
+    done
+}
 # --fresh: the program as a NEW USER sees it. A second bundle with its own bundle identifier
 # and therefore its own, always-empty settings: the developer's tabs, paths and colours stay
 # untouched, both copies can stand side by side, and "first launch" can be looked at any time.
@@ -360,26 +383,25 @@ if [ "${1:-}" = "--fresh" ]; then
     codesign --force --deep --sign - "$FRESH" 2>/dev/null
     # Every launch is a first launch.
     defaults delete com.fcxl.filecommander.fresh 2>/dev/null || true
-    # Скобки в имени — это ГРУППА для регулярного выражения pkill, а не сами скобки: старая
-    # копия не убивалась, `open` просто выводил её вперёд, и «новый пользователь» смотрел на
-    # позавчерашнюю сборку. Экранируем.
-    pkill -f "Totum Commander \\(новый\\)\\.app/Contents/MacOS/TotumComXL" 2>/dev/null || true
+    # Прежнюю копию закрыть: иначе `open` просто выведет её вперёд — со старой сборкой.
+    # Ищется по самому бандлу, а не по имени: и скобки, и «й» в нём шаблону не по зубам
+    # (см. running_from).
+    kill $(running_from "$FRESH") 2>/dev/null || true
     sleep 0.3
     open "$FRESH"
     echo "=== Done (fresh) ==="
     exit 0
 fi
 # Kill the running copy of THIS build (and the .build app wrapper).
-# By path, not by name: the fresh copy (--fresh) shares the executable name and must live on.
-# By FULL path: a pattern without it also matched /Applications/Totum Commander.app, and the
-# copy a person was working in was killed mid-typing (2026-11-04).
-pkill -f "^$(pwd)/$APP/Contents/MacOS/TotumComXL" 2>/dev/null || true
+# By bundle, not by name: the fresh copy (--fresh) and the installed one share the executable
+# name and must live on (see running_from).
+kill $(running_from "$APP") 2>/dev/null || true
 pkill -f "TotumComXLApp.app/Contents/MacOS/TotumComXL" 2>/dev/null || true
 # A copy from elsewhere (the installed one) shares the settings, so it cannot run alongside —
 # but it is asked to quit the ordinary way, never killed.
 for other in $(pgrep -f "Totum Commander.app/Contents/MacOS/TotumComXL" 2>/dev/null); do
     bundle="$(ps -o command= -p "$other" | sed 's#/Contents/MacOS/TotumComXL.*##')"
-    [ "$bundle" = "$(pwd)/$APP" ] && continue      # this build's own copy, already on its way out
+    [ "$bundle" -ef "$APP" ] && continue           # this build's own copy, already on its way out
     echo "=== Asking the copy at $bundle to quit ==="
     osascript -e "tell application \"$bundle\" to quit" 2>/dev/null || echo "    it refused to quit — left running"
 done
