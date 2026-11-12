@@ -14,7 +14,12 @@ let package = Package(
         .executable(name: "FCXLDjVuViewer", targets: ["FCXLDjVuViewer"])
     ],
     dependencies: [
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.0.0")
+        // Exact on purpose. SwiftTerm 1.99.x already carries the 2.0 API, and a plain
+        // `from: "1.0.0"` takes it for an ordinary 1.x update: TerminalView.getTerminal() is
+        // gone there, so a fresh clone — Package.resolved is not in the repository — resolved
+        // to 1.99 and stopped compiling. 1.13.0 is the version the app is built and released
+        // with; moving off it is a deliberate edit of this line.
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.13.0")
     ],
     targets: [
         .target(
