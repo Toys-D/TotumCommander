@@ -211,6 +211,13 @@ final class FileOperationsService {
         self.bridgeService = bridgeService
     }
 
+    /// Send the sources of a finished pack to the Trash — what the "delete after packing" box
+    /// promised. One road for both endings: the pack that finished in its own window and the
+    /// pack handed over to the queue. Replaceable, so that tests never reach the real Trash.
+    lazy var trashPackedSources: @MainActor ([FileItem]) async throws -> Void = { [unowned self] items in
+        try await self.trashItems(items)
+    }
+
     @MainActor
     func operationTargets(from viewModel: PanelViewModel) -> [FileItem] {
         viewModel.operationTargets
@@ -453,6 +460,7 @@ final class FileOperationsService {
                    reporter: OperationProgressReporter? = nil,
                    onCompletion: (() -> Void)? = nil,
                    onDialogsDone: (() -> Void)? = nil,
+                   onConflict: ((String) -> ConflictResolution)? = nil,
                    onProgress: ((Double, String) -> Void)? = nil,
                    shouldCancel: (() -> Bool)? = nil) async throws {
         try validateNotCopyingIntoSelf(items: items, destinationPath: destinationPath)
@@ -482,6 +490,9 @@ final class FileOperationsService {
                 return remembered
             }
             conflictLock.unlock()
+            if let onConflict {
+                return DialogService.blockingDialogOnMain { onConflict(destination) }
+            }
             // Runloop-callout hop (not DispatchQueue.main.sync): keeps the main queue
             // free so the conflict dialog's open animation can run (FCXLDialogKit).
             let decision = DialogService.blockingDialogOnMain {
@@ -581,10 +592,12 @@ final class FileOperationsService {
                               archivePath: String,
                               to destinationPath: String,
                               onProgress: ((Double, String) -> Void)? = nil,
-                              shouldCancel: (() -> Bool)? = nil) throws -> [FileItem] {
+                              shouldCancel: (() -> Bool)? = nil,
+                              onConflict: ((String) -> ConflictResolution)? = nil) throws -> [FileItem] {
         try askingArchivePassword(archivePath: archivePath) {
             try copyItemsFromArchiveOnce(items, archivePath: archivePath, to: destinationPath,
-                                         onProgress: onProgress, shouldCancel: shouldCancel)
+                                         onProgress: onProgress, shouldCancel: shouldCancel,
+                                         onConflict: onConflict)
         }
     }
 
@@ -594,7 +607,8 @@ final class FileOperationsService {
                               archivePath: String,
                               to destinationPath: String,
                               onProgress: ((Double, String) -> Void)? = nil,
-                              shouldCancel: (() -> Bool)? = nil) throws -> [FileItem] {
+                              shouldCancel: (() -> Bool)? = nil,
+                              onConflict: ((String) -> ConflictResolution)? = nil) throws -> [FileItem] {
         // Sources are inside an archive (not regular files); only check destination.
         _ = try preflightCheck(items: [], destinationPath: destinationPath, requireWriteAccess: false)
         var extractedItems: [FileItem] = []
@@ -624,10 +638,13 @@ final class FileOperationsService {
             }
 
             var destination = (destinationPath as NSString).appendingPathComponent(item.name)
+            var replacing = false
             if FileManager.default.fileExists(atPath: destination) {
                 let decision: (resolution: ConflictResolution, applyToAll: Bool)
                 if let applyToAllResolution {
                     decision = (applyToAllResolution, true)
+                } else if let onConflict {
+                    decision = (onConflict(destination), false)
                 } else {
                     decision = DialogService.shared.showFileConflict(
                         sourcePath: "\(archivePath)::/\(item.path)",
@@ -640,7 +657,10 @@ final class FileOperationsService {
 
                 switch decision.resolution {
                 case .replace:
-                    try FileManager.default.removeItem(atPath: destination)
+                    // Nothing is removed here: the old object gives way only once the entry
+                    // has been extracted whole (see the install below). An entry that fails to
+                    // extract must not cost the user the file it was meant to replace.
+                    replacing = true
                 case .copy:
                     destination = uniqueCopyPath(from: destination)
                 case .skip:
@@ -698,8 +718,16 @@ final class FileOperationsService {
             }
 
             let extractedPath = (temporaryRoot as NSString).appendingPathComponent(item.path)
-            try runBlockingOperation(progressController: progressController) {
-                try self.bridgeService.copyItem(from: extractedPath, to: destination)
+            // Measured now: a replace moves the extracted copy away into the destination.
+            let extractedSize = fileSize(atPath: extractedPath)
+            try runBlockingOperation(progressController: progressController) { [replacing] in
+                if replacing {
+                    try DarwinFileOperations.replace(
+                        from: extractedPath, to: destination, move: true,
+                        shouldCancel: { progressController.isCancelled })
+                } else {
+                    try self.bridgeService.copyItem(from: extractedPath, to: destination)
+                }
             } onPulse: { pulse in
                 if shouldCancel?() == true || progressController.isCancelled {
                     return
@@ -723,7 +751,7 @@ final class FileOperationsService {
             }
 
             filesDone += 1
-            bytesDone += max(Int64(item.size), fileSize(atPath: extractedPath))
+            bytesDone += max(Int64(item.size), extractedSize)
             let bytesProgress = Double(bytesDone) / Double(max(totalBytes, 1))
             let filesProgress = Double(filesDone) / Double(totalFiles)
             let progress = max(bytesProgress, filesProgress)
@@ -850,13 +878,16 @@ final class FileOperationsService {
         let sourcePaths = itemsToAdd.map(\.path)   // conflicts already resolved above
         let normalizedBasePath = normalizeArchiveEntryPath(destinationRelativePath)
 
+        // Строка очереди, в которую операция уйдёт по кнопке «В очередь»: итог — ей и только ей.
+        let adopted = AdoptedQueueOperation()
+
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let resumeOnce = ContinuationResumeOnce(continuation)
 
             if let queueService {
                 progressController.onSendToQueue = {
                     let params = ArchiveOperationParams(archivePath: archivePath)
-                    let (_, queueReporter) = queueService.adoptRunningOperation(
+                    let (opID, queueReporter) = queueService.adoptRunningOperation(
                         kind: .pack,
                         items: items,
                         destination: nil,
@@ -869,6 +900,7 @@ final class FileOperationsService {
                         filesTotal: progressController.lastFilesTotalValue,
                         onCompletion: onCompletion
                     )
+                    adopted.id = opID
                     swappable.swap(to: queueReporter)
                     resumeOnce.resume(returning: ())
                     return true
@@ -886,14 +918,8 @@ final class FileOperationsService {
                     )
 
                     DispatchQueue.main.async {
-                        if progressController.isSentToQueue {
-                            if let id = queueService?.operations.first(where: {
-                                $0.kind == .pack && $0.status == .running
-                            })?.id {
-                                queueService?.markOperationCompleted(id)
-                            }
-                            // onCompletion is called by fireCompletion inside markOperationCompleted
-                        } else {
+                        // Ушедшую в очередь закрывает её строка — она же вызовет onCompletion.
+                        if !adopted.finish(in: queueService) {
                             progressController.close()
                             onCompletion?()
                         }
@@ -901,13 +927,7 @@ final class FileOperationsService {
                     }
                 } catch {
                     DispatchQueue.main.async {
-                        if progressController.isSentToQueue {
-                            if let id = queueService?.operations.first(where: {
-                                $0.kind == .pack && $0.status == .running
-                            })?.id {
-                                queueService?.markOperationCompleted(id, error: error)
-                            }
-                        } else {
+                        if !adopted.finish(in: queueService, error: error) {
                             progressController.close()
                         }
                         resumeOnce.resume(throwing: error)
@@ -983,13 +1003,16 @@ final class FileOperationsService {
 
         let entryPaths = items.map { normalizeArchiveEntryPath($0.path) }
 
+        // Строка очереди, в которую операция уйдёт по кнопке «В очередь»: итог — ей и только ей.
+        let adopted = AdoptedQueueOperation()
+
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let resumeOnce = ContinuationResumeOnce(continuation)
 
             if let queueService {
                 progressController.onSendToQueue = {
                     let params = ArchiveOperationParams(archivePath: archivePath)
-                    let (_, queueReporter) = queueService.adoptRunningOperation(
+                    let (opID, queueReporter) = queueService.adoptRunningOperation(
                         kind: .archiveDelete,
                         items: items,
                         destination: nil,
@@ -1002,6 +1025,7 @@ final class FileOperationsService {
                         filesTotal: progressController.lastFilesTotalValue,
                         onCompletion: onCompletion
                     )
+                    adopted.id = opID
                     swappable.swap(to: queueReporter)
                     resumeOnce.resume(returning: ())
                     return true
@@ -1018,14 +1042,8 @@ final class FileOperationsService {
                     )
 
                     DispatchQueue.main.async {
-                        if progressController.isSentToQueue {
-                            if let id = queueService?.operations.first(where: {
-                                $0.kind == .archiveDelete && $0.status == .running
-                            })?.id {
-                                queueService?.markOperationCompleted(id)
-                            }
-                            // onCompletion is called by fireCompletion inside markOperationCompleted
-                        } else {
+                        // Ушедшую в очередь закрывает её строка — она же вызовет onCompletion.
+                        if !adopted.finish(in: queueService) {
                             progressController.close()
                             onCompletion?()
                         }
@@ -1033,13 +1051,7 @@ final class FileOperationsService {
                     }
                 } catch {
                     DispatchQueue.main.async {
-                        if progressController.isSentToQueue {
-                            if let id = queueService?.operations.first(where: {
-                                $0.kind == .archiveDelete && $0.status == .running
-                            })?.id {
-                                queueService?.markOperationCompleted(id, error: error)
-                            }
-                        } else {
+                        if !adopted.finish(in: queueService, error: error) {
                             progressController.close()
                         }
                         resumeOnce.resume(throwing: error)
@@ -1108,6 +1120,9 @@ final class FileOperationsService {
             filesTotal: 1
         )
 
+        // Строка очереди, в которую операция уйдёт по кнопке «В очередь»: итог — ей и только ей.
+        let adopted = AdoptedQueueOperation()
+
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let resumeOnce = ContinuationResumeOnce(continuation)
 
@@ -1115,7 +1130,7 @@ final class FileOperationsService {
                 progressController.onSendToQueue = {
                     var params = ArchiveOperationParams(archivePath: archivePath)
                     params.newEntryName = trimmedName
-                    let (_, queueReporter) = queueService.adoptRunningOperation(
+                    let (opID, queueReporter) = queueService.adoptRunningOperation(
                         kind: .archiveRename,
                         items: [item],
                         destination: nil,
@@ -1128,6 +1143,7 @@ final class FileOperationsService {
                         filesTotal: 1,
                         onCompletion: onCompletion
                     )
+                    adopted.id = opID
                     swappable.swap(to: queueReporter)
                     resumeOnce.resume(returning: ())
                     return true
@@ -1145,26 +1161,14 @@ final class FileOperationsService {
                     )
 
                     DispatchQueue.main.async {
-                        if progressController.isSentToQueue {
-                            if let id = queueService?.operations.first(where: {
-                                $0.kind == .archiveRename && $0.status == .running
-                            })?.id {
-                                queueService?.markOperationCompleted(id)
-                            }
-                        } else {
+                        if !adopted.finish(in: queueService) {
                             progressController.close()
                         }
                         resumeOnce.resume(returning: ())
                     }
                 } catch {
                     DispatchQueue.main.async {
-                        if progressController.isSentToQueue {
-                            if let id = queueService?.operations.first(where: {
-                                $0.kind == .archiveRename && $0.status == .running
-                            })?.id {
-                                queueService?.markOperationCompleted(id, error: error)
-                            }
-                        } else {
+                        if !adopted.finish(in: queueService, error: error) {
                             progressController.close()
                         }
                         resumeOnce.resume(throwing: error)
@@ -1424,21 +1428,29 @@ final class FileOperationsService {
     /// folders are created (TC's subfolder-move feature). Per-step failures are collected and, if
     /// any occurred, surfaced as a single error after the whole batch runs. Progress and cancel go
     /// through the reporter. Local filesystem only; the remote path is a separate service.
+    ///
+    /// Ни один шаг не переименовывает поверх существующего файла: занятое имя — ошибка шага.
+    /// После отмены или сбоя файлы, успевшие встать на временное имя, возвращаются на прежнее
+    /// (а если его уже занял другой файл пакета — на новое): скрытых `.fcxl-mrt-…` не остаётся.
     func executeRenameSteps(_ steps: [RenameExecutionPlanner.Step],
                             reporter: OperationProgressReporter) async throws {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             DispatchQueue.global(qos: .userInitiated).async {
                 let fm = FileManager.default
+                var ledger = RenameExecutionPlanner.Ledger(steps: steps)
                 var errors: [String] = []
                 let total = steps.count
                 var done = 0
                 for step in steps {
                     if reporter.waitWhilePaused() { break }   // returns true when cancelled
-                    let parent = (step.to as NSString).deletingLastPathComponent
-                    try? fm.createDirectory(atPath: parent, withIntermediateDirectories: true)
-                    if Darwin.rename(step.from, step.to) != 0 {
-                        let reason = String(cString: strerror(errno))
-                        errors.append("\((step.from as NSString).lastPathComponent): \(reason)")
+                    if !ledger.shouldSkip(step) {
+                        let parent = (step.to as NSString).deletingLastPathComponent
+                        try? fm.createDirectory(atPath: parent, withIntermediateDirectories: true)
+                        let code = DarwinFileOperations.renameExclusive(from: step.from, to: step.to)
+                        ledger.record(step, succeeded: code == 0)
+                        if code != 0 {
+                            errors.append("\(ledger.displayName(for: step)): \(String(cString: strerror(code)))")
+                        }
                     }
                     done += 1
                     let d = done
@@ -1447,6 +1459,18 @@ final class FileOperationsService {
                         reporter.update(currentFile: label,
                                         progress: Double(d) / Double(max(1, total)),
                                         bytesDone: 0, bytesTotal: 0, filesDone: d, filesTotal: total)
+                    }
+                }
+                while let stranded = ledger.nextStranded() {
+                    if let name = stranded.candidates.first(where: {
+                        DarwinFileOperations.renameExclusive(from: stranded.temp, to: $0) == 0
+                    }) {
+                        ledger.settled(stranded, at: name)
+                    } else {
+                        ledger.abandon(stranded)
+                        errors.append(L("mrt.error.leftOnTemp",
+                                        (stranded.original as NSString).lastPathComponent,
+                                        (stranded.temp as NSString).lastPathComponent))
                     }
                 }
                 DispatchQueue.main.async {
@@ -2024,11 +2048,25 @@ final class FileOperationsService {
         return ntfsInfo
     }
 
-    private func validateNotCopyingIntoSelf(items: [FileItem], destinationPath: String) throws {
+    func validateNotCopyingIntoSelf(items: [FileItem], destinationPath: String) throws {
         let normalizedDest = destinationPath.hasSuffix("/") ? destinationPath : destinationPath + "/"
+        // The paths alone miss a destination written another way — through a symlink, in
+        // another letter case, as /var instead of /private/var. So the folders are also
+        // compared as objects: the destination and everything above it against each source.
+        let destinationChain = Self.folderChain(of: destinationPath)
         for item in items where item.isDirectory {
             let normalizedSrc = item.path.hasSuffix("/") ? item.path : item.path + "/"
-            if normalizedDest.hasPrefix(normalizedSrc) {
+            var intoItself = normalizedDest.hasPrefix(normalizedSrc)
+            if !intoItself {
+                var info = stat()
+                // A real folder only: a symlink to a folder is copied as a link, not as a tree.
+                if lstat(item.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR {
+                    intoItself = destinationChain.contains { folder in
+                        folder.device == info.st_dev && folder.inode == info.st_ino
+                    }
+                }
+            }
+            if intoItself {
                 throw NSError(
                     domain: "FileOperationsService",
                     code: NSFileWriteInvalidFileNameError,
@@ -2036,6 +2074,33 @@ final class FileOperationsService {
                 )
             }
         }
+    }
+
+    /// The folder at `path` and every folder above it, each as device + inode. A folder that
+    /// does not exist yet is taken from its nearest existing ancestor.
+    private static func folderChain(of path: String) -> [(device: dev_t, inode: ino_t)] {
+        var existing = path
+        var resolved: String?
+        while resolved == nil {
+            if let pointer = realpath(existing, nil) {
+                resolved = String(cString: pointer)
+                free(pointer)
+            } else {
+                let parent = (existing as NSString).deletingLastPathComponent
+                if parent.isEmpty || parent == existing { break }
+                existing = parent
+            }
+        }
+        guard var current = resolved else { return [] }
+        var chain: [(device: dev_t, inode: ino_t)] = []
+        while true {
+            var info = stat()
+            if stat(current, &info) == 0 { chain.append((info.st_dev, info.st_ino)) }
+            let parent = (current as NSString).deletingLastPathComponent
+            if parent.isEmpty || parent == current { break }
+            current = parent
+        }
+        return chain
     }
 
     // MARK: – NTFS transfer helper
@@ -2504,7 +2569,8 @@ final class FileOperationsService {
                    password: String = "",
                    links: ArchiveLinkMode = .stored,
                    queueService: OperationQueueService? = nil,
-                   onCompletion: (() -> Void)? = nil) async throws {
+                   onCompletion: (() -> Void)? = nil,
+                   onConflict: ((String) -> ConflictResolution)? = nil) async throws {
         guard !items.isEmpty else { return }
         let normalizedLevel = min(max(compressionLevel, 0), 9)
 
@@ -2522,12 +2588,15 @@ final class FileOperationsService {
                 compressionLevel: normalizedLevel,
                 preservePaths: preservePaths,
                 includeSubfolders: includeSubfolders,
-                links: links
+                password: password,
+                links: links,
+                onConflict: onConflict
             )
         } else {
             guard let destinationArchivePath = try resolveSingleArchiveDestination(
                 initialArchivePath: archivePath,
-                sourcePath: items.first?.path ?? archivePath
+                sourcePath: items.first?.path ?? archivePath,
+                onConflict: onConflict
             ) else {
                 return
             }
@@ -2552,13 +2621,17 @@ final class FileOperationsService {
                 links: links,
                 queueService: queueService,
                 onCompletion: onCompletion,
-                ntfsDeleteSources: ntfsDeleteSources
+                ntfsDeleteSources: ntfsDeleteSources,
+                // Handed to the queue mid-way, the pack outlives this call — the queue then
+                // sends the sources to the Trash itself. Sources on a read-only NTFS volume are
+                // deleted inside the archive's own session instead.
+                deleteSourcesWhenQueued: deleteAfterPack && ntfsDeleteSources.isEmpty
             )
             deletedInSession = !ntfsDeleteSources.isEmpty && !sentToQueue
         }
 
         if deleteAfterPack && !sentToQueue && !deletedInSession && !itemsToTrash.isEmpty {
-            try await trashItems(itemsToTrash)
+            try await trashPackedSources(itemsToTrash)
         }
     }
 
@@ -2573,7 +2646,9 @@ final class FileOperationsService {
                                      compressionLevel: Int,
                                      preservePaths: Bool,
                                      includeSubfolders: Bool,
-                                     links: ArchiveLinkMode) async throws -> [FileItem] {
+                                     password: String,
+                                     links: ArchiveLinkMode,
+                                     onConflict: ((String) -> ConflictResolution)? = nil) async throws -> [FileItem] {
         let destinationDirectoryRaw = (archivePath as NSString).deletingLastPathComponent
         let destinationDirectory = destinationDirectoryRaw.isEmpty
             ? FileManager.default.currentDirectoryPath
@@ -2588,6 +2663,8 @@ final class FileOperationsService {
                 let decision: (resolution: ConflictResolution, applyToAll: Bool)
                 if let applyToAllResolution {
                     decision = (applyToAllResolution, true)
+                } else if let onConflict {
+                    decision = (onConflict(itemArchivePath), false)
                 } else {
                     decision = DialogService.shared.showFileConflict(
                         sourcePath: item.path,
@@ -2600,10 +2677,10 @@ final class FileOperationsService {
 
                 switch decision.resolution {
                 case .replace:
-                    // Read-only NTFS: libntfs-3g overwrites in place, skip removal.
-                    if !isReadOnlyNTFSDestination(itemArchivePath) {
-                        try FileManager.default.removeItem(atPath: itemArchivePath)
-                    }
+                    // Nothing is removed here: the old archive gives way only to a finished
+                    // new one (see `buildingArchive`). On read-only NTFS the libntfs-3g write
+                    // overwrites it in place, as before.
+                    break
                 case .copy:
                     itemArchivePath = uniqueCopyPath(from: itemArchivePath)
                 case .skip:
@@ -2620,6 +2697,7 @@ final class FileOperationsService {
                 compressionLevel: compressionLevel,
                 preservePaths: preservePaths,
                 includeSubfolders: includeSubfolders,
+                password: password,
                 links: links
             )
             packedItems.append(item)
@@ -2651,23 +2729,23 @@ final class FileOperationsService {
 
     @MainActor
     private func resolveSingleArchiveDestination(initialArchivePath: String,
-                                                 sourcePath: String) throws -> String? {
+                                                 sourcePath: String,
+                                                 onConflict: ((String) -> ConflictResolution)? = nil) throws -> String? {
         var resolvedArchivePath = initialArchivePath
         guard FileManager.default.fileExists(atPath: resolvedArchivePath) else {
             return resolvedArchivePath
         }
 
-        let decision = DialogService.shared.showFileConflict(
+        let resolution = onConflict?(resolvedArchivePath) ?? DialogService.shared.showFileConflict(
             sourcePath: sourcePath,
             destinationPath: resolvedArchivePath
-        )
-        switch decision.resolution {
+        ).resolution
+        switch resolution {
         case .replace:
-            // On read-only NTFS we can't delete via FileManager; the libntfs-3g
-            // write overwrites the existing archive in place, so skip removal.
-            if !isReadOnlyNTFSDestination(resolvedArchivePath) {
-                try FileManager.default.removeItem(atPath: resolvedArchivePath)
-            }
+            // Nothing is removed here: a pack that fails or is cancelled must not cost the
+            // user the archive it was meant to replace. The old one gives way only to a
+            // finished new one (see `buildingArchive`); on read-only NTFS the libntfs-3g
+            // write overwrites it in place, as before.
             return resolvedArchivePath
         case .copy:
             resolvedArchivePath = uniqueCopyPath(from: resolvedArchivePath)
@@ -2676,6 +2754,44 @@ final class FileOperationsService {
             return nil
         case .cancel:
             throw userCancelledError()
+        }
+    }
+
+    /// Build an archive so that whatever already stands at `archivePath` gives way only to a
+    /// finished new one. With something in the way, the build goes to a hidden name next to it
+    /// (same extension: hdiutil appends ".dmg" to a name without one) and takes the place by a
+    /// rename once it is complete — a failure or a cancel leaves the old archive as it was.
+    /// With nothing in the way the build goes straight to the path, and a half-written file
+    /// left by a failure is removed: it is ours, and it is nobody's archive.
+    ///
+    /// One helper for both pack roads (the dialog one and the queue one). The price is free
+    /// space for the new archive while the old one still exists.
+    private func buildingArchive(at archivePath: String,
+                                 isCancelled: () -> Bool,
+                                 _ build: (_ buildPath: String) throws -> Void) throws {
+        // The same test the "replace?" question is asked by.
+        guard FileManager.default.fileExists(atPath: archivePath) else {
+            // A dangling symlink is "nothing" to that test, yet it is not ours to remove.
+            var info = stat()
+            let nothingThere = lstat(archivePath, &info) != 0
+            do {
+                try build(archivePath)
+            } catch {
+                if nothingThere { try? FileManager.default.removeItem(atPath: archivePath) }
+                throw error
+            }
+            return
+        }
+        let staged = DarwinFileOperations.stagingPath(
+            for: archivePath, pathExtension: (archivePath as NSString).pathExtension)
+        do {
+            try build(staged)
+            // A cancel that arrived as the build was finishing still means "leave it be".
+            if isCancelled() { throw userCancelledError() }
+            try DarwinFileOperations.replace(from: staged, to: archivePath, move: true)
+        } catch {
+            try? FileManager.default.removeItem(atPath: staged)
+            throw error
         }
     }
 
@@ -2692,7 +2808,8 @@ final class FileOperationsService {
                                    links: ArchiveLinkMode,
                                    queueService: OperationQueueService? = nil,
                                    onCompletion: (() -> Void)? = nil,
-                                   ntfsDeleteSources: [String] = []) async throws -> Bool {
+                                   ntfsDeleteSources: [String] = [],
+                                   deleteSourcesWhenQueued: Bool = false) async throws -> Bool {
         // libarchive writes the output file directly, which fails on a read-only
         // NTFS mount ("Failed to open output archive"). For NTFS we build the
         // archive in a writable temp file, then push it onto the volume via
@@ -2719,6 +2836,9 @@ final class FileOperationsService {
             format: format, compressionLevel: compressionLevel,
             compressedBytes: 0, uncompressedDone: 0, uncompressedTotal: 0))
 
+        // Строка очереди, в которую операция уйдёт по кнопке «В очередь»: итог — ей и только ей.
+        let adopted = AdoptedQueueOperation()
+
         let sentToQueue: Bool = try await withCheckedThrowingContinuation { continuation in
             let resumeOnce = ContinuationResumeOnce(continuation)
 
@@ -2732,9 +2852,10 @@ final class FileOperationsService {
                         preservePaths: preservePaths,
                         includeSubfolders: includeSubfolders,
                         password: password,
-                        links: links
+                        links: links,
+                        deleteSourcesAfterPack: deleteSourcesWhenQueued
                     )
-                    let (_, queueReporter) = queueService.adoptRunningOperation(
+                    let (opID, queueReporter) = queueService.adoptRunningOperation(
                         kind: .pack,
                         items: items,
                         destination: (archivePath as NSString).deletingLastPathComponent,
@@ -2747,6 +2868,7 @@ final class FileOperationsService {
                         filesTotal: progressController.lastFilesTotalValue,
                         onCompletion: onCompletion
                     )
+                    adopted.id = opID
                     swappable.swap(to: queueReporter)
                     resumeOnce.resume(returning: true)
                     return true
@@ -2767,11 +2889,9 @@ final class FileOperationsService {
                     let totalBytes = max(sourceStats.reduce(Int64(0)) { $0 + $1.bytes }, 1)
                     let totalFiles = max(sourceStats.reduce(0) { $0 + max(1, $1.fileCount) }, 1)
 
-                    if swappable.isCancelled {
-                        DispatchQueue.main.async { progressController.close() }
-                        resumeOnce.resume(throwing: self.userCancelledError())
-                        return
-                    }
+                    // Отмена на подсчёте кончается там же, где любая другая: окно закрывается,
+                    // а отданная в очередь упаковка освобождает в ней своё место.
+                    if swappable.isCancelled { throw self.userCancelledError() }
 
                     // Числа хода — как только они известны: для образа уже сейчас, для архива — с
                     // первым отчётом ядра; до него окно честно говорит «Подготовка».
@@ -2794,49 +2914,46 @@ final class FileOperationsService {
 
                     let monotonic = MonotonicProgress()
 
-                    if format.isBuiltByHdiutil {
-                        try self.createDMGImage(
-                            sources: items.map(\.path), to: buildPath,
-                            compressionLevel: compressionLevel,
-                            totalBytes: totalBytes, totalFiles: totalFiles,
-                            password: password,
-                            reporter: swappable)
-                    } else if let bridgeFormat = format.bridgeFormat {
-                        let report = self.makeArchiveProgressHandler(
-                            progressController: swappable,
-                            overrideTotalBytes: totalBytes,
-                            overrideTotalFiles: totalFiles,
-                            monotonicProgress: monotonic,
-                            packDetail: (format: format, level: compressionLevel)
-                        )
-                        var counted = false
-                        try self.bridgeService.createArchive(
-                            archivePath: buildPath,
-                            format: bridgeFormat,
-                            sources: items.map(\.path),
-                            includeSubfolders: includeSubfolders,
-                            preservePaths: preservePaths,
-                            compressionLevel: compressionLevel,
-                            password: password,
-                            links: links,
-                            progress: { file, done, total, filesDone, filesTotal, compressed in
-                                if !counted {
-                                    counted = true
-                                    showCounts()
+                    try self.buildingArchive(at: buildPath,
+                                             isCancelled: { swappable.isCancelled }) { target in
+                        if format.isBuiltByHdiutil {
+                            try self.createDMGImage(
+                                sources: items.map(\.path), to: target, named: archivePath,
+                                compressionLevel: compressionLevel,
+                                totalBytes: totalBytes, totalFiles: totalFiles,
+                                password: password,
+                                reporter: swappable)
+                        } else if let bridgeFormat = format.bridgeFormat {
+                            let report = self.makeArchiveProgressHandler(
+                                progressController: swappable,
+                                overrideTotalBytes: totalBytes,
+                                overrideTotalFiles: totalFiles,
+                                monotonicProgress: monotonic,
+                                packDetail: (format: format, level: compressionLevel)
+                            )
+                            var counted = false
+                            try self.bridgeService.createArchive(
+                                archivePath: target,
+                                format: bridgeFormat,
+                                sources: items.map(\.path),
+                                includeSubfolders: includeSubfolders,
+                                preservePaths: preservePaths,
+                                compressionLevel: compressionLevel,
+                                password: password,
+                                links: links,
+                                progress: { file, done, total, filesDone, filesTotal, compressed in
+                                    if !counted {
+                                        counted = true
+                                        showCounts()
+                                    }
+                                    report(file, done, total, filesDone, filesTotal, compressed)
                                 }
-                                report(file, done, total, filesDone, filesTotal, compressed)
-                            }
-                        )
+                            )
+                        }
                     }
 
                     DispatchQueue.main.async {
-                        if progressController.isSentToQueue {
-                            if let id = queueService?.operations.first(where: {
-                                $0.archiveParams?.archivePath == archivePath && $0.status == .running
-                            })?.id {
-                                queueService?.markOperationCompleted(id)
-                            }
-                        } else {
+                        if !adopted.finish(in: queueService) {
                             // Итоги ядра пришли с отчётами хода — они и есть «всё сделано».
                             let doneBytes = max(totalBytes, progressController.lastBytesTotalValue)
                             let doneFiles = max(totalFiles, progressController.lastFilesTotalValue)
@@ -2854,13 +2971,7 @@ final class FileOperationsService {
                     }
                 } catch {
                     DispatchQueue.main.async {
-                        if progressController.isSentToQueue {
-                            if let id = queueService?.operations.first(where: {
-                                $0.archiveParams?.archivePath == archivePath && $0.status == .running
-                            })?.id {
-                                queueService?.markOperationCompleted(id, error: error)
-                            }
-                        } else {
+                        if !adopted.finish(in: queueService, error: error) {
                             progressController.close()
                         }
                         resumeOnce.resume(throwing: error)
@@ -3044,6 +3155,9 @@ final class FileOperationsService {
         )
         let swappable = SwappableProgressReporter(progressController)
 
+        // Строка очереди, в которую операция уйдёт по кнопке «В очередь»: итог — ей и только ей.
+        let adopted = AdoptedQueueOperation()
+
         // Setup "Send to queue" button for unpack
         if let queueService {
             let archiveURL = URL(fileURLWithPath: path)
@@ -3063,7 +3177,7 @@ final class FileOperationsService {
                     createSubfolder: createSubfolder,
                     overwriteExisting: overwriteExisting
                 )
-                let (_, queueReporter) = queueService.adoptRunningOperation(
+                let (opID, queueReporter) = queueService.adoptRunningOperation(
                     kind: .unpack,
                     items: [archiveItem],
                     destination: destinationPath,
@@ -3076,6 +3190,7 @@ final class FileOperationsService {
                     filesTotal: progressController.lastFilesTotalValue,
                     onCompletion: { completion(nil) }
                 )
+                adopted.id = opID
                 swappable.swap(to: queueReporter)
                 return true
             }
@@ -3124,7 +3239,8 @@ final class FileOperationsService {
                     archivePath: path,
                     destinationPath: destinationRoot,
                     overwriteExisting: overwriteExisting,
-                    password: password
+                    password: password,
+                    entries: archiveEntries
                 ) { currentFile, _, bytesDone, _, filesDone, _ in
                     DispatchQueue.main.async {
                         if swappable.isCancelled {
@@ -3158,28 +3274,14 @@ final class FileOperationsService {
                         filesTotal: plannedFiles
                     )
                     // If sent to queue, mark completed there; otherwise close dialog
-                    if progressController.isSentToQueue {
-                        if let id = queueService?.operations.first(where: {
-                            $0.kind == .unpack && $0.status == .running
-                                && $0.items.first?.path == path
-                        })?.id {
-                            queueService?.markOperationCompleted(id)
-                        }
-                    } else {
+                    if !adopted.finish(in: queueService) {
                         progressController.close()
                         completion(nil)
                     }
                 }
             } catch {
                 DispatchQueue.main.async {
-                    if progressController.isSentToQueue {
-                        if let id = queueService?.operations.first(where: {
-                            $0.kind == .unpack && $0.status == .running
-                                && $0.items.first?.path == path
-                        })?.id {
-                            queueService?.markOperationCompleted(id, error: error)
-                        }
-                    } else {
+                    if !adopted.finish(in: queueService, error: error) {
                         progressController.close()
                         completion(error)
                     }
@@ -3228,35 +3330,37 @@ final class FileOperationsService {
         var doneBytes = totalBytes
         var doneFiles = totalFiles
 
-        if format.isBuiltByHdiutil {
-            try createDMGImage(sources: items.map(\.path), to: archivePath,
-                               compressionLevel: compressionLevel,
-                               totalBytes: totalBytes, totalFiles: totalFiles,
-                               password: password,
-                               reporter: reporter)
-        } else if let bridgeFormat = format.bridgeFormat {
-            let report = makeArchiveProgressHandler(
-                progressController: reporter,
-                overrideTotalBytes: totalBytes,
-                overrideTotalFiles: totalFiles,
-                monotonicProgress: monotonic,
-                packDetail: (format: format, level: compressionLevel)
-            )
-            try bridgeService.createArchive(
-                archivePath: archivePath,
-                format: bridgeFormat,
-                sources: items.map(\.path),
-                includeSubfolders: includeSubfolders,
-                preservePaths: preservePaths,
-                compressionLevel: compressionLevel,
-                password: password,
-                links: links,
-                progress: { file, done, total, filesDone, filesTotal, compressed in
-                    doneBytes = max(doneBytes, total)
-                    doneFiles = max(doneFiles, filesTotal)
-                    report(file, done, total, filesDone, filesTotal, compressed)
-                }
-            )
+        try buildingArchive(at: archivePath, isCancelled: { reporter.isCancelled }) { target in
+            if format.isBuiltByHdiutil {
+                try createDMGImage(sources: items.map(\.path), to: target, named: archivePath,
+                                   compressionLevel: compressionLevel,
+                                   totalBytes: totalBytes, totalFiles: totalFiles,
+                                   password: password,
+                                   reporter: reporter)
+            } else if let bridgeFormat = format.bridgeFormat {
+                let report = makeArchiveProgressHandler(
+                    progressController: reporter,
+                    overrideTotalBytes: totalBytes,
+                    overrideTotalFiles: totalFiles,
+                    monotonicProgress: monotonic,
+                    packDetail: (format: format, level: compressionLevel)
+                )
+                try bridgeService.createArchive(
+                    archivePath: target,
+                    format: bridgeFormat,
+                    sources: items.map(\.path),
+                    includeSubfolders: includeSubfolders,
+                    preservePaths: preservePaths,
+                    compressionLevel: compressionLevel,
+                    password: password,
+                    links: links,
+                    progress: { file, done, total, filesDone, filesTotal, compressed in
+                        doneBytes = max(doneBytes, total)
+                        doneFiles = max(doneFiles, filesTotal)
+                        report(file, done, total, filesDone, filesTotal, compressed)
+                    }
+                )
+            }
         }
 
         if reporter.isCancelled { throw userCancelledError() }
@@ -3320,7 +3424,8 @@ final class FileOperationsService {
         try bridgeService.extractArchiveAll(
             archivePath: path,
             destinationPath: destinationRoot,
-            overwriteExisting: overwriteExisting
+            overwriteExisting: overwriteExisting,
+            entries: archiveEntries
         ) { currentFile, _, bytesDone, _, filesDone, _ in
             if reporter.isCancelled {
                 self.bridgeService.cancelArchiveOperations()
@@ -3456,23 +3561,35 @@ final class FileOperationsService {
         // — we tag it `isMerge` and expand it into per-file transfers later, on a
         // background thread (Phase 1.5), so a huge tree never freezes the UI. Files and
         // brand-new folders resolve their conflict right here.
-        var transfers: [(sourcePath: String, destPath: String, displayName: String, isMerge: Bool)] = []
+        var transfers: [(sourcePath: String, destPath: String, displayName: String,
+                         isMerge: Bool, replace: Bool)] = []
 
         cplog("[XFER] transferItems START move=\(move) destinationPath=\(destinationPath) items=\(items.map(\.name))")
         for item in items {
             var dest = (destinationPath as NSString).appendingPathComponent(item.name)
-            if dest == item.path {
-                cplog("[XFER] item=\(item.name) dest==source (same dir) → uniqueCopyPath")
-                if move { continue }  // Can't move file onto itself
-                // Copy to same directory → create duplicate with unique name
-                dest = uniqueCopyPath(from: dest)
-            } else {
+            var destForm: (path: String, exists: Bool, isDir: Bool) = (dest, true, false)
+            // The destination can be the item itself under another spelling of its path — a
+            // symlinked folder on the way, another letter case, /var and /private/var. Comparing
+            // the strings alone took that for a conflict with a stranger: "Replace" then
+            // removed the only copy, and a folder was merged into itself.
+            var ontoItself = dest == item.path
+            if !ontoItself {
                 // Resolve existence by exact bytes, NOT FileManager.fileExists — the
                 // latter re-normalizes the path (NFD) and a normalization-sensitive SMB
                 // server then misses a name it stored precomposed (NFC). Missing that
                 // would wrongly treat an existing folder as new (silent duplicate) or an
                 // existing folder-vs-folder as a plain conflict (Replace = delete it all).
-                let destForm = DarwinFileOperations.existingPathForm(dest)
+                destForm = DarwinFileOperations.existingPathForm(dest)
+                ontoItself = destForm.exists && DarwinFileOperations.sameDirectoryEntry(
+                    DarwinFileOperations.existingPathForm(item.path).path, destForm.path)
+            }
+            var replace = false
+            if ontoItself {
+                cplog("[XFER] item=\(item.name) dest==source (same dir) → uniqueCopyPath")
+                if move { continue }  // Can't move file onto itself
+                // Copy to same directory → create duplicate with unique name
+                dest = uniqueCopyPath(from: dest)
+            } else {
                 cplog("[XFER] item=\(item.name) dest=\(dest) exists=\(destForm.exists) destIsDir=\(destForm.isDir)")
                 if destForm.exists {
                     let itemIsDir = DarwinFileOperations.existingPathForm(item.path).isDir
@@ -3480,18 +3597,22 @@ final class FileOperationsService {
                         // Two existing folders → merge contents (Phase 1.5 recurses in
                         // the background). Use the dest's real on-disk name form.
                         cplog("[XFER] item=\(item.name) folder-merge (both dirs) → no dialog")
-                        transfers.append((item.path, destForm.path, item.name, true))
+                        transfers.append((item.path, destForm.path, item.name, true, false))
                         continue
                     }
                     cplog("[XFER] item=\(item.name) CONFLICT → asking onConflict")
                     switch onConflict(item.path, destForm.path) {
                     case .replace:
-                        // On a read-only NTFS destination we can't delete via
-                        // FileManager (the macOS mount is read-only). The libntfs-3g
-                        // copy overwrites by itself — copy_file deletes any existing
-                        // file before creating the new one — so skip the removal here.
+                        // Nothing is removed here: the old object stays until the new one
+                        // is whole (DarwinFileOperations.replace). Removing it first lost it
+                        // whenever the copy then failed, was cancelled, or a later question
+                        // was answered "Cancel".
+                        // On a read-only NTFS destination the libntfs-3g copy overwrites by
+                        // itself — copy_file deletes any existing file before creating the
+                        // new one — so that path stays as it was.
                         if ntfsInfo == nil {
-                            try FileManager.default.removeItem(atPath: destForm.path)
+                            replace = true
+                            dest = destForm.path
                         }
                     case .copy:
                         dest = uniqueCopyPath(from: dest)
@@ -3502,7 +3623,7 @@ final class FileOperationsService {
                     }
                 }
             }
-            transfers.append((item.path, dest, item.name, false))
+            transfers.append((item.path, dest, item.name, false, replace))
         }
         guard !transfers.isEmpty else { return }
         let startedAt = Date()
@@ -3603,6 +3724,9 @@ final class FileOperationsService {
                 }
             }
         }
+        // Строка очереди, в которую операция уйдёт по кнопке «В очередь»: итог — ей и только ей.
+        let adopted = AdoptedQueueOperation()
+
         // A NAMED function, not a closure: with the window now optional this body crossed
         // the compiler's type-checking budget as one expression and the build died of
         // "unable to type-check in reasonable time". Naming it splits the work.
@@ -3613,7 +3737,7 @@ final class FileOperationsService {
             if let queueService, let progressController {
                 progressController.onSendToQueue = {
                     let kind: OperationKind = move ? .move : .copy
-                    let (_, queueReporter) = queueService.adoptRunningOperation(
+                    let (opID, queueReporter) = queueService.adoptRunningOperation(
                         kind: kind,
                         items: items,
                         destination: destinationPath,
@@ -3626,6 +3750,7 @@ final class FileOperationsService {
                         filesTotal: progressController.lastFilesTotalValue,
                         onCompletion: onCompletion
                     )
+                    adopted.id = opID
                     // Swap timer target to queue reporter
                     stateLock.lock()
                     activeReporter = queueReporter
@@ -3673,19 +3798,9 @@ final class FileOperationsService {
                             )
                         }
 
-                        let wasAdopted: Bool = progressController?.isSentToQueue ?? false
-                        if wasAdopted {
-                            let kind: OperationKind = move ? .move : .copy
-                            if let id = queueService?.operations.first(where: {
-                                $0.kind == kind && $0.status == .running
-                            })?.id {
-                                if let error {
-                                    queueService?.markOperationCompleted(id, error: error)
-                                } else {
-                                    queueService?.markOperationCompleted(id)
-                                }
-                            }
-                        } else {
+                        // Ушедшую в очередь закрывает её строка — она же вызовет onCompletion.
+                        let wasAdopted: Bool = adopted.finish(in: queueService, error: error)
+                        if !wasAdopted {
                             onCompletion?()
                         }
                         if let error {
@@ -3727,7 +3842,7 @@ final class FileOperationsService {
                 // keeps the progress window responsive; each overlapping file's conflict is
                 // resolved by `onConflict`, which hops to the main thread for its modal
                 // dialog and remembers an "apply to all" answer (see copyItems/moveItems).
-                var work: [(sourcePath: String, destPath: String, displayName: String)] = []
+                var work: [(sourcePath: String, destPath: String, displayName: String, replace: Bool)] = []
                 func expandMerge(_ src: String, into dst: String) throws {
                     for child in (try? FileManager.default.contentsOfDirectory(atPath: src)) ?? [] {
                         if cancelled() { throw self.userCancelledError() }
@@ -3745,17 +3860,18 @@ final class FileOperationsService {
                         } else if cdExists {
                             switch onConflict(cs, cd) {
                             case .replace:
-                                if ntfsInfo == nil { try? FileManager.default.removeItem(atPath: cd) }
-                                work.append((cs, cd, child))
+                                // The old file is not removed here — see Phase 1. (NTFS
+                                // overwrites by itself.)
+                                work.append((cs, cd, child, ntfsInfo == nil))
                             case .copy:
-                                work.append((cs, self.uniqueCopyPath(from: cd), child))
+                                work.append((cs, self.uniqueCopyPath(from: cd), child, false))
                             case .skip:
                                 continue
                             case .cancel:
                                 throw self.userCancelledError()
                             }
                         } else {
-                            work.append((cs, cd, child))            // missing at dest → copy in
+                            work.append((cs, cd, child, false))     // missing at dest → copy in
                         }
                     }
                 }
@@ -3764,7 +3880,7 @@ final class FileOperationsService {
                         if t.isMerge {
                             try expandMerge(t.sourcePath, into: t.destPath)
                         } else {
-                            work.append((t.sourcePath, t.destPath, t.displayName))
+                            work.append((t.sourcePath, t.destPath, t.displayName, t.replace))
                         }
                     }
                 } catch {
@@ -3872,6 +3988,21 @@ final class FileOperationsService {
                     }
 
                     do {
+                        // Byte-level progress while a copy to another volume runs — otherwise
+                        // a big file's bar sits at ~1% until the whole copy finishes.
+                        let baseBytesDone: Int64 = bytesDone
+                        let byteProgress: ((Int64, Int64, String) -> Void)? = hasCrossVolume
+                            ? { (copiedBytes: Int64, _: Int64, _: String) -> Void in
+                                stateLock.lock()
+                                let currentBytesDone = baseBytesDone + copiedBytes
+                                let p = totalBytes > 0
+                                    ? Double(currentBytesDone) / Double(totalBytes)
+                                    : Double(filesDone) / Double(max(totalFiles, 1))
+                                sharedProgress = min(max(p, 0.01), 0.99)
+                                sharedBytesDone = currentBytesDone
+                                stateLock.unlock()
+                            }
+                            : nil
                         if let ntfsInfo = ntfsInfo {
                             // ── NTFS write via libntfs-3g ───────────────────────────
                             try Self.performNTFSTransfer(
@@ -3888,44 +4019,33 @@ final class FileOperationsService {
                                 sharedBytesDonePtr: &sharedBytesDone,
                                 cancelled: cancelled
                             )
+                        } else if transfer.replace {
+                            // "Replace": the new object is brought next to the old one and
+                            // takes its name only when it is whole — a failure or a cancel
+                            // on the way leaves the old one as it was.
+                            try DarwinFileOperations.replace(
+                                from: transfer.sourcePath,
+                                to: transfer.destPath,
+                                move: move,
+                                progress: byteProgress,
+                                shouldCancel: pausableCancel
+                            )
                         } else if move {
                             // DarwinFileOperations.move: rename() for same-volume (instant O(1)),
-                            // copyfile + removefile for cross-volume. Cross-volume needs the
-                            // same byte-level progress the copy path uses — otherwise a big
-                            // file's bar sits at ~1% until the whole copy finishes.
-                            let baseBytesDone = bytesDone
+                            // copyfile + removefile for cross-volume.
                             try DarwinFileOperations.move(
                                 from: transfer.sourcePath,
                                 to: transfer.destPath,
-                                progress: hasCrossVolume ? { copiedBytes, _, _ in
-                                    stateLock.lock()
-                                    let currentBytesDone = baseBytesDone + copiedBytes
-                                    let p = totalBytes > 0
-                                        ? Double(currentBytesDone) / Double(totalBytes)
-                                        : Double(filesDone) / Double(max(totalFiles, 1))
-                                    sharedProgress = min(max(p, 0.01), 0.99)
-                                    sharedBytesDone = currentBytesDone
-                                    stateLock.unlock()
-                                } : nil,
+                                progress: byteProgress,
                                 shouldCancel: pausableCancel
                             )
                         } else {
                             // DarwinFileOperations.copy: clonefile() for APFS (instant CoW),
                             // copyfile() with progress for non-APFS/cross-volume.
-                            let baseBytesDone = bytesDone
                             try DarwinFileOperations.copy(
                                 from: transfer.sourcePath,
                                 to: transfer.destPath,
-                                progress: hasCrossVolume ? { copiedBytes, _, _ in
-                                    stateLock.lock()
-                                    let currentBytesDone = baseBytesDone + copiedBytes
-                                    let p = totalBytes > 0
-                                        ? Double(currentBytesDone) / Double(totalBytes)
-                                        : Double(filesDone) / Double(max(totalFiles, 1))
-                                    sharedProgress = min(max(p, 0.01), 0.99)
-                                    sharedBytesDone = currentBytesDone
-                                    stateLock.unlock()
-                                } : nil,
+                                progress: byteProgress,
                                 shouldCancel: pausableCancel
                             )
                         }
@@ -4383,12 +4503,18 @@ final class FileOperationsService {
     /// tightly that incompressible sources die with "no space left on device" — measured here
     /// with 120 MB of random bytes. `-puppetstrings` makes progress parseable: "PERCENT:n"
     /// lines, with -1 meaning "indeterminate".
+    ///
+    /// `finalPath` is where the image will stand once it is done, when that is not `dmgPath`
+    /// itself (a build under a hidden name next to the image being replaced, or in a temp file
+    /// on the way to NTFS): the volume is named, and progress is shown, by the final name.
     nonisolated func createDMGImage(sources: [String], to dmgPath: String,
+                                    named finalPath: String? = nil,
                                     compressionLevel: Int,
                                     totalBytes: Int64, totalFiles: Int,
                                     password: String = "",
                                     reporter: OperationProgressReporter) throws {
-        let volumeName = archiveBaseName(from: (dmgPath as NSString).lastPathComponent)
+        let shownName = ((finalPath ?? dmgPath) as NSString).lastPathComponent
+        let volumeName = archiveBaseName(from: shownName)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
         var arguments = ["create", "-ov"]
@@ -4420,7 +4546,7 @@ final class FileOperationsService {
         process.standardOutput = out
         process.standardError = err
 
-        let dmgName = (dmgPath as NSString).lastPathComponent
+        let dmgName = shownName
         var stderrTail = Data()
         var buffer = Data()
         out.fileHandleForReading.readabilityHandler = { [weak reporter] handle in

@@ -148,6 +148,7 @@ struct SettingsContextMenuView: View {
                 Button { query = "" } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 10)).foregroundColor(.secondary)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }

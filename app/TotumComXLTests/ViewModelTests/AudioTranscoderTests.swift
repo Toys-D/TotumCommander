@@ -119,3 +119,30 @@ final class AudioTranscoderTests: XCTestCase {
         return false
     }
 }
+
+/// Помощник, который много жалуется: его жалобы читаются по ходу, иначе он замирает на записи
+/// в переполненный канал, а с ним и перевод. Вместо ffmpeg — оболочка, которая только пишет.
+@MainActor
+final class AudioTranscoderHelperTests: XCTestCase {
+
+    func test_многословныйПомощникДоходитДоКонца() async throws {
+        // Четыре тысячи строк — вчетверо больше, чем вмещает канал (64 КБ).
+        let script = """
+        i=0; while [ $i -lt 4000 ]; do echo 'жалоба жалоба жалоба жалоба жалоба' >&2; i=$((i+1)); done
+        echo 'последняя жалоба' >&2
+        exit 3
+        """
+        let work = Task {
+            try await AudioTranscoder.runHelper(URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script])
+        }
+        // Замерший помощник не должен вешать прогон: через пять секунд его снимают.
+        let watchdog = Task {
+            try await Task.sleep(nanoseconds: 5_000_000_000)
+            work.cancel()
+        }
+        defer { watchdog.cancel() }
+        let result = try await work.value
+        XCTAssertEqual(result.status, 3, "помощник не дошёл до конца — замер на записи жалоб")
+        XCTAssertEqual(result.lastLine, "последняя жалоба")
+    }
+}

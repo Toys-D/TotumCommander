@@ -8,9 +8,16 @@ final class VolumeUnmountTests: XCTestCase {
     /// Свой маленький образ диска: подключить, отключить нашей дорогой, убедиться, что тома
     /// нет, — и прибрать за собой.
     func test_образДискаОтключаетсяЧерезДиспетчер() throws {
-        let folder = NSTemporaryDirectory() + "fcxl-unmount-\(UUID().uuidString)"
+        let folderName = "fcxl-unmount-\(UUID().uuidString)"
+        let folder = NSTemporaryDirectory() + folderName
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: folder) }
+        // «Прибрать за собой» проверяется, а не подразумевается: после теста образ не должен
+        // числиться присоединённым.
+        addTeardownBlock {
+            XCTAssertFalse(self.output("/usr/bin/hdiutil", ["info"]).contains(folderName),
+                           "образ остался присоединённым после теста")
+        }
         let image = folder + "/том.dmg"
         let name = "FCXLUnmount\(Int.random(in: 1000...9999))"
         guard run("/usr/bin/hdiutil", ["create", "-quiet", "-size", "4m", "-fs", "APFS",
@@ -18,9 +25,15 @@ final class VolumeUnmountTests: XCTestCase {
             throw XCTSkip("образ не создался")
         }
         let attach = output("/usr/bin/hdiutil", ["attach", "-nobrowse", image])
+        // Отсоединяем по устройству образа — первому «/dev/disk…» в ответе, — а не по точке
+        // подключения: том к концу теста уже отключён, точки нет, и по ней образ оставался
+        // присоединённым — по одному на каждый прогон, до перезагрузки.
+        let device = attach.split(whereSeparator: \.isWhitespace).first { $0.hasPrefix("/dev/disk") }
+        defer {
+            if let device { _ = run("/usr/bin/hdiutil", ["detach", "-quiet", "-force", String(device)]) }
+        }
         let mountPoint = "/Volumes/" + name
         guard attach.contains(mountPoint) else { throw XCTSkip("образ не подключился: \(attach)") }
-        defer { _ = run("/usr/bin/hdiutil", ["detach", "-quiet", "-force", mountPoint]) }
 
         let started = Date()
         let outcome = VolumeUnmount.unmount(path: mountPoint)

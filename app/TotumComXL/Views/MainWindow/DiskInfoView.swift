@@ -97,6 +97,7 @@ struct DiskInfoView: View {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .focusEffectDisabled()   // drop the system blue focus ring

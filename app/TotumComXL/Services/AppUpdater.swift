@@ -97,6 +97,22 @@ enum UpdatePlan {
         return (parent.appendingPathComponent(".\(name).incoming-\(safeTag)"),
                 parent.appendingPathComponent(".\(name).retired-\(ProcessInfo.processInfo.processIdentifier)"))
     }
+
+    /// Под каким именем старая копия уходит в Корзину: видимым и с номером версии —
+    /// «Totum Commander 1.15.app»; номер не прочитался — «Totum Commander (прежняя версия).app».
+    /// `copy` больше единицы — имя занято, в конце « (2)», « (3)»…
+    static func retiredName(for bundle: URL, version: String?, copy: Int = 1) -> String {
+        let base = bundle.deletingPathExtension().lastPathComponent
+        let ext = bundle.pathExtension.isEmpty ? "" : "." + bundle.pathExtension
+        // В имя идут только буквы, цифры, точка, дефис и подчёркивание: номер читается из
+        // чужого Info.plist, а косая черта в нём увела бы копию в другую папку.
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-_"))
+        let clean = String(String.UnicodeScalarView((version ?? "").unicodeScalars.filter(allowed.contains))
+            .prefix(32))
+        let label = clean.isEmpty ? "(\(L("updates.previousVersion")))" : clean
+        let suffix = copy > 1 ? " (\(copy))" : ""
+        return "\(base) \(label)\(suffix)\(ext)"
+    }
 }
 
 enum UpdateError: Error, Equatable {
@@ -155,8 +171,8 @@ enum UpdateSteps {
     }
 
     /// Подменить `bundle` копией `newApp`: `ditto` в соседнюю папку, снять карантин, два
-    /// переименования на одном томе, старую копию — в Корзину. Сорвалось второе
-    /// переименование — старая возвращается на место.
+    /// переименования на одном томе, старую копию — в Корзину под видимым именем с номером
+    /// версии. Сорвалось второе переименование — старая возвращается на место.
     static func install(from newApp: URL, over bundle: URL, tag: String, retire: Retire,
                         fileManager: FileManager = .default) throws {
         let staging = UpdatePlan.stagingURLs(for: bundle, tag: tag)
@@ -181,16 +197,38 @@ enum UpdateSteps {
         }
         switch retire {
         case .trash:
-            if (try? fileManager.trashItem(at: staging.retired, resultingItemURL: nil)) == nil {
-                try? fileManager.removeItem(at: staging.retired)
+            let leaving = presentable(staging.retired, of: bundle, fileManager: fileManager)
+            if (try? fileManager.trashItem(at: leaving, resultingItemURL: nil)) == nil {
+                try? fileManager.removeItem(at: leaving)
             }
         case .delete:
             try? fileManager.removeItem(at: staging.retired)
         }
     }
 
+    /// Дать отставленной копии человеческое имя перед Корзиной. Под рабочим именем
+    /// «.Totum Commander.app.retired-123» её в Корзине не видно, а «Вернуть» положило бы её
+    /// обратно такой же скрытой. Переименование — на месте, в той же папке; занятое имя не
+    /// трогается. Не вышло — копия уходит как есть.
+    private static func presentable(_ retired: URL, of bundle: URL, fileManager: FileManager) -> URL {
+        let info = NSDictionary(contentsOf: retired.appendingPathComponent("Contents/Info.plist"))
+        let version = info?["CFBundleShortVersionString"] as? String
+        let folder = retired.deletingLastPathComponent()
+        for copy in 1...50 {
+            let target = folder.appendingPathComponent(
+                UpdatePlan.retiredName(for: bundle, version: version, copy: copy))
+            if fileManager.fileExists(atPath: target.path) { continue }
+            return (try? fileManager.moveItem(at: retired, to: target)) == nil ? retired : target
+        }
+        return retired
+    }
+
     /// Скачать файл с ходом дела. Настоящая задача загрузки: ход приходит от системы, файл
     /// не проходит через память.
+    ///
+    /// Отмена задачи, которая ждёт загрузку, останавливает и саму загрузку: соединение
+    /// закрывается сразу, а не через минуту молчания сервера, и вызов кончается ошибкой
+    /// «отменено».
     static func download(_ url: URL, to destination: URL,
                          progress: @escaping @Sendable (Double) -> Void) async throws {
         let delegate = DownloadDelegate(destination: destination, progress: progress)
@@ -198,21 +236,38 @@ enum UpdateSteps {
         defer { session.finishTasksAndInvalidate() }
         var request = URLRequest(url: url, timeoutInterval: 60)
         request.setValue("TotumCommander", forHTTPHeaderField: "User-Agent")
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            delegate.continuation = continuation
-            session.downloadTask(with: request).resume()
+        let task = session.downloadTask(with: request)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                delegate.attach(continuation)
+                task.resume()
+            }
+        } onCancel: {
+            task.cancel()
         }
     }
 
     private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
         let destination: URL
         let progress: @Sendable (Double) -> Void
-        var continuation: CheckedContinuation<Void, Error>?
-        private var finished = false
+        // Ждущий и итог встречаются под замком: делегата зовёт очередь системы, ждёт — задача
+        // вызвавшего, а отмена может прийти раньше, чем тот успел встать в ожидание.
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Void, Error>?
+        private var outcome: Result<Void, Error>?
 
         init(destination: URL, progress: @escaping @Sendable (Double) -> Void) {
             self.destination = destination
             self.progress = progress
+        }
+
+        func attach(_ continuation: CheckedContinuation<Void, Error>) {
+            let ready: Result<Void, Error>? = lock.withLock {
+                if let outcome { return outcome }
+                self.continuation = continuation
+                return nil
+            }
+            if let ready { continuation.resume(with: ready) }
         }
 
         func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
@@ -245,9 +300,13 @@ enum UpdateSteps {
         }
 
         private func finish(_ result: Result<Void, Error>) {
-            guard !finished, let continuation else { return }
-            finished = true
-            continuation.resume(with: result)
+            let waiting: CheckedContinuation<Void, Error>? = lock.withLock {
+                guard outcome == nil else { return nil }
+                outcome = result
+                defer { continuation = nil }
+                return continuation
+            }
+            waiting?.resume(with: result)
         }
     }
 }
@@ -308,9 +367,13 @@ final class AppUpdater: ObservableObject {
 
     /// Скачать, проверить, подменить, перезапуститься. Любой срыв — в `stage = .failed`
     /// с человеческим объяснением; программа при этом остаётся прежней и целой.
-    func update(to release: UpdateChecker.Release) async {
+    ///
+    /// `bundle` и `fetch` подменяются в тестах: поддельная программа во временной папке и
+    /// ответ со ссылками на местный сервер. В программе — живой бандл и GitHub.
+    func update(to release: UpdateChecker.Release, bundle: URL? = nil,
+                fetch: (() async throws -> Data)? = nil) async {
         guard !isBusy else { return }
-        let bundle = Self.liveBundleURL
+        let bundle = bundle ?? Self.liveBundleURL
         if let obstacle = UpdatePlan.obstacle(bundleURL: bundle) {
             stage = .failed(Self.message(for: obstacle))
             return
@@ -325,7 +388,7 @@ final class AppUpdater: ObservableObject {
         do {
             stage = .downloading(0)
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
-            let answer = try await UpdateChecker.fetchFromGitHub()
+            let answer = try await (fetch ?? UpdateChecker.fetchFromGitHub)()
             guard let assets = UpdatePlan.assets(from: answer) else { throw UpdateError.noAssets }
             let dmg = work.appendingPathComponent(assets.dmgName)
             try await UpdateSteps.download(assets.dmg, to: dmg) { fraction in
@@ -334,6 +397,8 @@ final class AppUpdater: ObservableObject {
                 }
             }
 
+            // «Отмена» на последних байтах: образ уже целиком на диске, но человек сказал «стоп».
+            try Task.checkCancellation()
             stage = .verifying
             let (sumsData, _) = try await URLSession.shared.data(from: assets.sums)
             let expected = UpdatePlan.expectedHash(in: String(decoding: sumsData, as: UTF8.self),
@@ -359,9 +424,36 @@ final class AppUpdater: ObservableObject {
             stage = .relaunching
             if !AppLanguage.relaunchApp() { stage = .failed(L("updates.error.relaunch")) }
         } catch {
-            logger.error("update.failed: \(error.localizedDescription, privacy: .public)")
-            stage = .failed(Self.message(for: error))
+            if Task.isCancelled {
+                // Человек сам остановил загрузку — это не срыв: программа на месте не тронута,
+                // скачанное убрано, кнопка «Обновить» возвращается.
+                logger.notice("update.cancelled")
+                stage = .idle
+            } else {
+                logger.error("update.failed: \(error.localizedDescription, privacy: .public)")
+                stage = .failed(Self.message(for: error))
+            }
         }
+    }
+
+    /// Идущее обновление: «Отмена» останавливает его отменой этой задачи.
+    private var running: Task<Void, Never>?
+
+    /// Начать обновление, не дожидаясь его конца, — кнопка «Обновить».
+    func start(_ release: UpdateChecker.Release, bundle: URL? = nil,
+               fetch: (() async throws -> Data)? = nil) {
+        guard !isBusy else { return }
+        running = Task { [weak self] in
+            await self?.update(to: release, bundle: bundle, fetch: fetch)
+            self?.running = nil
+        }
+    }
+
+    /// Остановить загрузку — кнопка «Отмена» рядом с полосой хода. Только загрузку: проверку и
+    /// подмену программы на полпути не бросают.
+    func cancel() {
+        guard case .downloading = stage else { return }
+        running?.cancel()
     }
 
     /// Снова в покой — после срыва, чтобы кнопка вернулась.

@@ -27,6 +27,7 @@ struct FCXLColorPicker: View {
                     RoundedRectangle(cornerRadius: 5)
                         .strokeBorder(Color.primary.opacity(0.18))
                 )
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .fcxlPopover(isPresented: $showPopover, arrowEdge: .bottom) {
@@ -190,6 +191,7 @@ struct FCXLColorPickerPanel: View {
                         .fill(PanelAppearanceSettings.swiftUIColor(from: c, fallback: .gray))
                         .frame(width: 20, height: 20)
                         .overlay(Circle().strokeBorder(Color.primary.opacity(0.18)))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -205,6 +207,7 @@ struct FCXLColorPickerPanel: View {
                         .fill(PanelAppearanceSettings.swiftUIColor(from: c, fallback: .gray))
                         .frame(width: 20, height: 20)
                         .overlay(Circle().strokeBorder(Color.primary.opacity(0.18)))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .overlay {

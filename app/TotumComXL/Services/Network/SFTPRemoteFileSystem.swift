@@ -6,6 +6,7 @@ import FCXLBridgeObjC
 final class SFTPRemoteFileSystem: RemoteFileSystemProtocol {
     private let connection: RemoteConnection
     private let password: String
+    private let trust: ServerTrustStore
     private let bridge = FCXLSFTPBridge()
     private(set) var isConnected: Bool = false
 
@@ -14,9 +15,10 @@ final class SFTPRemoteFileSystem: RemoteFileSystemProtocol {
     var protocolDisplayName: String { "SFTP" }
     var rootPath: String { connection.initialPath.isEmpty ? "/" : connection.initialPath }
 
-    init(connection: RemoteConnection, password: String) {
+    init(connection: RemoteConnection, password: String, trust: ServerTrustStore = .shared) {
         self.connection = connection
         self.password = password
+        self.trust = trust
     }
 
     func connect() async throws {
@@ -29,6 +31,7 @@ final class SFTPRemoteFileSystem: RemoteFileSystemProtocol {
                         username: connection.username,
                         password: password,
                         privateKeyPath: connection.useKeyAuth ? connection.keyPath : "",
+                        trustedHostKey: trust.trustedKey(for: connection),
                         timeout: 10
                     )
                     self.isConnected = true

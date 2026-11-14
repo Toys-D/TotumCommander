@@ -22,7 +22,22 @@ struct SftpClient::Impl {
     bool connected = false;
     int64_t max_download_bps = 0;
     int64_t max_upload_bps = 0;
+    // Что сервер предъявил при последнем подключении. Не сбрасывается в disconnect().
+    std::optional<ServerKeyReport> server_key;
 };
+
+/// Вид ключа узла словом, как его печатает `ssh-keygen -l`. Незнакомый вид — пусто.
+static auto host_key_type_name(int type) -> std::string {
+    switch (type) {
+        case LIBSSH2_HOSTKEY_TYPE_RSA:       return "RSA";
+        case LIBSSH2_HOSTKEY_TYPE_DSS:       return "DSA";
+        case LIBSSH2_HOSTKEY_TYPE_ECDSA_256:
+        case LIBSSH2_HOSTKEY_TYPE_ECDSA_384:
+        case LIBSSH2_HOSTKEY_TYPE_ECDSA_521: return "ECDSA";
+        case LIBSSH2_HOSTKEY_TYPE_ED25519:   return "ED25519";
+        default:                             return "";
+    }
+}
 
 /// Holds a transfer down to an average rate by sleeping off whatever it ran ahead by.
 ///
@@ -65,9 +80,14 @@ SftpClient::~SftpClient() {
 
 auto SftpClient::is_connected() const -> bool { return impl_->connected; }
 
+auto SftpClient::last_server_key() const -> std::optional<ServerKeyReport> {
+    return impl_->server_key;
+}
+
 auto SftpClient::connect(const SftpConnectionInfo& info) -> common::Result<void> {
     disconnect();
     impl_->info = info;
+    impl_->server_key.reset();
 
     // Resolve host
     struct addrinfo hints{}, *res = nullptr;
@@ -117,6 +137,35 @@ auto SftpClient::connect(const SftpConnectionInfo& info) -> common::Result<void>
         disconnect();
         return common::Error::make(common::ErrorCode::NetworkError,
                                    "SSH handshake failed (rc=" + std::to_string(rc) + ")");
+    }
+
+    // Тот ли это сервер — до того, как ему назовут имя и пароль. Рукопожатие само ничего
+    // не сверяет: ключ узла надо сравнить с тем, чему человек уже доверился. Без этого
+    // любой, кто встал между программой и сервером, получает пароль открытым текстом.
+    ServerKeyReport report;
+    if (const char* hash = libssh2_hostkey_hash(impl_->session, LIBSSH2_HOSTKEY_HASH_SHA256)) {
+        report.fingerprint = format_host_key_fingerprint(std::string_view(hash, 32));
+    }
+    size_t key_length = 0;
+    int key_type = LIBSSH2_HOSTKEY_TYPE_UNKNOWN;
+    if (libssh2_session_hostkey(impl_->session, &key_length, &key_type)) {
+        report.key_type = host_key_type_name(key_type);
+    }
+    if (report.fingerprint.empty()) {
+        // Сверять нечего — значит, и доверять нечему.
+        disconnect();
+        return common::Error::make(common::ErrorCode::NetworkError,
+                                   "SSH host key is not available");
+    }
+    report.verdict = judge_server_key(report.fingerprint, info.trusted_host_key);
+    impl_->server_key = report;
+    if (report.verdict != ServerKeyVerdict::Trusted) {
+        disconnect();
+        // Не PermissionDenied: это не отказ во входе, и переспрашивать пароль тут незачем.
+        return common::Error::make(common::ErrorCode::NetworkError,
+                                   report.verdict == ServerKeyVerdict::Changed
+                                       ? "SSH host key has changed"
+                                       : "SSH host key is not trusted yet");
     }
 
     // Authenticate

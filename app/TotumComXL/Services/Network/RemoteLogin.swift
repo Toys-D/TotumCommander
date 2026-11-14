@@ -50,6 +50,10 @@ enum RemoteLogin {
     /// на вторую спрашивать нечего. Ядро отвечает на отказ во входе кодом `permissionDenied` —
     /// и FTP (530 и подобные), и SFTP (ключ или пароль не подошли).
     nonisolated static func error(from error: Error) -> RemoteFileSystemError {
+        // Сначала — о ключе сервера: до входа дело не дошло, и имя с паролем тут ни при чём.
+        if let challenge = ServerKeyChallenge(error: error) {
+            return .serverKeyUntrusted(challenge)
+        }
         let detail = error.localizedDescription
         guard CoreErrorCode.of(error) == .permissionDenied else {
             return .connectionFailed(detail)

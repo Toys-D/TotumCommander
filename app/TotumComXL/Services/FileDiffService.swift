@@ -132,8 +132,10 @@ enum FileDiffService {
         return (info.st_mode & S_IFMT) == S_IFREG
     }
 
-    /// A file with NUL bytes in it is not text. The same rule the viewer uses to decide between
-    /// showing text and showing hex — one answer to that question in the app, not two.
+    /// A file with NUL bytes in it is not text. The viewer decides between showing text and
+    /// showing hex by the same rule (TextFileCodec.looksBinary), with one addition of its own:
+    /// a file that starts with a byte-order mark is text for it. Comparing goes through the
+    /// core, which reads UTF-8, so UTF-16 stays binary here.
     static func looksBinary(at path: String) -> Bool {
         guard let handle = FileHandle(forReadingAtPath: path) else { return false }
         defer { try? handle.close() }

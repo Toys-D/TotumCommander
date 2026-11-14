@@ -38,5 +38,6 @@ enum RenameStatus: Equatable {
     case unchanged             // target == original: skip, no rename
     case error(String)         // empty name / illegal char / bad regex; String is a short reason key
     case duplicate             // two rows produce the same target
-    case collidesOnDisk        // target exists on disk and is not part of the batch
+    case collidesOnDisk        // target is held by a file that stays put: one outside the batch,
+                               // or a batch file that is not itself being renamed
 }

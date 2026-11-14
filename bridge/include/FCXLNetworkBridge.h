@@ -20,6 +20,21 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong, nullable) NSDate *modificationDate;
 @end
 
+/// A refused connection says why in the error's `userInfo` when the reason is the server's
+/// key: the server answered, but nobody has vouched for the key it showed, so neither the
+/// account name nor the password was sent. Absent keys mean an ordinary failure.
+///
+/// `FCXLServerKeyStatusKey` is `@"unknown"` (no key is on record for this server) or
+/// `@"changed"` (the key differs from the one on record). `FCXLServerKeyFingerprintKey` is
+/// what to show the person and, once they agree, to hand back as the trusted key:
+/// `SHA256:…` for an SSH host key, `sha256//…` for a TLS public key.
+/// `FCXLServerKeyTypeKey` names the SSH key algorithm (`ED25519`, `RSA`, …), and
+/// `FCXLServerKeyReasonKey` carries the TLS library's own words about the certificate.
+extern NSString *const FCXLServerKeyStatusKey;
+extern NSString *const FCXLServerKeyFingerprintKey;
+extern NSString *const FCXLServerKeyTypeKey;
+extern NSString *const FCXLServerKeyReasonKey;
+
 /// FTP/FTPS client bridge.
 @interface FCXLFTPBridge : NSObject
 
@@ -29,6 +44,7 @@ NS_ASSUME_NONNULL_BEGIN
              password:(NSString *)password
                useTLS:(BOOL)useTLS
           passiveMode:(BOOL)passiveMode
+      pinnedPublicKey:(NSString *)pinnedPublicKey
               timeout:(int)timeout
                 error:(NSError *_Nullable *_Nullable)error;
 
@@ -83,6 +99,7 @@ NS_ASSUME_NONNULL_BEGIN
              username:(NSString *)username
              password:(NSString *)password
        privateKeyPath:(NSString *)keyPath
+       trustedHostKey:(NSString *)trustedHostKey
               timeout:(int)timeout
                 error:(NSError *_Nullable *_Nullable)error;
 

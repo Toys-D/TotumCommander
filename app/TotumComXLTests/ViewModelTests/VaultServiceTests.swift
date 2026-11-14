@@ -169,6 +169,42 @@ final class VaultServiceTests: XCTestCase {
                        "панель вошла в сам пакет: \(vm.currentPath)")
     }
 
+    /// A vault's name reaches the script as TEXT, never as code: a quote or a backslash in it
+    /// must not end the string early. AppleScript itself is the judge — the literal has to
+    /// come back out of `osascript` as the very text that went in. The script is a bare
+    /// `return`: no program is addressed.
+    func testAVaultNameStaysTextInsideTheScript() throws {
+        let names = ["/Volumes/Сейф «дом»", "/Volumes/a\"b", "/Volumes/a\\b",
+                     "/Volumes/x\" & \"y", "/Volumes/хвост\\"]
+        for name in names {
+            let literal = VaultService.appleScriptLiteral(name)
+            XCTAssertEqual(try appleScriptValue(of: "return " + literal), name, literal)
+        }
+        let script = VaultService.closeDocumentsScript(bundleID: "com.apple.Preview",
+                                                       mountPoint: "/Volumes/a\"b")
+        XCTAssertTrue(script.contains("path begins with \"/Volumes/a\\\"b\")"), script)
+        XCTAssertTrue(script.contains("tell application id \"com.apple.Preview\""), script)
+    }
+
+    private func appleScriptValue(of script: String) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        let out = Pipe()
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        // A stuck interpreter must not hang the suite.
+        let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: watchdog)
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        watchdog.cancel()
+        var text = String(decoding: data, as: UTF8.self)
+        if text.hasSuffix("\n") { text.removeLast() }
+        return text
+    }
+
     func testWhatCountsAsAVault() {
         XCTAssertTrue(VaultService.isVault("/дом/Сейф.sparsebundle"))
         XCTAssertTrue(VaultService.isVault("/дом/Сейф.SPARSEBUNDLE"))

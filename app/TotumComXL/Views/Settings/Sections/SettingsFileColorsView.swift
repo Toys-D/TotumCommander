@@ -154,6 +154,7 @@ struct SettingsFileColorsView: View {
                 } label: {
                     Image(systemName: live.isFreshness ? "clock.fill" : "clock")
                         .font(.system(size: 12))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(live.isFreshness ? accent : Color.secondary)
@@ -164,6 +165,7 @@ struct SettingsFileColorsView: View {
                     store.remove(id: rule.id)
                 } label: {
                     Image(systemName: "minus.circle").font(.system(size: 12))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)

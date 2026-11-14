@@ -28,11 +28,13 @@ struct PanelBreadcrumbBar: View {
                     Image(systemName: "checkmark")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
+                        // Same 38pt trailing slot as the pencil / tab bar "+" so the
+                        // confirm icon lines up with them too. The slot is the label's own
+                        // frame: the whole cell takes the click, not the 10pt glyph alone.
+                        .frame(minWidth: 38, maxWidth: 38, maxHeight: .infinity)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                // Same 38pt trailing slot as the pencil / tab bar "+" so the
-                // confirm icon lines up with them too.
-                .frame(width: 38)
                 .help(L("breadcrumb.finishEdit"))
             } else {
                 pathSegments
@@ -90,9 +92,11 @@ struct PanelBreadcrumbBar: View {
                 Image(systemName: "pencil")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+                    // The slot is the label's own frame, so the whole cell is the button.
+                    .frame(minWidth: 38, maxWidth: 38, maxHeight: .infinity)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .frame(width: 38)
         }
     }
 
@@ -279,6 +283,7 @@ private struct BreadcrumbSegment: View {
                 .foregroundStyle(isLast ? .primary : .secondary)
                 .underline(isHovered && !isLast)
                 .lineLimit(1)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering in

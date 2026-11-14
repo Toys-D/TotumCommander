@@ -36,3 +36,96 @@ struct RenameExecutionPlanner {
         return steps
     }
 }
+
+// MARK: - Учёт временных имён по ходу пакета
+
+extension RenameExecutionPlanner {
+
+    /// Следит за пакетом, пока исполнитель идёт по шагам: какой файл сейчас лежит под временным
+    /// именем и какие имена пакет уже занял. Нужен, чтобы после отмены или сбоя ни один файл не
+    /// остался под скрытым `.fcxl-mrt-…`: исполнитель спрашивает `nextStranded()` и возвращает
+    /// файл на первое из свободных имён. Диска не касается — исполнитель сообщает исход шагов.
+    struct Ledger {
+
+        /// Файл, оставшийся на временном имени.
+        struct Stranded: Equatable {
+            /// Где он лежит сейчас.
+            let temp: String
+            /// Как назывался до пакета.
+            let original: String
+            /// Как должен был называться.
+            let final: String
+            /// Куда его можно вернуть, по порядку: сначала прежнее имя, потом новое — те из них,
+            /// что пакет не занял другим файлом.
+            let candidates: [String]
+        }
+
+        private var originalOf: [String: String] = [:]   // временное имя → исходное
+        private var finalOf: [String: String] = [:]      // временное имя → конечное
+        private var onTemp: [String] = []                // на этих временных именах сейчас лежит файл
+        private var missing: Set<String> = []            // эти временные имена так и не появились
+        private var held: Set<String> = []               // имена, занятые файлами пакета (нижний регистр)
+
+        init(steps: [Step]) {
+            // Временное имя — то, куда ведёт один шаг и откуда уходит более поздний.
+            var firstTarget: [String: Int] = [:]
+            for (index, step) in steps.enumerated() where firstTarget[step.to] == nil {
+                firstTarget[step.to] = index
+            }
+            for (index, step) in steps.enumerated() {
+                if let staged = firstTarget[step.from], staged < index {
+                    originalOf[step.from] = steps[staged].from
+                    finalOf[step.from] = step.to
+                }
+            }
+            for step in steps where originalOf[step.from] == nil {
+                held.insert(step.from.lowercased())
+            }
+        }
+
+        /// Шаг выполнять незачем: его источник — временное имя, которое не появилось, потому что
+        /// первый шаг для этого файла не удался (и уже попал в ошибки).
+        func shouldSkip(_ step: Step) -> Bool {
+            missing.contains(step.from)
+        }
+
+        /// Имя файла для сообщений: у шага с временного имени — исходное, а не `.fcxl-mrt-…`.
+        func displayName(for step: Step) -> String {
+            ((originalOf[step.from] ?? step.from) as NSString).lastPathComponent
+        }
+
+        /// Исполнитель сообщает исход шага.
+        mutating func record(_ step: Step, succeeded: Bool) {
+            guard succeeded else {
+                if originalOf[step.to] != nil { missing.insert(step.to) }
+                return
+            }
+            held.remove(step.from.lowercased())
+            held.insert(step.to.lowercased())
+            if originalOf[step.to] != nil { onTemp.append(step.to) }
+            if originalOf[step.from] != nil { onTemp.removeAll { $0 == step.from } }
+        }
+
+        /// Очередной файл, оставшийся на временном имени, либо nil, когда таких нет.
+        func nextStranded() -> Stranded? {
+            guard let temp = onTemp.first, let original = originalOf[temp], let final = finalOf[temp] else {
+                return nil
+            }
+            var candidates: [String] = []
+            for name in [original, final] where !held.contains(name.lowercased()) {
+                if !candidates.contains(where: { $0.lowercased() == name.lowercased() }) { candidates.append(name) }
+            }
+            return Stranded(temp: temp, original: original, final: final, candidates: candidates)
+        }
+
+        /// Файл вернули на одно из имён.
+        mutating func settled(_ stranded: Stranded, at name: String) {
+            record(Step(from: stranded.temp, to: name), succeeded: true)
+        }
+
+        /// Вернуть не вышло — файл остаётся на временном имени, больше о нём не спрашивать.
+        mutating func abandon(_ stranded: Stranded) {
+            onTemp.removeAll { $0 == stranded.temp }
+        }
+    }
+}

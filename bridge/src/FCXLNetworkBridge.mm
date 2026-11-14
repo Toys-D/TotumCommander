@@ -2,8 +2,14 @@
 #include "fcxl/network/ftp_client.h"
 #include "fcxl/network/sftp_client.h"
 #include <memory>
+#include <optional>
 
 using namespace fcxl;
+
+NSString *const FCXLServerKeyStatusKey = @"FCXLServerKeyStatus";
+NSString *const FCXLServerKeyFingerprintKey = @"FCXLServerKeyFingerprint";
+NSString *const FCXLServerKeyTypeKey = @"FCXLServerKeyType";
+NSString *const FCXLServerKeyReasonKey = @"FCXLServerKeyReason";
 
 // MARK: - FCXLRemoteEntry
 
@@ -14,6 +20,24 @@ static NSError* makeError(const common::Error& err) {
     return [NSError errorWithDomain:@"com.fcxl.network"
                                code:static_cast<NSInteger>(err.code)
                            userInfo:@{NSLocalizedDescriptionKey: @(err.message.c_str())}];
+}
+
+/// Ошибка подключения. Если оно остановилось из-за ключа сервера, к ошибке прикладывается
+/// то, что сервер предъявил: по этому верхний слой отличает «сервер не подтверждён» от
+/// обычного отказа сети и показывает человеку отпечаток.
+static NSError* makeConnectError(const common::Error& err,
+                                 const std::optional<network::ServerKeyReport>& key) {
+    if (!key || key->verdict == network::ServerKeyVerdict::Trusted) return makeError(err);
+    NSString* status = key->verdict == network::ServerKeyVerdict::Changed ? @"changed" : @"unknown";
+    return [NSError errorWithDomain:@"com.fcxl.network"
+                               code:static_cast<NSInteger>(err.code)
+                           userInfo:@{
+        NSLocalizedDescriptionKey: @(err.message.c_str()) ?: @"",
+        FCXLServerKeyStatusKey: status,
+        FCXLServerKeyFingerprintKey: @(key->fingerprint.c_str()) ?: @"",
+        FCXLServerKeyTypeKey: @(key->key_type.c_str()) ?: @"",
+        FCXLServerKeyReasonKey: @(key->reason.c_str()) ?: @"",
+    }];
 }
 
 static FCXLRemoteEntry* entryFromFileEntry(const common::FileEntry& e) {
@@ -54,6 +78,7 @@ static FCXLRemoteEntry* entryFromFileEntry(const common::FileEntry& e) {
              password:(NSString *)password
                useTLS:(BOOL)useTLS
           passiveMode:(BOOL)passiveMode
+      pinnedPublicKey:(NSString *)pinnedPublicKey
               timeout:(int)timeout
                 error:(NSError **)error {
     network::ConnectionInfo info;
@@ -63,11 +88,12 @@ static FCXLRemoteEntry* entryFromFileEntry(const common::FileEntry& e) {
     info.password = password.UTF8String ?: "";
     info.use_tls = useTLS;
     info.passive_mode = passiveMode;
+    info.pinned_public_key = pinnedPublicKey.UTF8String ?: "";
     info.timeout_seconds = timeout;
 
     auto result = _client->connect(info);
     if (!result) {
-        if (error) *error = makeError(result.error());
+        if (error) *error = makeConnectError(result.error(), _client->last_server_key());
         return NO;
     }
     return YES;
@@ -196,7 +222,9 @@ static FCXLRemoteEntry* entryFromFileEntry(const common::FileEntry& e) {
 
 - (BOOL)connectToHost:(NSString *)host port:(uint16_t)port
              username:(NSString *)username password:(NSString *)password
-       privateKeyPath:(NSString *)keyPath timeout:(int)timeout
+       privateKeyPath:(NSString *)keyPath
+       trustedHostKey:(NSString *)trustedHostKey
+              timeout:(int)timeout
                 error:(NSError **)error {
     network::SftpConnectionInfo info;
     info.host = host.UTF8String;
@@ -204,9 +232,13 @@ static FCXLRemoteEntry* entryFromFileEntry(const common::FileEntry& e) {
     info.username = username.UTF8String ?: "";
     info.password = password.UTF8String ?: "";
     info.private_key_path = keyPath.UTF8String ?: "";
+    info.trusted_host_key = trustedHostKey.UTF8String ?: "";
     info.timeout_seconds = timeout;
     auto result = _client->connect(info);
-    if (!result) { if (error) *error = makeError(result.error()); return NO; }
+    if (!result) {
+        if (error) *error = makeConnectError(result.error(), _client->last_server_key());
+        return NO;
+    }
     return YES;
 }
 

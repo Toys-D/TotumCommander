@@ -127,9 +127,10 @@ struct OperationQueuePanelContent: View {
             }
             .disabled(!viewModel.operations.contains(where: \.isFinished))
             .buttonStyle(.plain)
-                .focusable(false)
-                .focusEffectDisabled()
+            .focusable(false)
+            .focusEffectDisabled()
             .font(.caption)
+            .contentShape(Rectangle())
             Spacer()
             Text(L("queue.summary", viewModel.operations.count, viewModel.activeCount))
                 .font(.caption)
@@ -142,7 +143,7 @@ struct OperationQueuePanelContent: View {
 
 // MARK: - Operation Row
 
-private struct OperationRowView: View {
+struct OperationRowView: View {
     let operation: QueuedOperation
     let onPause: () -> Void
     let onResume: () -> Void
@@ -255,13 +256,21 @@ private struct OperationRowView: View {
         }
     }
 
+    /// The side of a row button's hit area. The glyph inside is about 10×9 pt, and a flat
+    /// button is pressed only where its label is drawn — so the label gets a frame of this
+    /// size, and a click a couple of points off the glyph still lands on the button.
+    private static let buttonSide: CGFloat = 18
+
     @ViewBuilder
     private var actionButtons: some View {
-        HStack(spacing: 4) {
+        // The frames already keep the glyphs apart; the gap only separates the hit areas.
+        HStack(spacing: 2) {
             if operation.status == .running {
                 Button(action: onPause) {
                     Image(systemName: "pause.fill")
                         .font(.caption2)
+                        .frame(width: Self.buttonSide, height: Self.buttonSide)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
@@ -273,6 +282,8 @@ private struct OperationRowView: View {
                 Button(action: onResume) {
                     Image(systemName: "play.fill")
                         .font(.caption2)
+                        .frame(width: Self.buttonSide, height: Self.buttonSide)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
@@ -285,6 +296,8 @@ private struct OperationRowView: View {
                     Image(systemName: "xmark")
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                        .frame(width: Self.buttonSide, height: Self.buttonSide)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
@@ -298,6 +311,8 @@ private struct OperationRowView: View {
                 Button(action: onContinue) {
                     Image(systemName: "arrow.clockwise")
                         .font(.caption2)
+                        .frame(width: Self.buttonSide, height: Self.buttonSide)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
@@ -310,6 +325,8 @@ private struct OperationRowView: View {
                     Image(systemName: "xmark")
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                        .frame(width: Self.buttonSide, height: Self.buttonSide)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .focusable(false)

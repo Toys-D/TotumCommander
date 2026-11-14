@@ -682,8 +682,8 @@
 "editor.saveAs.confirmTitle" = "Save as";
 "editor.saveAs.confirmMessage" = "Save changes to a new file?";
 "editor.error.saveTitle" = "Save error";
-"editor.error.encodeUtf8" = "Failed to encode text as UTF-8";
-"editor.error.readOnly" = "This file can't be decoded as text and is open read-only.";
+"editor.error.encode" = "The text contains characters that %@ cannot represent. The file was not saved.";
+"editor.error.readOnly" = "This file can't be read as text without loss and is open read-only.";
 "editor.save.tooltip" = "Save (Cmd+S)";
 "editor.rtf.bold" = "Bold";
 "editor.rtf.italic" = "Italic";
@@ -774,6 +774,12 @@
 "copy.selectFolder" = "Select destination folder";
 "copy.errorTitle" = "Copy error";
 "transfer.partialFailure" = "%d file(s) could not be copied, the rest were copied:";
+"copy.notCopiedOne" = "Not copied: “%@” — %@";
+"copy.notCopiedMany" = "%d items were not copied. The first: “%@” — %@";
+"move.sourceNotRemoved" = "The copy is in place, but the source was not fully removed: %@";
+"replace.keptOriginal" = "Could not replace; the existing item was left in place: %@";
+"replace.oldNotRemoved" = "Replaced, but the previous “%1$@” was not fully removed — what is left of it is named “%2$@”: %3$@";
+"replace.oldLeftAside" = "Could not replace; the previous “%1$@” is now named “%2$@”: %3$@";
 "button.copy" = "Copy";
 "move.title" = "Move %d item(s)";
 "move.description" = "Select destination folder for moving.";
@@ -812,6 +818,8 @@
 
 /* === Operation queue: archive kinds === */
 "queue.packSingle" = "Packing %@";
+"queue.pack.removingSources" = "Removing the source files…";
+"queue.pack.sourcesNotRemoved" = "The archive was created, but the source files were not removed: %@";
 "queue.unpackSingle" = "Unpacking %@";
 "queue.unpackMultiple" = "Unpacking %d archives";
 "queue.archiveDeleteSingle" = "Deleting from archive %@";
@@ -921,6 +929,24 @@
 "network.login.refusedWithReason" = "The server did not accept the name or password.\n%@";
 "network.login.dropped" = "The server cut the connection right after the password. That is how a wrong password is answered — and also how a server that has temporarily blocked your address after several failed attempts behaves.";
 "network.login.retryTitle" = "Login failed";
+"network.serverKey.unknown.title" = "Unknown server";
+"network.serverKey.changed.title" = "The server’s key has changed";
+"network.serverKey.trust" = "Trust";
+"network.serverKey.trustNew" = "Trust the new key";
+"network.serverKey.fingerprint.typed" = "Key fingerprint (%1$@):\n%2$@";
+"network.serverKey.fingerprint.plain" = "Key fingerprint:\n%@";
+"network.serverKey.fingerprint.certificate" = "Fingerprint of the certificate’s public key:\n%@";
+"network.serverKey.unknown.question" = "The app has not connected to the server “%1$@” before and cannot check by itself that it is really the one answering.\n\n%2$@\n\nCompare the fingerprint with the one the server’s administrator gave you. Until you agree, neither the name nor the password is sent to the server.";
+"network.serverKey.unknown.certificateQuestion" = "The app cannot make sure by itself that it is really the server “%1$@” answering: %2$@.\n\n%3$@\n\nIf this is your server and you know why, compare the fingerprint and confirm — from then on the app will recognise the server by this key. Until you agree, neither the name nor the password is sent to the server.";
+"network.serverKey.changed.question" = "The server “%1$@” presented a key different from the one confirmed earlier. This happens after a server is reinstalled or its certificate replaced — and an attempt to intercept the connection looks exactly the same.\n\n%2$@\n\nThe name and password were not sent. Trust the new key only if you know why it changed.";
+"network.serverKey.unknown.error" = "This server has not been confirmed yet, so neither the name nor the password was sent to it. Open the connection again — the app will show the key fingerprint and ask whether to trust the server.\nKey fingerprint: %@";
+"network.serverKey.changed.error" = "The server’s key is not the one confirmed earlier: the server was reinstalled — or the connection is being intercepted. The name and password were not sent. Open the connection again to check the new key.\nKey fingerprint: %@";
+"network.serverKey.reason.selfSigned" = "the certificate is self-signed";
+"network.serverKey.reason.expired" = "the certificate has expired";
+"network.serverKey.reason.notYetValid" = "the certificate is not valid yet";
+"network.serverKey.reason.wrongName" = "the certificate was issued for a different name";
+"network.serverKey.reason.unknownIssuer" = "the certificate was issued by an unknown authority";
+"network.serverKey.reason.generic" = "the certificate did not pass verification";
 "network.browse.searching" = "Looking for computers…";
 "settings.keys.sound.relogin" = "The shortcut list is changed, but the system did not re-read it just now: the keys come free after you log out and back in.";
 "network.browse.nobody" = "No computers found";
@@ -1039,6 +1065,7 @@
 "mrt.column.new" = "New name";
 "mrt.issue.duplicate" = "Two files would get this name";
 "mrt.issue.collides" = "A file with this name already exists";
+"mrt.error.leftOnTemp" = "“%1$@” was left under the temporary name “%2$@”: both its old and new names are taken";
 "mrt.issue.empty" = "The name is empty";
 "mrt.issue.illegal" = "The name contains an illegal character";
 "mrt.issue.absolute" = "Absolute paths are not allowed";
@@ -1155,6 +1182,8 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "common.save" = "Save";
 "context.openWith" = "Open With…";
 "context.openWith.other" = "Other…";
+"context.openWith.nested" = "Open With";
+"context.openWith.default" = "%@ (default)";
 "context.openWith.always" = "Always open %@ in";
 "openWith.always.noType" = "This file has no extension, so there is no kind to bind.";
 "context.openWith.select" = "Choose Application";
@@ -1291,7 +1320,7 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "volume.iface.diskImage" = "Disk image (%@)";
 "volume.iface.diskImage.mode" = "Lives on the computer's own disk — read in one go, folder watching on.";
 "volume.iface.external.mode" = "Power saving — external drive. Folder sizes are off, metadata on demand";
-"editor.status.initial" = "Ln 1, Col 1  |  UTF-8";
+"editor.status.initial" = "Ln 1, Col 1";
 "editor.status.position" = "Ln %d, Col %d  |  Lines: %d";
 "editor.status.selection" = "Sel: %d";
 "editor.toolbar.find" = "Find";
@@ -1567,6 +1596,7 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "updates.stage.installing" = "Installing…";
 "updates.stage.relaunching" = "Relaunching…";
 "updates.retry" = "Try again";
+"updates.previousVersion" = "previous version";
 "updates.error.assets" = "The release has no image or no checksum file — download it from the release page.";
 "updates.error.hash" = "The downloaded image's checksum does not match the published one — installation cancelled, the app is untouched.";
 "updates.error.image" = "No app was found inside the image — download it from the release page.";
@@ -2031,6 +2061,7 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "undo.reason.folderNotEmpty" = "the folder is no longer empty (%d inside) — what you put there must not ride into the bin with an undo of creating it";
 "undo.reason.fileNotEmpty" = "the file is no longer empty — what was typed into it must not ride into the bin with an undo of creating it";
 "undo.retryHint" = "The undo is not lost: clear the obstacle and press ⌘Z again — only what is left will be done.";
+"undo.progress.back" = "Moving files back";
 "fkeys.takenTitle" = "Some F-keys are intercepted";
 "fkeys.takenMessage" = "The keys %@ are held by another program as global hotkeys — the system hands them to it, and they never reach Totum Commander at all.
 

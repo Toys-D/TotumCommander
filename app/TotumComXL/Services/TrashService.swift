@@ -55,7 +55,8 @@ enum TrashService {
         /// The name it had before deletion, when that is known — otherwise its name in the Trash,
         /// which macOS may have suffixed with a timestamp to avoid a collision.
         let displayName: String
-        /// Absolute folder it was deleted from, or nil when the record is gone.
+        /// Absolute folder it was deleted from, or nil when the record is gone or cannot be
+        /// trusted.
         let originalFolder: String?
         let deletedAt: Date?
         let isDirectory: Bool
@@ -116,9 +117,13 @@ enum TrashService {
 
     // MARK: - Listing
 
-    static func entries() -> [Entry] {
+    static func entries() -> [Entry] { entries(in: trashFolders()) }
+
+    /// То же по названным папкам корзины. Отдельно — чтобы запись, собранную руками, можно было
+    /// показать программе: в корзине настоящего диска самодельный `.DS_Store` система стирает.
+    static func entries(in folders: [URL]) -> [Entry] {
         var result: [Entry] = []
-        for folder in trashFolders() {
+        for folder in folders {
             let putBack = PutBackIndex.parse(folder.appendingPathComponent(".DS_Store"))
             let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey,
                                           .addedToDirectoryDateKey, .totalFileAllocatedSizeKey]
@@ -131,7 +136,7 @@ enum TrashService {
                 result.append(Entry(
                     url: url,
                     displayName: record?.name ?? url.lastPathComponent,
-                    originalFolder: record.map { "/" + $0.folder.trimmingSlashes() },
+                    originalFolder: record.flatMap { originalFolder(of: $0, inTrash: folder) },
                     deletedAt: values?.addedToDirectoryDate,
                     isDirectory: values?.isDirectory ?? false,
                     size: UInt64(values?.fileSize ?? 0)))
@@ -169,7 +174,29 @@ enum TrashService {
         let url = URL(fileURLWithPath: path)
         let folder = url.deletingLastPathComponent()
         let record = PutBackIndex.parse(folder.appendingPathComponent(".DS_Store"))[url.lastPathComponent]
-        return record.map { "/" + $0.folder.trimmingSlashes() }
+        return record.flatMap { originalFolder(of: $0, inTrash: folder) }
+    }
+
+    /// Корень диска, которому принадлежит папка корзины.
+    ///
+    /// Запись возврата хранит путь не от «/», а от корня своего диска. У корзины дома это одно
+    /// и то же; у корзины внешнего диска (`<диск>/.Trashes/<uid>`) — нет, и файл с флешки,
+    /// возвращённый «от корня», уезжал на загрузочный диск или не возвращался вовсе.
+    static func volumeRoot(ofTrashFolder folder: URL) -> String {
+        let trashes = folder.deletingLastPathComponent()
+        guard trashes.lastPathComponent == ".Trashes" else { return "/" }
+        // По ссылкам — до настоящего места: «/Volumes/Macintosh HD» ведёт на «/».
+        return trashes.deletingLastPathComponent().resolvingSymlinksInPath().path
+    }
+
+    /// Папка, из которой файл попал в корзину `folder`, полным путём.
+    ///
+    /// nil — записи верить нельзя: через «..» она выводит за пределы своего диска. Запись лежит
+    /// на самом диске, а диск бывает чужой; сама система таких не пишет.
+    static func originalFolder(of record: PutBackIndex.Record, inTrash folder: URL) -> String? {
+        let relative = record.folder.trimmingSlashes()
+        guard !relative.split(separator: "/").contains("..") else { return nil }
+        return (volumeRoot(ofTrashFolder: folder) as NSString).appendingPathComponent(relative)
     }
 
     // MARK: - Restore
@@ -274,10 +301,16 @@ enum PutBackIndex {
         for (key, folder) in folders {
             // A record needs both halves: a folder without a name cannot say what to call the
             // restored file, and macOS always writes the pair.
-            guard let name = names[key] else { continue }
+            guard let name = names[key], isPlainName(name) else { continue }
             result[key] = Record(folder: folder, name: name)
         }
         return result
+    }
+
+    /// Имя — одно звено пути. С «/» или «..» внутри оно увело бы возвращаемый файл из папки,
+    /// которую запись сама же называет; система таких имён не пишет.
+    private static func isPlainName(_ name: String) -> Bool {
+        !name.contains("/") && name != "." && name != ".."
     }
 
     // MARK: - Primitives
@@ -341,8 +374,8 @@ private extension Data {
 }
 
 private extension String {
-    /// "Users/dimas/Documents/" → "Users/dimas/Documents". The records carry a trailing slash and
-    /// no leading one; callers want a plain absolute path.
+    /// "Users/dimas/Documents/" → "Users/dimas/Documents". The records carry a trailing slash;
+    /// the home Trash writes no leading one, an external disk's Trash does ("/Photos/2024/").
     func trimmingSlashes() -> String {
         var text = self
         while text.hasSuffix("/") { text.removeLast() }

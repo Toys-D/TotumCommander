@@ -236,15 +236,7 @@ enum VaultService {
             // quietly quits on its own once its windows are gone, so without the guard a
             // vault lock could resurrect it with an empty open-file dialog. Asking for the
             // `running` property is documented NOT to launch.
-            let script = """
-            if running of application id "\(bundleID)" then
-                with timeout of 5 seconds
-                    tell application id "\(bundleID)"
-                        close (every document whose path begins with "\(mountPoint)") saving no
-                    end tell
-                end timeout
-            end if
-            """
+            let script = closeDocumentsScript(bundleID: bundleID, mountPoint: mountPoint)
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             process.arguments = ["-e", script]
@@ -253,6 +245,31 @@ enum VaultService {
             try? process.run()
             process.waitUntilExit()
         }
+    }
+
+    /// The script that asks one program to close its documents under `mountPoint`.
+    static func closeDocumentsScript(bundleID: String, mountPoint: String) -> String {
+        let program = appleScriptLiteral(bundleID)
+        let prefix = appleScriptLiteral(mountPoint)
+        return """
+        if running of application id \(program) then
+            with timeout of 5 seconds
+                tell application id \(program)
+                    close (every document whose path begins with \(prefix)) saving no
+                end tell
+            end timeout
+        end if
+        """
+    }
+
+    /// `text` as an AppleScript string literal. A backslash and a quote are the only two
+    /// characters that mean anything inside one; left as they are, a quote in a vault's name
+    /// ends the string early and the script no longer compiles — the documents stay open.
+    static func appleScriptLiteral(_ text: String) -> String {
+        let escaped = text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
     }
 
     /// Mount points of the vaults opened THIS session, keyed by the volume path. What lets a

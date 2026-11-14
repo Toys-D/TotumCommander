@@ -121,6 +121,7 @@ struct SystemMonitorView: View {
                 if let p = selectedProcess { service.terminate(pid: p.pid, force: false); onRestoreFocus?() }
             } label: {
                 Image(systemName: "xmark.circle").font(.system(size: 15))
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(selectedProcess == nil)
@@ -129,6 +130,7 @@ struct SystemMonitorView: View {
             // Inspect selected process.
             Button { showInspector.toggle() } label: {
                 Image(systemName: "info.circle").font(.system(size: 15))
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(selectedProcess == nil)
@@ -213,7 +215,10 @@ struct SystemMonitorView: View {
             if !service.searchText.isEmpty {
                 Button { service.searchText = "" } label: {
                     Image(systemName: "xmark.circle.fill").font(.system(size: 11))
-                }.buttonStyle(.plain).foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 7).padding(.vertical, 4)

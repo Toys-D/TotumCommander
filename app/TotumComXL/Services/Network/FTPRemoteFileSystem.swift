@@ -7,6 +7,7 @@ import FCXLBridgeObjC
 final class FTPRemoteFileSystem: RemoteFileSystemProtocol {
     private let connection: RemoteConnection
     private let password: String
+    private let trust: ServerTrustStore
     private let bridge = FCXLFTPBridge()
     private(set) var isConnected: Bool = false
 
@@ -16,9 +17,10 @@ final class FTPRemoteFileSystem: RemoteFileSystemProtocol {
     var protocolDisplayName: String { connection.proto == .ftps ? "FTPS" : "FTP" }
     var rootPath: String { connection.initialPath.isEmpty ? "/" : connection.initialPath }
 
-    init(connection: RemoteConnection, password: String) {
+    init(connection: RemoteConnection, password: String, trust: ServerTrustStore = .shared) {
         self.connection = connection
         self.password = password
+        self.trust = trust
     }
 
     func connect() async throws {
@@ -32,6 +34,7 @@ final class FTPRemoteFileSystem: RemoteFileSystemProtocol {
                         password: password,
                         useTLS: connection.proto == .ftps,
                         passiveMode: connection.passiveMode,
+                        pinnedPublicKey: trust.trustedKey(for: connection),
                         timeout: 10
                     )
                     self.isConnected = true

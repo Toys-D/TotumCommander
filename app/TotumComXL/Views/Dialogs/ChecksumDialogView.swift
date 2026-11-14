@@ -138,6 +138,7 @@ struct ChecksumDialogView: View {
                             } label: {
                                 Image(systemName: copiedPath == r.path ? "checkmark" : "doc.on.doc")
                                     .font(.system(size: 12))
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .help(L("checksum.copy"))

@@ -501,6 +501,7 @@ private struct ConnectionEditorView: View {
             } label: {
                 Image(systemName: showPassword ? "eye" : "eye.slash")
                     .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }

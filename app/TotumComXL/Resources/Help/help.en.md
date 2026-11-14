@@ -347,6 +347,7 @@ The command "Tools ▸ Uninstall the program…" or F8 on a single `.app` (or th
 - **Send to** — the system share sheet (AirDrop, Mail, Telegram…). SVG for Telegram is packed.
 - **Print** (⌥⌘P, "File ▸ Print…", the context menu; a "Print" button in the F3 viewer and in the editors) — the system print dialog: printer, copies, pages, two-sided printing, paper, preview. Selected files are printed as one job, one after another: PDFs, pictures, text and code, Markdown formatted, Word, RTF, OpenDocument and HTML, DjVu scans, EPS and PostScript. An editor prints its text as it is, with unsaved changes; the viewer prints text in the chosen encoding, and HTML as a page. Whatever could not be prepared is named before the print dialog.
 - **Open With…** — choose a program with an "Always open this way" checkbox (the rule changes for the whole Mac, like in Finder).
+- **Open With ▸** — with ⇧: right-click while holding Shift and you get a submenu of the programs for this file instead of the window, the default one first; "Other…" at the end opens the chooser window.
 - **Show in Finder**, **Open in Terminal** (the external terminal is chosen in settings), **Copy file path**, **Copy path**.
 
 

@@ -117,6 +117,71 @@ final class ViewerButtonsTests: XCTestCase {
         XCTAssertGreaterThan(listener.connections, 0)
     }
 
+    /// Книга — та же страница: её скрипты работают, листание отчитывается, а в сеть глава не
+    /// ходит — ни картинкой, ни стилем, ни запросом из кода.
+    func test_книгаЛистаетсяНоВСетьНеХодит() async throws {
+        let listener = try LoopbackCounter()
+        defer { listener.stop() }
+        try await listener.ready()
+        let book = try makeBook(port: listener.port)
+
+        let storeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fcxl-rules-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        HTMLNetworkBlock.makeStore = { WKContentRuleListStore(url: storeDir) }
+
+        let reports = ReaderReports()
+        let reader = BookReaderView(document: book, state: .constant(BookReaderState()),
+                                    onStateChange: { reports.states.append($0) })
+        let coordinator = reader.makeCoordinator()
+        let web = BookReaderView.makeWebView(coordinator: coordinator, scrolling: true)
+        let window = hostWindow(for: web)
+        defer {
+            BookReaderView.dismantleNSView(web, coordinator: coordinator)
+            window.close()
+        }
+        coordinator.load(chapter: 0, document: book, startAt: nil)
+
+        let ran = await waitForTitle("ran", in: web)
+        XCTAssertTrue(ran, "скрипт главы не выполнился — книга показана без скриптов")
+        await settle { !reports.states.isEmpty }
+        XCTAssertFalse(reports.states.isEmpty, "листание не отчиталось о страницах")
+        try await Task.sleep(nanoseconds: 800_000_000)
+        XCTAssertEqual(listener.connections, 0, "книга достучалась до сети")
+    }
+
+    /// Правила не собрались — скрипты книги выключены, как у просмотра HTML: код книги не
+    /// работает там, где сеть ему открыта. Листание — код программы, оно остаётся.
+    func test_книгаБезПравилЧитаетсяБезСвоихСкриптов() async throws {
+        let listener = try LoopbackCounter()
+        defer { listener.stop() }
+        try await listener.ready()
+        let book = try makeBook(port: listener.port)
+
+        let reports = ReaderReports()
+        let reader = BookReaderView(document: book, state: .constant(BookReaderState()),
+                                    onStateChange: { reports.states.append($0) })
+        let coordinator = reader.makeCoordinator()
+        coordinator.networkRules = { done in done(nil) }
+        let web = BookReaderView.makeWebView(coordinator: coordinator, scrolling: true)
+        let window = hostWindow(for: web)
+        defer {
+            BookReaderView.dismantleNSView(web, coordinator: coordinator)
+            window.close()
+        }
+        // Место в книге запоминается со слов её страницы — значит, и оно может оказаться
+        // кодом: такая «закладка» выполняться не должна.
+        let forged = ReaderLocation(page: 0, chapter: 0,
+                                    anchor: "\\'); document.title = String.fromCharCode(112); //")
+        coordinator.load(chapter: 0, document: book, startAt: forged)
+
+        await settle { !reports.states.isEmpty }
+        XCTAssertFalse(reports.states.isEmpty, "листанию скрипты книги не нужны — оно должно отчитаться")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(web.title, "wait", "сеть не закрыта, а код книги выполнился")
+    }
+
     /// Ссылку открывает только щелчок человека: та, что «нажал» код страницы, никуда не ведёт,
     /// иначе любой html мог бы сам открывать браузер, пока на нём стоит курсор.
     func test_ссылкуОткрываетЩелчокАНеСкрипт() async throws {
@@ -154,19 +219,168 @@ final class ViewerButtonsTests: XCTestCase {
         XCTAssertEqual(opened, [], "ссылку «нажал» скрипт — наружу ничего не ушло")
 
         // Настоящий щелчок мышью посреди второй ссылки.
-        let point = web.convert(NSPoint(x: 100, y: 140), to: nil)
-        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            let event = try XCTUnwrap(NSEvent.mouseEvent(
-                with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-            // Прямо виду: окно теста не на экране и не главное, и первый щелчок окно
-            // забрало бы себе — сделать себя ключевым.
-            if type == .leftMouseDown { web.mouseDown(with: event) } else { web.mouseUp(with: event) }
-        }
+        try click(web, in: window, at: NSPoint(x: 100, y: 140))
         for _ in 0..<40 where opened.isEmpty {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         XCTAssertEqual(opened, ["by-hand.txt"], "щелчок человека открывает ссылку")
+    }
+
+    // MARK: - HTML: куда ведёт ссылка
+
+    /// Файл по ссылке наружу не уходит — ни программа, ни скрипт, ни документ: вести ссылка
+    /// может на любой файл диска, а написано на ней может быть что угодно.
+    func test_ссылкаНаФайлНеОткрываетсяАПоказываетсяВПанели() {
+        let links = ["file:///Applications/Calculator.app/": "/Applications/Calculator.app",
+                     "file:///tmp/%D1%81%D1%82%D1%80/run.command": "/tmp/стр/run.command",
+                     "file:///tmp/docs/../notes.txt#part": "/tmp/notes.txt",
+                     "FILE:///tmp/UP.TXT": "/tmp/UP.TXT",
+                     "file://localhost/tmp/a.txt": "/tmp/a.txt"]
+        for (link, path) in links {
+            XCTAssertEqual(HTMLPage.linkAction(for: URL(string: link)!), .showInPanel(path: path), link)
+        }
+    }
+
+    func test_наружуТолькоСетьИПочта() {
+        for link in ["http://example.com/a", "HTTPS://example.com/", "mailto:a@example.com"] {
+            let url = URL(string: link)!
+            XCTAssertEqual(HTMLPage.linkAction(for: url), .openOutside(url), link)
+        }
+        // Чужие схемы запускают программы и их команды; файл на чужой машине — не файл панели.
+        for link in ["x-apple.systempreferences:com.apple.preference.security", "ssh://example.com",
+                     "smb://example.com/share", "vnc://example.com", "tel:112", "javascript:alert(1)",
+                     "ftp://example.com/f", "file://example.com/share/f.txt", "about:blank",
+                     "data:text/plain,x"] {
+            XCTAssertEqual(HTMLPage.linkAction(for: URL(string: link)!), .nothing, link)
+        }
+    }
+
+    /// Ссылка на соседний файл: курсор панели встаёт на него (просмотр идёт за курсором и
+    /// покажет его сам), и ничем он не открывается — даже если это скрипт.
+    func test_ссылкаНаСоседаСтавитНаНегоКурсор() async throws {
+        let folder = try linkFolder()
+        let vm = try await panel(at: folder, cursorOn: "страница.html")
+        var outside: [URL] = []
+
+        HTMLPage.follow(URL(fileURLWithPath: folder + "/запуск.command"), in: vm) { outside.append($0) }
+
+        XCTAssertEqual(vm.cursorItem?.name, "запуск.command")
+        XCTAssertEqual(vm.currentPath, folder)
+        XCTAssertEqual(outside, [], "файл по ссылке ничем не открывается")
+    }
+
+    func test_ссылкаВДругуюПапкуВедётПанельТуда() async throws {
+        let folder = try linkFolder()
+        let vm = try await panel(at: folder, cursorOn: "страница.html")
+        var outside: [URL] = []
+
+        HTMLPage.follow(URL(fileURLWithPath: folder + "/глава/вторая.html"), in: vm) { outside.append($0) }
+        await settle { vm.cursorItem?.name == "вторая.html" }
+
+        XCTAssertEqual(vm.currentPath, folder + "/глава")
+        XCTAssertEqual(vm.cursorItem?.name, "вторая.html")
+        XCTAssertEqual(outside, [])
+    }
+
+    /// Диск обычно не различает регистр: ссылка «СОСЕД.TXT» ведёт к файлу «сосед.txt», и
+    /// курсор должен встать на него же — в своей папке и в чужой.
+    func test_ссылкаВДругомРегистреНаходитТотЖеФайл() async throws {
+        let folder = try linkFolder()
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: folder + "/СОСЕД.TXT"),
+                          "том различает регистр")
+        let vm = try await panel(at: folder, cursorOn: "страница.html")
+
+        HTMLPage.follow(URL(fileURLWithPath: folder + "/СОСЕД.TXT"), in: vm) { _ in }
+        XCTAssertEqual(vm.cursorItem?.name, "сосед.txt")
+
+        HTMLPage.follow(URL(fileURLWithPath: folder + "/глава/ВТОРАЯ.HTML"), in: vm) { _ in }
+        await settle { vm.cursorItem?.name == "вторая.html" }
+        XCTAssertEqual(vm.cursorItem?.name, "вторая.html")
+        XCTAssertEqual(vm.currentPath, folder + "/глава")
+    }
+
+    /// Ссылка в никуда и ссылка на файл, который панель по своим настройкам не показывает,
+    /// панель не трогают: курсор остаётся на странице.
+    func test_ссылкаНаТоЧегоВПанелиНетНичегоНеМеняет() async throws {
+        let folder = try linkFolder()
+        let vm = try await panel(at: folder, cursorOn: "страница.html")
+        var outside: [URL] = []
+
+        for name in ["нет-такого.txt", "нет-папки/файл.txt", ".скрытый.txt"] {
+            HTMLPage.follow(URL(fileURLWithPath: folder + "/" + name), in: vm) { outside.append($0) }
+            try await Task.sleep(nanoseconds: 400_000_000)
+            XCTAssertEqual(vm.currentPath, folder, name)
+            XCTAssertEqual(vm.cursorItem?.name, "страница.html", name)
+        }
+        XCTAssertEqual(outside, [])
+    }
+
+    /// В архиве и на сервере страница — временная копия: её адреса ведут во временную папку,
+    /// и панель туда не уходит.
+    func test_страницаИзАрхиваИССервераПанельНеУводит() async throws {
+        let folder = try linkFolder()
+        for place in ["архив", "сервер"] {
+            let vm = try await panel(at: folder, cursorOn: "страница.html")
+            if place == "архив" { vm.insideArchive = true } else { vm.isActivelyRemote = true }
+            var outside: [URL] = []
+
+            for name in ["сосед.txt", "глава/вторая.html"] {
+                HTMLPage.follow(URL(fileURLWithPath: folder + "/" + name), in: vm) { outside.append($0) }
+            }
+            try await Task.sleep(nanoseconds: 300_000_000)
+
+            XCTAssertEqual(vm.cursorItem?.name, "страница.html", place)
+            XCTAssertEqual(vm.currentPath, folder, place)
+            XCTAssertEqual(outside, [], place)
+            vm.insideArchive = false
+            vm.isActivelyRemote = false
+        }
+    }
+
+    func test_адресВСетиУходитНаружуАПанельНеТрогает() async throws {
+        let folder = try linkFolder()
+        let vm = try await panel(at: folder, cursorOn: "страница.html")
+        var outside: [URL] = []
+        let site = URL(string: "https://example.com/doc")!
+
+        HTMLPage.follow(site, in: vm) { outside.append($0) }
+        HTMLPage.follow(URL(string: "ssh://example.com")!, in: vm) { outside.append($0) }
+
+        XCTAssertEqual(outside, [site])
+        XCTAssertEqual(vm.cursorItem?.name, "страница.html")
+    }
+
+    /// То же целиком: настоящий щелчок по ссылке на скрипт рядом со страницей. Адрес ссылки
+    /// приходит от WebKit, и найти файл в панели надо именно по нему.
+    func test_щелчокПоСсылкеНаСкриптТолькоСтавитКурсор() async throws {
+        let folder = try linkFolder()
+        let html = """
+        <!doctype html><html><head><meta charset="utf-8"><title>ready</title></head>
+        <body style="margin:0">
+        <a href="запуск.command" style="display:block;height:400px;background:#ccc">Открыть отчёт</a>
+        </body></html>
+        """
+        try html.write(toFile: folder + "/страница.html", atomically: true, encoding: .utf8)
+        let vm = try await panel(at: folder, cursorOn: "страница.html")
+        var outside: [URL] = []
+
+        let coordinator = HTMLPagePreview.Coordinator(scroll: ScrollJumpController(), openLink: { url in
+            MainActor.assumeIsolated { HTMLPage.follow(url, in: vm) { outside.append($0) } }
+        })
+        let web = HTMLPagePreview.makeWebView(coordinator: coordinator, zoom: nil)
+        let window = hostWindow(for: web)
+        defer { window.close() }
+        coordinator.load(URL(fileURLWithPath: folder + "/страница.html"))
+        let ready = await waitForTitle("ready", in: web)
+        XCTAssertTrue(ready)
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        try click(web, in: window, at: NSPoint(x: 100, y: 200))
+        await settle { vm.cursorItem?.name == "запуск.command" || !outside.isEmpty }
+
+        XCTAssertEqual(vm.cursorItem?.name, "запуск.command", "курсор встал на файл по ссылке")
+        XCTAssertEqual(vm.currentPath, folder, "панель осталась в своей папке")
+        XCTAssertEqual(outside, [], "скрипт по ссылке ничем не открывается")
     }
 
     // MARK: - «В конец»
@@ -236,6 +450,53 @@ final class ViewerButtonsTests: XCTestCase {
         return window
     }
 
+    /// Настоящий щелчок мышью по точке веб-вида. Прямо виду: окно теста не на экране и не
+    /// главное, и первый щелчок окно забрало бы себе — сделать себя ключевым.
+    private func click(_ web: PageWebView, in window: NSWindow, at spot: NSPoint) throws {
+        let point = web.convert(spot, to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            if type == .leftMouseDown { web.mouseDown(with: event) } else { web.mouseUp(with: event) }
+        }
+    }
+
+    /// Папка со страницей и тем, на что она может сослаться.
+    private func linkFolder() throws -> String {
+        let folder = NSTemporaryDirectory() + "fcxl-ссылки-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: folder + "/глава", withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: folder) }
+        for name in ["страница.html", "запуск.command", "сосед.txt", ".скрытый.txt", "глава/вторая.html"] {
+            XCTAssertTrue(FileManager.default.createFile(atPath: folder + "/" + name, contents: Data("x".utf8)))
+        }
+        return folder
+    }
+
+    /// Панель, открытая в папке, с курсором на названном файле.
+    private func panel(at folder: String, cursorOn name: String) async throws -> PanelViewModel {
+        let id = UUID().uuidString
+        let vm = PanelViewModel(service: CoreBridgeService(), initialPath: folder,
+                                pathDefaultsKey: "panel.path.htmllink.\(id)",
+                                viewModeDefaultsKey: "panel.mode.htmllink.\(id)",
+                                showHiddenFiles: false)
+        // Раньше, чем уберут папку: живая панель на стёртой папке ушла бы искать ближайшую живую.
+        addTeardownBlock { [weak vm] in MainActor.assumeIsolated { vm?.stopWatching() } }
+        vm.loadDirectory(at: folder)
+        await settle { vm.items.contains { $0.name == name } }
+        // Второй проход чтения (подробности) тоже должен успеть прийти.
+        try await Task.sleep(nanoseconds: 400_000_000)
+        vm.setCursor(index: try XCTUnwrap(vm.items.firstIndex { $0.name == name }))
+        return vm
+    }
+
+    private func settle(_ condition: () -> Bool) async {
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline, !condition() {
+            try? await Task.sleep(nanoseconds: 30_000_000)
+        }
+    }
+
     private func makePage(port: UInt16) throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("fcxl-page-\(UUID().uuidString)")
@@ -256,6 +517,32 @@ final class ViewerButtonsTests: XCTestCase {
         return url
     }
 
+    /// Книга из одной главы, которая тянется в сеть всем, чем может.
+    private func makeBook(port: UInt16) throws -> BookDocument {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fcxl-book-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let html = """
+        <!doctype html><html><head><title>wait</title>
+        <link rel="stylesheet" href="http://127.0.0.1:\(port)/style.css">
+        </head><body>
+        <p>Глава первая.</p>
+        <img src="http://127.0.0.1:\(port)/pixel.png">
+        <script>
+          fetch('http://127.0.0.1:\(port)/fetch').catch(function () {});
+          document.title = 'ran';
+        </script>
+        </body></html>
+        """
+        let file = dir.appendingPathComponent("chapter1.html")
+        try html.write(to: file, atomically: true, encoding: .utf8)
+        return BookDocument(sourcePath: dir.appendingPathComponent("book.epub").path, format: .epub,
+                            root: dir, title: "Книга", author: "", cover: nil,
+                            chapters: [BookChapter(id: "c1", title: "Глава", file: file,
+                                                   fragment: nil, level: 0)])
+    }
+
     private func waitForTitle(_ title: String, in web: WKWebView) async -> Bool {
         for _ in 0..<100 {
             if web.title == title { return true }
@@ -263,6 +550,11 @@ final class ViewerButtonsTests: XCTestCase {
         }
         return false
     }
+}
+
+/// Что читалка сообщила наружу о страницах.
+private final class ReaderReports {
+    var states: [BookReaderState] = []
 }
 
 /// Слушает 127.0.0.1 и считает подключения — чтобы увидеть, ходила ли страница в сеть.

@@ -33,11 +33,12 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
         var content: String = ""
         var lastSaved: String = ""
         var language: String = "plaintext"
-        /// Encoding the file was decoded with, so a save writes it back in the same encoding
-        /// instead of silently converting everything to UTF-8.
-        var encoding: String.Encoding = .utf8
-        /// Set when the bytes couldn't be decoded to text — saving must be blocked so the
-        /// "(Cannot decode file)" placeholder never overwrites the real file.
+        /// How the file's bytes were written — encoding and byte-order mark — so a save writes
+        /// it back the same way instead of silently converting everything to UTF-8.
+        var encoding: TextFileEncoding = .utf8
+        /// Set when a save couldn't write the file's own bytes back: it didn't load, or its
+        /// text is damaged under a byte-order mark. The file is shown as it reads, with "�"
+        /// where it's broken, and saving is blocked so the shown text never overwrites it.
         var isReadOnly: Bool = false
         /// For a file opened from an archive: true once its temp copy has been saved and thus
         /// differs from the archive. Drives the "update archive?" prompt on close (TC-style).
@@ -163,8 +164,8 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
             guard let self else { return }
             var s = L("editor.status.position", line, col, total)
             if selLen > 0 { s += "  |  " + L("editor.status.selection", selLen) }
-            s += "  |  UTF-8"
-            self.statusLabel?.stringValue = s
+            self.cursorStatus = s
+            self.refreshStatus()
         }
 
         monaco.onDirtyChanged = { [weak self] dirty in
@@ -222,6 +223,26 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
 
     // MARK: - File Loading
 
+    /// Кодировка открытой вкладки — для строки состояния.
+    private var activeEncodingName: String {
+        (activeTabIndex < tabs.count ? tabs[activeTabIndex].encoding : .utf8).name
+    }
+
+    /// Место курсора в строке состояния — последнее, что сообщил редактор.
+    private var cursorStatus = L("editor.status.initial")
+
+    /// Строка состояния: место курсора и кодировка открытой вкладки.
+    private func refreshStatus() {
+        statusLabel?.stringValue = cursorStatus + "  |  " + activeEncodingName
+    }
+
+    /// В редактор положен другой текст: курсор в начале, кодировка — открытой вкладки. Редактор
+    /// сообщает место курсора, только когда оно сменилось, поэтому строку ставим сами.
+    private func resetStatus() {
+        cursorStatus = L("editor.status.initial")
+        refreshStatus()
+    }
+
     private func loadFileContent() {
         guard activeTabIndex < tabs.count else { return }
         let tab = tabs[activeTabIndex]
@@ -239,6 +260,7 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
             tabs[activeTabIndex].isReadOnly = true
             monaco.setContent("// Error loading file: \(error.localizedDescription)", language: "plaintext")
         }
+        resetStatus()
     }
 
     // MARK: - Tabs
@@ -284,6 +306,7 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
             } else {
                 self.monaco.setContent(tab.content, language: tab.language)
                 self.viewOptions.language = tab.language
+                self.resetStatus()
             }
             self.window?.makeFirstResponder(self.monaco.webView)
             self.monaco.focusEditor()
@@ -337,6 +360,7 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
         currentPath = tab.path
         source = tab.source
         monaco.setContent(tab.content, language: tab.language)
+        resetStatus()
         updateTitle()
         renderTabBar()
     }
@@ -436,7 +460,7 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
     private func saveTab(at index: Int) async -> Bool {
         guard index >= 0, index < tabs.count else { return false }
 
-        // File whose bytes never decoded is shown as a placeholder — never write it back.
+        // A file that can't be written back byte for byte is shown as it reads — never save over it.
         if tabs[index].isReadOnly {
             DialogService.shared.showWarning(
                 title: L("editor.error.saveTitle"),
@@ -447,16 +471,10 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
         // The active tab's text is fresh from Monaco; background tabs already hold their
         // edited content in `tabs[index].content`.
         let text = index == activeTabIndex ? await monaco.getContentAsync() : tabs[index].content
-        guard let data = text.data(using: tabs[index].encoding) else {
-            DialogService.shared.showError(
-                title: L("editor.error.saveTitle"),
-                message: L("editor.error.encodeUtf8"))
-            return false
-        }
         do {
             // For an archive file, `path` is the extracted temp copy — Cmd+S writes there
             // (TC-style), and the archive itself is updated on close via updateArchiveOnClose.
-            try data.write(to: URL(fileURLWithPath: tabs[index].path), options: .atomic)
+            try TextFileCodec.write(text, to: tabs[index].path, as: tabs[index].encoding)
             tabs[index].lastSaved = text
             tabs[index].content = text
             if case .archive = tabs[index].source { tabs[index].archiveNeedsUpdate = true }

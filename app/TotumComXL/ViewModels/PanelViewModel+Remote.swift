@@ -196,6 +196,7 @@ extension PanelViewModel {
             // перезапуском программы, сервер закрыл простаивающее соединение. Один раз
             // подключаемся заново и повторяем — человеку незачем знать, что где-то там
             // порвалось и срослось.
+            var failure: Error = error
             if Self.worthReconnecting(error), !retrying, !Task.isCancelled {
                 do {
                     try await session.fileSystem.connect()
@@ -204,20 +205,28 @@ extension PanelViewModel {
                                               preferredCursorName: preferredCursorName,
                                               retrying: true)
                     return
-                } catch {
-                    // Не вышло — дальше по общему пути, с честным сообщением.
+                } catch let reconnectError {
+                    // Не вышло — дальше по общему пути, с честным сообщением. Одну причину
+                    // называем её же словами: сервер, чей ключ человек не подтвердил. «Нет
+                    // подключения» скрыло бы и её, и отпечаток, который предстоит сверить.
+                    if case RemoteFileSystemError.serverKeyUntrusted = reconnectError {
+                        failure = reconnectError
+                    }
                 }
             }
             connectingMessage = nil
-            errorMessage = error.localizedDescription
-            RemoteTrace.log("list FAILED \(remotePath): \(error.localizedDescription)", since: started)
-            Self.logger.error("Remote listing failed: \(error.localizedDescription)")
+            errorMessage = failure.localizedDescription
+            RemoteTrace.log("list FAILED \(remotePath): \(failure.localizedDescription)", since: started)
+            Self.logger.error("Remote listing failed: \(failure.localizedDescription)")
             // A transport-level failure means the server stopped responding: mark the session
             // dead so later operations are refused up front instead of each one hanging.
             // "Not found" / "permission denied" prove the server IS alive — don't kill those.
-            if case RemoteFileSystemError.connectionFailed = error {
-                session.markDead(error.localizedDescription)
-            } else if case RemoteFileSystemError.notConnected = error {
+            // A server whose key is not confirmed is no connection either: nothing was sent.
+            if case RemoteFileSystemError.connectionFailed = failure {
+                session.markDead(failure.localizedDescription)
+            } else if case RemoteFileSystemError.serverKeyUntrusted = failure {
+                session.markDead(failure.localizedDescription)
+            } else if case RemoteFileSystemError.notConnected = failure {
                 session.markDead(L("network.error.connectionLost"))
             }
         }

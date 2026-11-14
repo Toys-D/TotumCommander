@@ -424,16 +424,14 @@ func needsContentSniff(fileName: String) -> Bool {
     return fileCategory(forFileName: fileName) == .other && !binaryExts.contains(ext)
 }
 
-/// Чем показывать такой файл по его первым байтам. Текст — текстом (правило «текст или нет»
-/// одно на программу — FileDiffService.looksBinary; метка UTF-8/16/32 — тоже текст).
+/// Чем показывать такой файл по его первым байтам. Текст — текстом: правило то же, что у
+/// просмотра текста (TextFileCodec.looksBinary) — нулевые байты, а файл с меткой UTF-8/16/32
+/// текст всегда.
 /// Двоичное — HEX, если о типе не знает и система: у index из .git нет ни расширения, ни
 /// описания, и его содержимое — всё, что о нём можно показать. Двоичное известного системе
 /// типа — карточка сведений, как раньше.
 func contentMode(forSample data: Data, fileName: String) -> PreviewMode {
-    let marks: [[UInt8]] = [[0xEF, 0xBB, 0xBF], [0xFF, 0xFE], [0xFE, 0xFF], [0x00, 0x00, 0xFE, 0xFF]]
-    let head = [UInt8](data.prefix(4))
-    if marks.contains(where: { head.starts(with: $0) }) { return .text }
-    guard FileDiffService.looksBinary(sample: data) else { return .text }
+    guard TextFileCodec.looksBinary(sample: data) else { return .text }
     let ext = (fileName as NSString).pathExtension.lowercased()
     if ext.isEmpty { return .hex }
     guard let type = UTType(filenameExtension: ext) else { return .hex }

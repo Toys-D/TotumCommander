@@ -178,10 +178,12 @@ final class EmbeddedMonacoState: ObservableObject {
     /// до страницы редактора: полосы показываются сразу, а выбор уходит в редактор, как он готов.
     let options = EditorViewOptions()
     let findModel = EditorFindModel()
-    /// Encoding the file was decoded with — a save writes it back in the same encoding.
-    var encoding: String.Encoding = .utf8
-    /// True when the bytes couldn't be decoded; saving is blocked so the placeholder never
-    /// overwrites the real file.
+    /// How the file's bytes were written — encoding and byte-order mark; a save writes it
+    /// back the same way.
+    var encoding: TextFileEncoding = .utf8
+    /// True when a save couldn't write the file's own bytes back: it didn't load, or its text
+    /// is damaged under a byte-order mark. The file is shown as it reads; saving is blocked so
+    /// the shown text never overwrites it.
     var isReadOnly = false
     /// Where the file came from — used to flag archive write-back on save.
     var source: EditorDocumentSource = .fileSystem
@@ -199,15 +201,8 @@ final class EmbeddedMonacoState: ObservableObject {
         }
         let enc = encoding
         monaco.getContent { [weak self] text in
-            guard let data = text.data(using: enc) else {
-                DialogService.shared.showError(
-                    title: L("editor.error.saveTitle"),
-                    message: L("editor.error.encodeUtf8"))
-                completion(false)
-                return
-            }
             do {
-                try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+                try TextFileCodec.write(text, to: path, as: enc)
                 DispatchQueue.main.async {
                     monaco.markSaved()
                     if case .archive = self?.source { self?.archiveNeedsUpdate = true }
@@ -251,7 +246,7 @@ struct EmbeddedMonacoWebView: NSViewRepresentable {
             DispatchQueue.main.async {
                 var s = String(format: L("editor.status.position"), line, col, total)
                 if selLen > 0 { s += "  |  " + String(format: L("editor.status.selection"), selLen) }
-                s += "  |  UTF-8"
+                s += "  |  " + self.controller.encoding.name
                 self.statusText = s
             }
         }
@@ -274,6 +269,12 @@ struct EmbeddedMonacoWebView: NSViewRepresentable {
             controller?.encoding = decoded.encoding
             controller?.isReadOnly = !decoded.decodable
             monaco.setContent(decoded.text, language: lang)
+            // Курсор в начале; редактор сообщит о нём, только когда он сдвинется, а кодировку
+            // файла надо показать сразу.
+            let encodingName = decoded.encoding.name
+            DispatchQueue.main.async {
+                self.statusText = L("editor.status.initial") + "  |  " + encodingName
+            }
             // Всё выбранное на полосе — шрифт, перенос строк (он включён сразу), миникарта…
             controller?.options.apply(to: monaco)
             // Focus the editor so typing works right after F4 (no click needed).

@@ -50,6 +50,10 @@ struct ArchiveOperationParams {
     var password: String = ""
     /// For pack — what a symbolic link becomes; a retried operation packs the same way.
     var links: ArchiveLinkMode = .keep
+    /// For pack — the sources go to the Trash once the archive is safely written (the "delete
+    /// after packing" box). The queue does it: by then the call that started the pack has
+    /// handed the operation over and no longer waits for it.
+    var deleteSourcesAfterPack: Bool = false
 }
 
 /// Parameters for remote file transfer operations.

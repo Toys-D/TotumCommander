@@ -140,6 +140,10 @@ enum RemoteFileSystemError: LocalizedError {
     /// Сервер не принял имя или пароль. В строке лежит уже готовое объяснение — вместе со
     /// словами самого сервера, если он их сказал (см. `RemoteLogin`).
     case loginRefused(String)
+    /// Сервер предъявил ключ, которому программа не доверяет: он ей ещё не знаком либо ключ
+    /// не тот, что подтверждён раньше. Подключение остановлено до входа — серверу не названы
+    /// ни имя, ни пароль. Продолжить можно только с согласия человека.
+    case serverKeyUntrusted(ServerKeyChallenge)
     case timeout
     case pathNotFound(String)
     case permissionDenied(String)
@@ -161,6 +165,8 @@ enum RemoteFileSystemError: LocalizedError {
         case .loginRefused(let reason):
             // Уже сложенное предложение: приставка «Ошибка такая-то:» здесь только мешала бы.
             return reason
+        case .serverKeyUntrusted(let challenge):
+            return challenge.refusal
         case .timeout:
             return L("network.error.timeout")
         case .pathNotFound(let path):

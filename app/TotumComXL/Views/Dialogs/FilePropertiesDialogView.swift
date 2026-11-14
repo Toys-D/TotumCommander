@@ -304,6 +304,7 @@ struct FilePropertiesDialogView: View {
                             .font(.system(size: 10))
                             .foregroundStyle(unfoldedHelp.contains(entry.name)
                                              ? .primary : .secondary)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .focusable(false)
@@ -316,6 +317,7 @@ struct FilePropertiesDialogView: View {
                     Image(systemName: "trash")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .focusable(false)

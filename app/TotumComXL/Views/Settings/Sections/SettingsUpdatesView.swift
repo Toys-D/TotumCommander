@@ -69,20 +69,13 @@ struct SettingsUpdatesView: View {
             HStack(spacing: 10) {
                 // Красная: вышла новая версия — кнопка должна бросаться в глаза.
                 Button(String(format: L("updates.install"), release.version)) {
-                    Task { await updater.update(to: release) }
+                    updater.start(release)
                 }
                 .buttonStyle(FCXLChipButtonStyle(compact: true, fill: .red))
                 releasePageLink(release)
             }
         case .downloading(let fraction):
-            VStack(alignment: .leading, spacing: 4) {
-                Text(String(format: L("updates.stage.downloading"), Int((fraction * 100).rounded())))
-                    .foregroundStyle(.secondary).monospacedDigit()
-                ProgressView(value: fraction)
-                    .tint(PanelAppearanceSettings.accentColor)
-                    .progressViewStyle(.linear)
-                    .frame(maxWidth: 260)
-            }
+            UpdateDownloadRow(fraction: fraction) { updater.cancel() }
         case .verifying, .installing, .relaunching:
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
@@ -159,5 +152,27 @@ struct SettingsUpdatesView: View {
     private static func inline(_ text: String) -> AttributedString {
         (try? AttributedString(markdown: text, options: .init(
             interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+    }
+}
+
+/// Ход загрузки обновления: сколько скачано, полоса и «Отмена» — образ большой, а связь бывает
+/// медленной, и ждать конца загрузки, которую уже не хочется, человек не обязан.
+struct UpdateDownloadRow: View {
+    let fraction: Double
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(String(format: L("updates.stage.downloading"), Int((fraction * 100).rounded())))
+                .foregroundStyle(.secondary).monospacedDigit()
+            HStack(spacing: 10) {
+                ProgressView(value: fraction)
+                    .tint(PanelAppearanceSettings.accentColor)
+                    .progressViewStyle(.linear)
+                    .frame(maxWidth: 260)
+                Button(L("button.cancel"), action: onCancel)
+                    .buttonStyle(FCXLChipButtonStyle(compact: true))
+            }
+        }
     }
 }

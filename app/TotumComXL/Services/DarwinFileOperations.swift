@@ -75,14 +75,30 @@ enum DarwinFileOperations {
         // Progress/cancel are forwarded so a big cross-volume move advances the bar
         // by bytes instead of sitting at ~1% until the whole copy finishes.
         try copy(from: source, to: destination, progress: progress, shouldCancel: shouldCancel)
+        try removeMovedSource(source)
+        return false
+    }
+
+    /// Removes the source of a move once its copy is in place on the other volume.
+    private static func removeMovedSource(_ source: String) throws {
         do {
             try remove(path: source)
         } catch {
-            // Remove destination to avoid leaving duplicates
-            try? remove(path: destination)
-            throw error
+            // The copy is complete and it stays. It used to be taken back "to avoid leaving
+            // duplicates" — but a remove that failed half way has already deleted part of the
+            // source, so removing the copy as well left those files nowhere at all.
+            let underlying = error as NSError
+            log.error("move: source not fully removed after copy: \(underlying.localizedDescription, privacy: .public) path=\(source, privacy: .private)")
+            throw redescribed(underlying, L("move.sourceNotRemoved", underlying.localizedDescription))
         }
-        return false
+    }
+
+    /// The same error under a description the user can act on; the original stays as the cause.
+    private static func redescribed(_ underlying: NSError, _ description: String) -> NSError {
+        var info = underlying.userInfo
+        info[NSLocalizedDescriptionKey] = description
+        info[NSUnderlyingErrorKey] = underlying
+        return NSError(domain: underlying.domain, code: underlying.code, userInfo: info)
     }
 
     // MARK: - Copy (APFS clone → copyfile fallback)
@@ -256,6 +272,356 @@ enum DarwinFileOperations {
         }
     }
 
+    // MARK: - Exclusive rename (renamex_np with RENAME_EXCL)
+
+    /// Переименовать, не заменяя того, что уже лежит под новым именем: занятое имя — `EEXIST`.
+    /// Обычный `rename(2)` приёмник молча затирает. Возвращает 0 либо код errno.
+    static func renameExclusive(from source: String, to destination: String) -> Int32 {
+        if renamex_np(source, destination, UInt32(RENAME_EXCL)) == 0 { return 0 }
+        let code = errno
+        // Том не умеет исключающее переименование (FAT, часть сетевых) — проверить самим.
+        guard code == ENOTSUP || code == EINVAL else { return code }
+        var info = stat()
+        if lstat(destination, &info) == 0 { return EEXIST }
+        return Darwin.rename(source, destination) == 0 ? 0 : errno
+    }
+
+    // MARK: - Replace (the new object first, the old one last)
+
+    /// Prefix of the hidden names a replacement is prepared under, right next to its destination.
+    static let stagingPrefix = ".fcxl-replace-"
+
+    /// A free hidden name in the destination's own folder — the same volume as the destination,
+    /// so putting the finished copy in place is a single rename. `pathExtension` is for tools
+    /// that read the format off the name they write to (hdiutil adds ".dmg" to a bare one).
+    static func stagingPath(for destination: String, pathExtension: String = "") -> String {
+        let parent = (destination as NSString).deletingLastPathComponent
+        let suffix = pathExtension.isEmpty ? "" : "." + pathExtension
+        while true {
+            let candidate = (parent as NSString).appendingPathComponent(
+                stagingPrefix + UUID().uuidString.prefix(8).lowercased() + suffix)
+            var info = stat()
+            if lstat(candidate, &info) != 0 { return candidate }
+        }
+    }
+
+    /// True when the two paths name the very same directory entry — one object reached by two
+    /// spellings of its path (a symlinked folder on the way, another letter case, `/var` and
+    /// `/private/var`). Two hard links of one file are two entries: false.
+    static func sameDirectoryEntry(_ a: String, _ b: String) -> Bool {
+        var first = stat(), second = stat()
+        guard lstat(a, &first) == 0, lstat(b, &second) == 0,
+              first.st_dev == second.st_dev, first.st_ino == second.st_ino else { return false }
+        // One object. One entry of it — only in the same folder under the same name: a second
+        // hard link is another entry, and the inode number alone is not proof either (volumes
+        // without real inodes make the numbers up).
+        let parentA = (a as NSString).deletingLastPathComponent
+        let parentB = (b as NSString).deletingLastPathComponent
+        var folderA = stat(), folderB = stat()
+        guard stat(parentA, &folderA) == 0, stat(parentB, &folderB) == 0,
+              folderA.st_dev == folderB.st_dev, folderA.st_ino == folderB.st_ino else { return false }
+        let nameA = (a as NSString).lastPathComponent
+        let nameB = (b as NSString).lastPathComponent
+        // Swift `==` is canonical equivalence: an NFC and an NFD spelling are one name here.
+        if nameA == nameB { return true }
+        // Unsupported (-1) counts as case-sensitive — the cautious answer is "two entries".
+        let caseInsensitive = pathconf(parentA, _PC_CASE_SENSITIVE) == 0
+        return caseInsensitive && nameA.compare(nameB, options: .caseInsensitive) == .orderedSame
+    }
+
+    /// The name of an entry exactly as the volume stores it — letter case and Unicode form
+    /// included. For a symlink, the name of the link itself.
+    private static func onDiskName(_ path: String) -> String? {
+        var attrs = attrlist()
+        attrs.bitmapcount = UInt16(ATTR_BIT_MAP_COUNT)
+        attrs.commonattr = attrgroup_t(ATTR_CMN_NAME)
+        // The reply: its own length (4 bytes), a reference to the name, then the name itself.
+        var buffer = [UInt8](repeating: 0, count: 4 + MemoryLayout<attrreference_t>.size + 1024)
+        let fetched = buffer.withUnsafeMutableBytes { raw -> Bool in
+            getattrlist(path, &attrs, raw.baseAddress, raw.count, UInt32(FSOPT_NOFOLLOW)) == 0
+        }
+        guard fetched else { return nil }
+        return buffer.withUnsafeBytes { raw -> String? in
+            let reference = raw.loadUnaligned(fromByteOffset: 4, as: attrreference_t.self)
+            let start = 4 + Int(reference.attr_dataoffset)
+            let length = Int(reference.attr_length)
+            guard length > 0, start + length <= raw.count else { return nil }
+            // The length counts the terminating NUL.
+            return String(decoding: raw[start..<(start + length - 1)], as: UTF8.self)
+        }
+    }
+
+    /// A rename over a name that differs only in letter case (or Unicode form) keeps the OLD
+    /// spelling on APFS, while the old "remove, then copy" left the new object under its own.
+    /// Give the entry the spelling that was asked for.
+    private static func settleName(_ destination: String) {
+        let wanted = (destination as NSString).lastPathComponent
+        guard let actual = onDiskName(destination),
+              !actual.utf8.elementsEqual(wanted.utf8),
+              actual.compare(wanted, options: .caseInsensitive) == .orderedSame else { return }
+        let stored = ((destination as NSString).deletingLastPathComponent as NSString)
+            .appendingPathComponent(actual)
+        // Only ever rename the object onto itself: the stored name must lead to the same object.
+        var one = stat(), other = stat()
+        guard lstat(stored, &one) == 0, lstat(destination, &other) == 0,
+              one.st_dev == other.st_dev, one.st_ino == other.st_ino else { return }
+        _ = Darwin.rename(stored, destination)
+    }
+
+    private static let lockFlags = UInt32(UF_IMMUTABLE | UF_APPEND)
+
+    /// What keeps an object from being renamed even by its owner: the lock flag and an access
+    /// list that denies deleting. A copy inherits both from its source.
+    private struct RenameGuards {
+        let flags: UInt32?
+        let accessList: acl_t?
+
+        /// Lifts the guards off a staged copy so that it can be renamed into place.
+        static func lift(from path: String) -> RenameGuards {
+            var info = stat()
+            var flags: UInt32?
+            if lstat(path, &info) == 0, (info.st_flags & lockFlags) != 0 {
+                flags = info.st_flags
+                _ = lchflags(path, info.st_flags & ~lockFlags)
+            }
+            let accessList: acl_t? = acl_get_link_np(path, ACL_TYPE_EXTENDED)
+            if accessList != nil { clearAccessList(path) }
+            return RenameGuards(flags: flags, accessList: accessList)
+        }
+
+        /// Puts them back at the final place. The access list first: a locked object takes none.
+        func apply(to path: String) {
+            if let accessList { _ = acl_set_link_np(path, ACL_TYPE_EXTENDED, accessList) }
+            if let flags { _ = lchflags(path, flags) }
+        }
+
+        func free() {
+            if let accessList { acl_free(UnsafeMutableRawPointer(accessList)) }
+        }
+    }
+
+    private static func clearAccessList(_ path: String) {
+        guard let empty = acl_init(0) else { return }
+        _ = acl_set_link_np(path, ACL_TYPE_EXTENDED, empty)
+        acl_free(UnsafeMutableRawPointer(empty))
+    }
+
+    /// How far a failed `install` got — what is left for the caller to clean up or report.
+    private enum InstallState {
+        /// Nothing changed: the old object is where it was, the new one still under its own name.
+        case untouched
+        /// The old object sits under a hidden name and could not be put back.
+        case oldSetAside
+        /// The new object is in place; a remnant of the old one is left under a hidden name.
+        case installed
+    }
+
+    private struct InstallFailure: Error {
+        let state: InstallState
+        let error: NSError
+    }
+
+    /// Puts `newPath` where `destination` is; both are on one volume. A file over a file (or over
+    /// a symlink) is one rename(2), which swaps them atomically. Where rename refuses the pair —
+    /// a file over a folder, a folder over a file — the old object first steps aside under a
+    /// hidden name, and is removed only after the new one has taken its place.
+    private static func install(_ newPath: String, over destination: String) throws {
+        if Darwin.rename(newPath, destination) == 0 {
+            settleName(destination)
+            return
+        }
+        // Take errno at once: everything below makes system calls of its own.
+        let refusal = errno
+        guard refusal == EISDIR || refusal == ENOTDIR || refusal == ENOTEMPTY || refusal == EEXIST else {
+            throw InstallFailure(state: .untouched,
+                                 error: posixError(refusal, operation: "rename", path: destination))
+        }
+        let aside = stagingPath(for: destination)
+        guard Darwin.rename(destination, aside) == 0 else {
+            let code = errno
+            throw InstallFailure(state: .untouched,
+                                 error: posixError(code, operation: "rename", path: destination))
+        }
+        guard Darwin.rename(newPath, destination) == 0 else {
+            let code = errno
+            let failure = posixError(code, operation: "rename", path: destination)
+            if Darwin.rename(aside, destination) == 0 {
+                throw InstallFailure(state: .untouched, error: failure)
+            }
+            throw InstallFailure(state: .oldSetAside, error: redescribed(
+                failure, L("replace.oldLeftAside",
+                           (destination as NSString).lastPathComponent,
+                           (aside as NSString).lastPathComponent,
+                           failure.localizedDescription)))
+        }
+        do {
+            try remove(path: aside)
+        } catch {
+            throw InstallFailure(state: .installed, error: redescribed(
+                error as NSError, L("replace.oldNotRemoved",
+                                    (destination as NSString).lastPathComponent,
+                                    (aside as NSString).lastPathComponent,
+                                    error.localizedDescription)))
+        }
+    }
+
+    /// Removes a staged copy this code made itself — never a source, never anything it did not
+    /// create. A copy inherits its source's locks and access lists, so a plain remove can be refused.
+    private static func discard(_ staged: String) {
+        if (try? remove(path: staged)) != nil { return }
+        unlockTree(staged)
+        try? remove(path: staged)
+    }
+
+    private static func unlockTree(_ root: String) {
+        var pending = [root]
+        while let path = pending.popLast() {
+            var info = stat()
+            guard lstat(path, &info) == 0 else { continue }
+            if (info.st_flags & lockFlags) != 0 { _ = lchflags(path, info.st_flags & ~lockFlags) }
+            clearAccessList(path)
+            guard (info.st_mode & S_IFMT) == S_IFDIR else { continue }
+            _ = chmod(path, 0o700)
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: path)) ?? [] {
+                pending.append((path as NSString).appendingPathComponent(name))
+            }
+        }
+    }
+
+    /// The replacement did not happen and the old object is untouched — say so: "copy failed"
+    /// alone leaves the user wondering what is left at the destination. A cancel stays a cancel.
+    private static func keptOriginal(_ underlying: NSError) -> NSError {
+        if underlying.domain == NSCocoaErrorDomain,
+           underlying.code == CocoaError.userCancelled.rawValue { return underlying }
+        return redescribed(underlying, L("replace.keptOriginal", underlying.localizedDescription))
+    }
+
+    /// Puts `source` in the place of an existing `destination`. The old object is never removed
+    /// first: the new one is brought next to it under a hidden name, and only when it is whole
+    /// does it take the old one's name. Whatever goes wrong before that — no space, no access,
+    /// a cancel — leaves the old object exactly as it was. With `move`, the source is gone
+    /// afterwards.
+    ///
+    /// The price is free space for the new copy while the old one still exists (none on a single
+    /// APFS volume, where the copy is a clone).
+    static func replace(from source: String, to destination: String, move: Bool,
+                        progress: ((Int64, Int64, String) -> Void)? = nil,
+                        shouldCancel: (() -> Bool)? = nil) throws {
+        // SMB: swap in the Unicode-normalization form the server actually accepts.
+        let source = existingPathForm(source).path
+        if move {
+            var from = stat(), to = stat()
+            if lstat(source, &from) == 0, lstat(destination, &to) == 0,
+               from.st_dev == to.st_dev, from.st_ino == to.st_ino, from.st_nlink > 1 {
+                // Two hard links of one file: rename(2) reports success and does nothing, which
+                // would leave the source behind. The content is already at the destination, so
+                // the source name goes — unless both paths are one and the same entry.
+                if !sameDirectoryEntry(source, destination) { try remove(path: source) }
+                return
+            }
+            do {
+                // Same volume: the source itself takes the destination's name.
+                try install(source, over: destination)
+                return
+            } catch let failure as InstallFailure {
+                let otherVolume = failure.state == .untouched
+                    && failure.error.domain == NSPOSIXErrorDomain
+                    && failure.error.code == Int(EXDEV)
+                if !otherVolume {
+                    throw failure.state == .untouched ? keptOriginal(failure.error) : failure.error
+                }
+                // Another volume: a copy next to the destination, then the source is removed.
+            }
+        }
+
+        // A locked destination cannot be replaced — find that out before the copy, not after it.
+        var old = stat()
+        if lstat(destination, &old) == 0,
+           (old.st_flags & UInt32(UF_IMMUTABLE | UF_APPEND | SF_IMMUTABLE | SF_APPEND)) != 0 {
+            throw keptOriginal(posixError(EPERM, operation: "rename", path: destination))
+        }
+        let stage = stagingPath(for: destination)
+        do {
+            try copy(from: source, to: stage, progress: progress, shouldCancel: shouldCancel)
+        } catch {
+            discard(stage)
+            throw keptOriginal(error as NSError)
+        }
+        // The copy carries its source's lock and access list, and either can forbid the rename:
+        // lift them for the rename and put them back once the copy stands in place.
+        let guards = RenameGuards.lift(from: stage)
+        defer { guards.free() }
+        do {
+            try install(stage, over: destination)
+        } catch let failure as InstallFailure {
+            switch failure.state {
+            case .untouched:
+                discard(stage)
+                throw keptOriginal(failure.error)
+            case .oldSetAside:
+                discard(stage)
+                throw failure.error
+            case .installed:
+                // In place, with a remnant of the old object beside it. A moved source stays
+                // where it is: after a failure nothing more gets deleted.
+                guards.apply(to: destination)
+                throw failure.error
+            }
+        }
+        guards.apply(to: destination)
+        if move { try removeMovedSource(source) }
+    }
+
+    // MARK: - Whole or nothing, onto a free name
+
+    /// A copy onto a FREE name that is either whole or not there at all: it is prepared next to
+    /// its place under a hidden name and takes its own name by a single rename that replaces
+    /// nothing. A stop or a failure half-way leaves no part of it behind, so the same copy can
+    /// simply be asked for again. A taken name is `EEXIST`, and nothing is touched.
+    static func copyWhole(from source: String, to destination: String,
+                          progress: ((Int64, Int64, String) -> Void)? = nil,
+                          shouldCancel: (() -> Bool)? = nil) throws {
+        // Before the copy, not after it: nobody waits through a whole folder to hear "taken".
+        var taken = stat()
+        if lstat(destination, &taken) == 0 {
+            throw posixError(EEXIST, operation: "copy", path: destination)
+        }
+        let stage = stagingPath(for: destination)
+        do {
+            try copy(from: source, to: stage, progress: progress, shouldCancel: shouldCancel)
+        } catch {
+            discard(stage)
+            throw error
+        }
+        // The copy carries its source's lock and access list, and either can forbid the rename.
+        let guards = RenameGuards.lift(from: stage)
+        defer { guards.free() }
+        let code = renameExclusive(from: stage, to: destination)
+        guard code == 0 else {
+            discard(stage)
+            throw posixError(code, operation: "rename", path: destination)
+        }
+        guards.apply(to: destination)
+    }
+
+    /// A move onto a FREE name: one rename on the same volume, `copyWhole` and the removal of
+    /// the source across volumes. Unlike `move`, it never replaces what already holds the name
+    /// (`EEXIST`) and never leaves half a tree at the destination.
+    /// - Returns: `true` if it was a rename, `false` if a copy had to be made.
+    @discardableResult
+    static func moveWhole(from source: String, to destination: String,
+                          progress: ((Int64, Int64, String) -> Void)? = nil,
+                          shouldCancel: (() -> Bool)? = nil) throws -> Bool {
+        // SMB: swap in the Unicode-normalization form the server actually accepts.
+        let source = existingPathForm(source).path
+        let code = renameExclusive(from: source, to: destination)
+        if code == 0 { return true }
+        guard code == EXDEV else { throw posixError(code, operation: "rename", path: source) }
+        try copyWhole(from: source, to: destination, progress: progress, shouldCancel: shouldCancel)
+        try removeMovedSource(source)
+        return false
+    }
+
     // MARK: - Volume check
 
     /// Returns true if source and destination are on the same APFS/HFS+ volume.
@@ -286,6 +652,10 @@ enum DarwinFileOperations {
 
     // MARK: - Private helpers
 
+    /// Paths (up to `CopyfileContext.keptFailures`) of the objects a copy could not bring over —
+    /// in `userInfo` of the error `copy` throws when the tree arrived incomplete.
+    static let failedPathsKey = "FCXLFailedPaths"
+
     private static func copyfileWithProgress(
         from source: String,
         to destination: String,
@@ -295,75 +665,119 @@ enum DarwinFileOperations {
         let state = copyfile_state_alloc()
         defer { copyfile_state_free(state) }
 
-        // Keep a strong reference to the context and guarantee release via defer.
-        var retainedContextPtr: UnsafeMutableRawPointer?
-
-        if progress != nil || shouldCancel != nil {
-            // Pre-calculate total size for progress reporting
-            var totalSize: Int64 = 0
-            var srcStat = stat()
-            if stat(source, &srcStat) == 0 {
-                totalSize = Int64(srcStat.st_size)
-            }
-
-            let context = CopyfileContext(
-                progress: progress,
-                shouldCancel: shouldCancel,
-                source: source,
-                totalBytes: totalSize
-            )
-            let contextPtr = Unmanaged.passRetained(context).toOpaque()
-            retainedContextPtr = contextPtr
-
-            copyfile_state_set(state, UInt32(COPYFILE_STATE_STATUS_CTX), contextPtr)
-
-            let callback: copyfile_callback_t = { what, stage, state, src, dst, ctx in
-                guard let ctx else { return COPYFILE_CONTINUE }
-                let context = Unmanaged<CopyfileContext>.fromOpaque(ctx).takeUnretainedValue()
-
-                if context.shouldCancel?() == true {
-                    return COPYFILE_QUIT
-                }
-
-                if stage == COPYFILE_PROGRESS, let progress = context.progress {
-                    var bytesCopied: off_t = 0
-                    copyfile_state_get(state, UInt32(COPYFILE_STATE_COPIED), &bytesCopied)
-                    // COPYFILE_STATE_COPIED resets per file in recursive mode.
-                    // Accumulate for monotonically increasing progress.
-                    let totalCopied = context.accumulatedBytes + Int64(bytesCopied)
-                    context.currentFileBytes = Int64(bytesCopied)
-                    progress(totalCopied, context.totalBytes, context.source)
-                }
-
-                if stage == COPYFILE_FINISH {
-                    // File/dir finished — add its bytes to accumulator
-                    context.accumulatedBytes += context.currentFileBytes
-                    context.currentFileBytes = 0
-                }
-
-                return COPYFILE_CONTINUE
-            }
-
-            copyfile_state_set(state, UInt32(COPYFILE_STATE_STATUS_CB), unsafeBitCast(callback, to: UnsafeRawPointer.self))
+        // Pre-calculate total size for progress reporting
+        var totalSize: Int64 = 0
+        var srcStat = stat()
+        if progress != nil, stat(source, &srcStat) == 0 {
+            totalSize = Int64(srcStat.st_size)
         }
 
-        defer {
-            // Guaranteed release of the retained context, regardless of error path.
-            if let ptr = retainedContextPtr {
-                Unmanaged<CopyfileContext>.fromOpaque(ptr).release()
+        // The observer is installed ALWAYS, not only when somebody wants progress or a way to
+        // cancel: it is the one place that learns which objects copyfile could not copy. With an
+        // observer copyfile does not stop at an error — it ASKS, and the answer decides whether
+        // a lost file is reported or silently forgotten.
+        let context = CopyfileContext(
+            progress: progress,
+            shouldCancel: shouldCancel,
+            source: source,
+            totalBytes: totalSize
+        )
+        copyfile_state_set(state, UInt32(COPYFILE_STATE_STATUS_CTX),
+                           Unmanaged.passUnretained(context).toOpaque())
+
+        let callback: copyfile_callback_t = { what, stage, state, src, dst, ctx in
+            // errno of the failure being reported — read it before anything else can change it.
+            let reported = errno
+            guard let ctx else { return COPYFILE_CONTINUE }
+            let context = Unmanaged<CopyfileContext>.fromOpaque(ctx).takeUnretainedValue()
+
+            if context.stopped { return COPYFILE_QUIT }
+            if context.shouldCancel?() == true {
+                context.cancelled = true
+                context.stopped = true
+                return COPYFILE_QUIT
             }
+
+            if stage == COPYFILE_ERR {
+                return context.failed(
+                    what: what, code: reported,
+                    source: src.map { String(cString: $0) } ?? context.source,
+                    destination: dst.map { String(cString: $0) })
+            }
+
+            if stage == COPYFILE_PROGRESS, let progress = context.progress {
+                var bytesCopied: off_t = 0
+                copyfile_state_get(state, UInt32(COPYFILE_STATE_COPIED), &bytesCopied)
+                // COPYFILE_STATE_COPIED resets per file in recursive mode.
+                // Accumulate for monotonically increasing progress.
+                let totalCopied = context.accumulatedBytes + Int64(bytesCopied)
+                context.currentFileBytes = Int64(bytesCopied)
+                progress(totalCopied, context.totalBytes, context.source)
+            }
+
+            if stage == COPYFILE_FINISH {
+                // File/dir finished — add its bytes to accumulator
+                context.accumulatedBytes += context.currentFileBytes
+                context.currentFileBytes = 0
+            }
+
+            return COPYFILE_CONTINUE
+        }
+        copyfile_state_set(state, UInt32(COPYFILE_STATE_STATUS_CB),
+                           unsafeBitCast(callback, to: UnsafeRawPointer.self))
+
+        // No COPYFILE_CLONE: across volumes nothing can be cloned anyway (one volume is served
+        // by clonefile() in `copy`), and with it a folder is created with the source's mode at
+        // once — a read-only folder (555) then refuses its own contents. Without the flag the
+        // folder is made writable and receives its real mode after the contents are in.
+        // COPYFILE_EXCL is what COPYFILE_CLONE implied and what the callers rely on: an existing
+        // destination is a conflict for them to resolve, never something to write over.
+        let flags: copyfile_flags_t = UInt32(COPYFILE_ALL) | UInt32(COPYFILE_EXCL)
+            | UInt32(COPYFILE_RECURSIVE) | UInt32(COPYFILE_NOFOLLOW)
+        let (result, err) = withExtendedLifetime(context) { () -> (Int32, Int32) in
+            let result = copyfile(source, destination, state, flags)
+            return (result, errno)
         }
 
-        let flags: copyfile_flags_t = UInt32(COPYFILE_ALL) | UInt32(COPYFILE_CLONE) | UInt32(COPYFILE_RECURSIVE) | UInt32(COPYFILE_NOFOLLOW)
-        let result = copyfile(source, destination, state, flags)
+        // A file whose bytes stopped half way is not a copy. It looks like one, so it goes.
+        // These paths were created by this very call (COPYFILE_EXCL) — nothing older is removed.
+        for stump in context.stumps {
+            unlink(stump)
+        }
 
+        if context.cancelled {
+            throw CocoaError(.userCancelled)
+        }
+        if let first = context.failures.first {
+            throw incompleteCopyError(first: first, count: context.failureCount,
+                                      paths: context.failures.map(\.path))
+        }
         if result != 0 {
-            let err = errno
             if err == ECANCELED {
                 throw CocoaError(.userCancelled)
             }
             throw posixError(err, operation: "copyfile", path: source)
         }
+    }
+
+    /// The tree arrived, but not all of it: names the first object left behind and the reason.
+    private static func incompleteCopyError(
+        first: (path: String, code: Int32), count: Int, paths: [String]
+    ) -> NSError {
+        let name = (first.path as NSString).lastPathComponent
+        let reason = String(cString: strerror(first.code))
+        log.error("copyfile: \(count, privacy: .public) object(s) not copied, first: \(reason, privacy: .public) path=\(first.path, privacy: .private)")
+        return NSError(
+            domain: NSPOSIXErrorDomain,
+            code: Int(first.code),
+            userInfo: [
+                NSLocalizedDescriptionKey: count == 1
+                    ? L("copy.notCopiedOne", name, reason)
+                    : L("copy.notCopiedMany", count, name, reason),
+                NSFilePathErrorKey: first.path,
+                failedPathsKey: paths
+            ]
+        )
     }
 
     private static func posixError(_ err: Int32, operation: String, path: String) -> NSError {
@@ -383,6 +797,9 @@ enum DarwinFileOperations {
 // MARK: - Callback contexts (prevent dangling closures)
 
 private final class CopyfileContext {
+    /// How many failed paths are kept for the report; the rest are only counted.
+    static let keptFailures = 20
+
     let progress: ((Int64, Int64, String) -> Void)?
     let shouldCancel: (() -> Bool)?
     let source: String
@@ -392,11 +809,49 @@ private final class CopyfileContext {
     /// Bytes copied so far in the current file.
     var currentFileBytes: Int64 = 0
 
+    /// The user asked to stop.
+    var cancelled = false
+    /// Nothing more is to be copied: the user cancelled or the destination takes no more.
+    var stopped = false
+    /// Objects that did not make it, first come first (at most `keptFailures`).
+    private(set) var failures: [(path: String, code: Int32)] = []
+    /// How many objects did not make it in all.
+    private(set) var failureCount = 0
+    /// Destination files whose bytes stopped half way — to be removed after the copy.
+    private(set) var stumps: [String] = []
+
     init(progress: ((Int64, Int64, String) -> Void)?, shouldCancel: (() -> Bool)?, source: String, totalBytes: Int64 = 0) {
         self.progress = progress
         self.shouldCancel = shouldCancel
         self.source = source
         self.totalBytes = totalBytes
     }
-}
 
+    /// The answer to copyfile reporting an object it could not copy.
+    ///
+    /// Never `COPYFILE_CONTINUE` for the object itself: for a file that means "forget it and go
+    /// on" (the file is lost without a word), for a failed write it means "try again" (an
+    /// endless loop on a full disk). The object is written down and skipped, the rest of the
+    /// tree keeps copying; a destination that takes no more stops the whole copy.
+    func failed(what: Int32, code: Int32, source: String, destination: String?) -> Int32 {
+        switch what {
+        case COPYFILE_COPY_DATA:
+            if let destination { stumps.append(destination) }
+        case COPYFILE_RECURSE_FILE, COPYFILE_RECURSE_DIR, COPYFILE_RECURSE_ERROR:
+            break
+        default:
+            // Extended attributes and a folder's closing metadata pass: the bytes are in place.
+            return COPYFILE_CONTINUE
+        }
+        let code = code == 0 ? EIO : code
+        failureCount += 1
+        if failures.count < Self.keptFailures {
+            failures.append((source, code))
+        }
+        if code == ENOSPC || code == EDQUOT || code == EROFS {
+            stopped = true
+            return COPYFILE_QUIT
+        }
+        return COPYFILE_SKIP
+    }
+}

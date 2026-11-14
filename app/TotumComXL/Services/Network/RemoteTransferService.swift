@@ -294,7 +294,7 @@ final class RemoteTransferService {
         try await ResumableTransfer.run(
             totalSize: size,
             canResume: session.fileSystem.supportsResume,
-            sizeSoFar: { direct ? 0 : await self.remoteSize(of: part, session: session) },
+            sizeSoFar: { direct ? 0 : await self.remoteSize(of: part, session: session) ?? 0 },
             discard: {
                 guard !direct else { return }
                 try? await session.fileSystem.deleteItem(at: part, isDirectory: false)
@@ -316,8 +316,9 @@ final class RemoteTransferService {
         guard !direct else { return }
 
         // FTP will not rename onto an occupied name, so a file the user chose to replace goes
-        // first. Its removal is deliberate and already answered for.
-        if await remoteSize(of: remotePath, session: session) > 0 {
+        // first. Its removal is deliberate and already answered for. An EMPTY file occupies
+        // the name just the same — what matters is that it is there, not how big it is.
+        if await remoteSize(of: remotePath, session: session) != nil {
             try? await session.fileSystem.deleteItem(at: remotePath, isDirectory: false)
         }
         try await session.fileSystem.rename(at: part,
@@ -354,13 +355,14 @@ final class RemoteTransferService {
         }
     }
 
-    /// How much of a file is already on the server. The protocol has no stat of its own, so
-    /// the parent listing answers it — once per attempt, never per byte.
-    private func remoteSize(of path: String, session: RemoteSession) async -> Int64 {
+    /// How much of a file is already on the server; nil when there is no such file — which
+    /// is not the same as an empty one. The protocol has no stat of its own, so the parent
+    /// listing answers it — once per attempt, never per byte.
+    private func remoteSize(of path: String, session: RemoteSession) async -> Int64? {
         let parent = session.fileSystem.parentPath(for: path)
         let name = (path as NSString).lastPathComponent
         let items = try? await session.fileSystem.listDirectory(at: parent)
-        guard let match = items?.first(where: { $0.name == name }) else { return 0 }
+        guard let match = items?.first(where: { $0.name == name }) else { return nil }
         return Int64(match.size)
     }
 

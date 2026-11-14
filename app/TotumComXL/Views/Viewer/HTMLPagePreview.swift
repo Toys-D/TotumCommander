@@ -29,8 +29,71 @@ enum HTMLPage {
     /// Что страница может открыть у себя сама: только местное. Всё остальное — отказ.
     static let localSchemes: Set<String> = ["file", "about", "data", "blob"]
 
-    /// Что уходит наружу по щелчку на ссылке: в браузер, в почту, в программу по умолчанию.
-    static let externalSchemes: Set<String> = ["http", "https", "mailto", "file"]
+    /// Что уходит наружу по щелчку на ссылке: в браузер и в почту. Файлов здесь нет — см.
+    /// `linkAction`.
+    static let externalSchemes: Set<String> = ["http", "https", "mailto"]
+
+    /// Что делать со ссылкой, по которой щёлкнул человек.
+    enum LinkAction: Equatable {
+        /// Адрес в сети или почта — браузеру и почтовой программе.
+        case openOutside(URL)
+        /// Файл на этом Маке — показать в панели, ничем не открывая.
+        case showInPanel(path: String)
+        case nothing
+    }
+
+    /// Файл по ссылке не открывается никогда: вести ссылка может на любой файл диска — на
+    /// программу, на скрипт, — а написано на ней может быть что угодно. Его показывают в
+    /// панели, и что с ним делать, человек решает сам, видя имя и вид файла. Чужие схемы
+    /// (ssh:, smb:, настройки системы) запускают программы и их команды — им отказ.
+    static func linkAction(for url: URL) -> LinkAction {
+        guard let scheme = url.scheme?.lowercased() else { return .nothing }
+        if externalSchemes.contains(scheme) { return .openOutside(url) }
+        // Адрес с чужим узлом (file://server/share/…) — не файл этого Мака.
+        let host = url.host?.lowercased() ?? ""
+        guard url.isFileURL, host.isEmpty || host == "localhost" else { return .nothing }
+        return .showInPanel(path: url.standardized.path)
+    }
+
+    /// Пойти по ссылке, нажатой на странице. `openOutside` подменяют тесты.
+    @MainActor
+    static func follow(_ url: URL, in panel: PanelViewModel,
+                       openOutside: (URL) -> Void = { NSWorkspace.shared.open($0) }) {
+        switch linkAction(for: url) {
+        case .openOutside(let target): openOutside(target)
+        case .showInPanel(let path): show(path, in: panel)
+        case .nothing: break
+        }
+    }
+
+    /// Поставить курсор панели на файл по ссылке; просмотр идёт за курсором и покажет его сам.
+    @MainActor
+    private static func show(_ linked: String, in panel: PanelViewModel) {
+        // В архиве и на сервере страница — временная копия: её адреса ведут во временную
+        // папку, а не к соседям по архиву.
+        guard !panel.insideArchive, !panel.insideRemote else { return }
+        // Ссылка в никуда панель не трогает.
+        guard let path = spelledAsOnDisk(linked) else { return }
+        if let index = panel.items.firstIndex(where: { $0.path == path }) {
+            panel.setCursor(index: index)
+            return
+        }
+        // Файл из этой же папки, которого в списке нет, панель не показывает по своим
+        // настройкам (скрытые файлы) — перечитывать её незачем.
+        let folder = (path as NSString).deletingLastPathComponent
+        guard folder != panel.currentPath else { return }
+        // Тем же путём, что «перейти к файлу» у поиска.
+        panel.loadDirectory(at: folder, preferredCursorPath: path)
+    }
+
+    /// Путь с именем файла в том написании, в каком оно лежит на диске: диск обычно не
+    /// различает регистр, и в ссылке имя могло быть набрано иначе, чем в папке. Нет такого
+    /// файла — nil.
+    private static func spelledAsOnDisk(_ path: String) -> String? {
+        guard let name = (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.nameKey]))?.name
+        else { return nil }
+        return ((path as NSString).deletingLastPathComponent as NSString).appendingPathComponent(name)
+    }
 
     /// Та же страница, только другое место на ней (#раздел) — это прокрутка, а не переход.
     static func isSameDocument(_ target: URL, as current: URL?) -> Bool {
@@ -232,8 +295,7 @@ struct HTMLPagePreview: NSViewRepresentable {
                     return
                 }
                 let clicked = HTMLPage.isUserClick(lastClick: (webView as? PageWebView)?.lastUserClick)
-                if clicked, let scheme = target.scheme?.lowercased(),
-                   HTMLPage.externalSchemes.contains(scheme) {
+                if clicked, HTMLPage.linkAction(for: target) != .nothing {
                     openLink(target)
                 }
                 decisionHandler(.cancel, preferences)

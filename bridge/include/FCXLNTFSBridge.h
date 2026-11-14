@@ -13,6 +13,22 @@ NS_ASSUME_NONNULL_BEGIN
 /// saving the password to the Keychain so a wrong one isn't stored.
 + (BOOL)verifyAdminPassword:(NSString*)password;
 
+/// The privileged step of `openVolumeWithDevice:` as a command line, the executable first:
+/// the one handed to `sudo` when the admin password is saved. nil when `devicePath` is not a
+/// disk node or `mountPoint` is not a full path — such a step is never run.
+/// Exposed so that tests can run it, unprivileged, on a disk image of their own.
+/// `owner` is the user the device node is handed to — the one running the program.
++ (nullable NSArray<NSString*>*)shellArgumentsToPrepareDevice:(NSString*)devicePath
+                                                   mountPoint:(NSString*)mountPoint
+                                                        owner:(unsigned int)owner;
+
+/// The same step for the password dialog, as an `osascript` command line. `privileged:NO`
+/// differs only in not asking for administrator rights — that is the form tests run.
++ (nullable NSArray<NSString*>*)appleScriptArgumentsToPrepareDevice:(NSString*)devicePath
+                                                         mountPoint:(NSString*)mountPoint
+                                                              owner:(unsigned int)owner
+                                                         privileged:(BOOL)privileged;
+
 /// Open an NTFS volume for writing. Unmounts macOS read-only driver.
 /// Must call closeVolume when done.
 - (BOOL)openVolumeWithDevice:(NSString*)devicePath

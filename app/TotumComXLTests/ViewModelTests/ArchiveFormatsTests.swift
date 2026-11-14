@@ -524,6 +524,51 @@ final class PasswordArchiveTests: XCTestCase {
                       "no WinZip AES marker — the entry is not AES-encrypted")
     }
 
+    /// «Упаковать по отдельности» с паролем: диалог отдаёт оба выбора вместе, и каждый
+    /// отдельный архив обязан быть закрыт так же, как закрыт общий. Раньше пароль до этой
+    /// дороги не доходил — архивы молча создавались открытыми.
+    @MainActor
+    func test_упаковкаПоОтдельности_АрхивЗакрытПаролем() async throws {
+        let source = path("тайна.txt")
+        try secret.write(toFile: source, atomically: true, encoding: .utf8)
+        let shelf = path("полка")
+        try FileManager.default.createDirectory(atPath: shelf, withIntermediateDirectories: true)
+        let item = FileItem(path: source, name: "тайна.txt", fileExtension: "txt",
+                            size: UInt64(secret.utf8.count), isDirectory: false,
+                            isHidden: false, isSymlink: false, permissions: "-rw-r--r--",
+                            dateModified: Date())
+        let ops = FileOperationsService(bridgeService: bridge)
+
+        try await ops.packItems([item], to: (shelf as NSString).appendingPathComponent("общий.zip"),
+                                format: .zip, separateArchives: true, password: "пароль-123",
+                                onConflict: { _ in .cancel })
+
+        // Архив назван по объекту и лежит рядом с названным в диалоге.
+        let archive = (shelf as NSString).appendingPathComponent("тайна.zip")
+        let data = try Data(contentsOf: URL(fileURLWithPath: archive))
+        XCTAssertTrue(data.range(of: Data([0x01, 0x99])) != nil,
+                      "нет признака AES — запись архива не зашифрована")
+
+        let out = path("наружу")
+        try FileManager.default.createDirectory(atPath: out, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try bridge.extractArchiveAll(
+            archivePath: archive, destinationPath: out, overwriteExisting: true,
+            progress: { _, _, _, _, _, _ in }), "архив открылся без пароля") { error in
+            XCTAssertTrue(ArchivePasswords.isPasswordFailure(error),
+                          "не распознано как запрос пароля: \(error)")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: (out as NSString).appendingPathComponent("тайна.txt")),
+            "содержимое вышло наружу без пароля")
+
+        // С паролем — открывается, байт в байт.
+        try bridge.extractArchiveAll(archivePath: archive, destinationPath: out,
+                                     overwriteExisting: false, password: "пароль-123",
+                                     progress: { _, _, _, _, _, _ in })
+        XCTAssertEqual(try String(contentsOfFile: (out as NSString)
+            .appendingPathComponent("тайна.txt"), encoding: .utf8), secret)
+    }
+
     /// Copying OUT of a protected archive goes through extractArchiveEntry, which nobody hands
     /// a password to. The session store is its source: remember once, and every road works.
     func testTheRememberedPasswordOpensTheEntryRoad() throws {

@@ -107,6 +107,7 @@ private struct ConnectNetworkDriveView: View {
                 .buttonStyle(.plain)
                 .font(.caption)
                 .foregroundStyle(accent)
+                .contentShape(Rectangle())
             }
             ScrollView {
                 LazyVStack(spacing: 0) {

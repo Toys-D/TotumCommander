@@ -3,11 +3,13 @@
 /// FTP/FTPS client using libcurl.
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 #include "fcxl/common/error.h"
 #include "fcxl/common/types.h"
+#include "fcxl/network/server_trust.h"
 
 namespace fcxl::network {
 
@@ -18,6 +20,11 @@ struct ConnectionInfo {
     std::string password;
     bool use_tls = false;
     bool passive_mode = true;
+    /// Открытый ключ сервера, которому человек уже доверился («sha256//…»). Пусто —
+    /// сертификат проверяется обычным порядком, по корневым центрам системы и по имени.
+    /// Задан — сервер узнают по этому ключу и только по нему: так работают серверы с
+    /// самоподписанным сертификатом, а подмена ключа останавливает подключение.
+    std::string pinned_public_key;
     int timeout_seconds = 30;
 };
 
@@ -54,6 +61,11 @@ public:
     [[nodiscard]] auto connect(const ConnectionInfo& info) -> common::Result<void>;
     void disconnect();
     [[nodiscard]] auto is_connected() const -> bool;
+
+    /// Какой ключ сервер предъявил, если последний `connect()` остановился из-за него:
+    /// сертификат не прошёл проверку либо ключ не тот, что подтверждён. Пусто — дело было
+    /// не в ключе. Переживает `disconnect()`.
+    [[nodiscard]] auto last_server_key() const -> std::optional<ServerKeyReport>;
 
     [[nodiscard]] auto list_directory(std::string_view path)
         -> common::Result<std::vector<common::FileEntry>>;

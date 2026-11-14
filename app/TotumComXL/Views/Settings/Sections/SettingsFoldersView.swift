@@ -137,6 +137,7 @@ extension SettingsFoldersView {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(L("folderStyles.delete"))

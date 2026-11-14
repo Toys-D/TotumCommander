@@ -27,6 +27,10 @@ final class OperationQueueService: ObservableObject {
     /// its last question is behind it (from there on it is pure byte moving), or by the
     /// completion path as a safety net.
     private var dialogPhaseOps: Set<UUID> = []
+    /// Packs whose archive is written and whose sources are on their way to the Trash (the
+    /// "delete after packing" box). Such a row is still at work: it keeps its slot and its disk,
+    /// and the panels hear about its end only when the sources are gone.
+    private var removingSources: Set<UUID> = []
     private static let log = Logger(subsystem: "com.fcxl", category: "OperationQueue")
 
     init(fileOps: FileOperationsService) {
@@ -229,7 +233,14 @@ final class OperationQueueService: ObservableObject {
             onSuccessForRetry.removeValue(forKey: id)
         }
         Self.log.info("cancel id=\(id)")
-        fireCompletion(id)
+        // Пакет переименования после «Отмены» ещё возвращает файлы с временных имён. О его конце
+        // (окно по нему обновляет панель и снова разрешает «Переименовать») скажет исполнитель,
+        // когда действительно остановится: хвост executeOperation зовёт fireCompletion всегда.
+        // То же у упаковки, у которой уже убираются источники: начатую уборку отмена не
+        // прерывает, а скажи о конце сейчас — панель перечитает папку раньше, чем файлы уйдут.
+        let unwinding = (operations[idx].kind == .multiRename && reporters[id] != nil)
+            || removingSources.contains(id)
+        if !unwinding { fireCompletion(id) }
         processQueue()
     }
 
@@ -267,6 +278,62 @@ final class OperationQueueService: ObservableObject {
     /// Mark an adopted operation as completed (called from background thread completion).
     func markOperationCompleted(_ id: UUID, error: Error? = nil) {
         guard let idx = index(of: id) else { return }
+        if error == nil, operations[idx].isActive, operations[idx].kind == .pack,
+           operations[idx].archiveParams?.deleteSourcesAfterPack == true {
+            // The archive is written; what the "delete after packing" box promised is still
+            // ahead. The call that started the pack handed it over and no longer waits, so the
+            // queue does it — and the row stays at work until the sources are gone.
+            guard removingSources.insert(id).inserted else { return }
+            if operations[idx].status == .paused { operations[idx].status = .running }
+            let items = operations[idx].items
+            Task { @MainActor in
+                var failure: Error?
+                // Cancelled in the instant before the removal began — the sources stay.
+                if self.isActive(id) {
+                    do { try await self.trashSources(of: id, items) } catch { failure = error }
+                }
+                self.removingSources.remove(id)
+                if self.isActive(id) {
+                    self.closeAdopted(id, error: failure)
+                } else {
+                    // Cancelled meanwhile: the row is closed already. The panels are told only
+                    // now, and the slot the removal was holding is given back.
+                    self.fireCompletion(id)
+                    self.adoptedOperationStopped(id)
+                }
+            }
+            return
+        }
+        closeAdopted(id, error: error)
+    }
+
+    private func isActive(_ id: UUID) -> Bool {
+        index(of: id).map { operations[$0].isActive } ?? false
+    }
+
+    /// Send the sources of a packed archive to the Trash — the same road the pack takes when it
+    /// is not in the queue. A failure comes back worded for the row: the archive exists, the
+    /// sources are still where they were.
+    private func trashSources(of id: UUID, _ items: [FileItem]) async throws {
+        removingSources.insert(id)
+        defer { removingSources.remove(id) }
+        if let idx = index(of: id) { operations[idx].currentFile = L("queue.pack.removingSources") }
+        do {
+            try await fileOps.trashPackedSources(items)
+        } catch {
+            let nsError = error as NSError
+            // The person said no inside the removal itself: the archive is there, nothing failed.
+            if nsError.domain == NSCocoaErrorDomain,
+               nsError.code == CocoaError.userCancelled.rawValue { return }
+            throw NSError(domain: "com.fcxl.queue", code: -2, userInfo: [
+                NSLocalizedDescriptionKey: L("queue.pack.sourcesNotRemoved", error.localizedDescription)
+            ])
+        }
+    }
+
+    /// The final state of an adopted row, its slot and the word to the panels.
+    private func closeAdopted(_ id: UUID, error: Error?) {
+        guard let idx = index(of: id) else { return }
         if let error {
             let nsError = error as NSError
             let wasCancelled = nsError.domain == NSCocoaErrorDomain
@@ -290,6 +357,13 @@ final class OperationQueueService: ObservableObject {
         // …but a FAILED transfer keeps its copy: pressing "continue" has to be able to finish
         // the move it belonged to.
         if !operations[idx].canBeResumed { onSuccessForRetry.removeValue(forKey: id) }
+        processQueue()
+    }
+
+    /// Отданная в очередь и отменённая там операция наконец остановилась: строка её уже закрыта,
+    /// осталось освободить место, которое она держала, пока сворачивалась.
+    func adoptedOperationStopped(_ id: UUID) {
+        guard reporters.removeValue(forKey: id) != nil else { return }
         processQueue()
     }
 
@@ -415,29 +489,54 @@ final class OperationQueueService: ObservableObject {
     /// server-side move (RNFR/RNTO for FTP, etc.), creating any missing target directories for a
     /// subfolder move. Reports progress and stops on cancel; per-step failures are collected and
     /// surfaced as one error at the end (so the whole batch reports a clean success/fail).
-    private func runRemoteMultiRename(session: RemoteSession,
-                                      steps: [RenameExecutionPlanner.Step],
-                                      reporter: QueueOperationReporter) async throws {
+    /// Не private только ради тестов: очередь зовёт его сама, из ветки `.multiRename`.
+    func runRemoteMultiRename(session: RemoteSession,
+                              steps: [RenameExecutionPlanner.Step],
+                              reporter: QueueOperationReporter) async throws {
         let fs = session.fileSystem
         let total = steps.count
         var done = 0
         var errors: [String] = []
+        var ledger = RenameExecutionPlanner.Ledger(steps: steps)
         for step in steps {
             if reporter.isCancelled { break }
-            let srcParent = fs.parentPath(for: step.from)
-            let dstParent = fs.parentPath(for: step.to)
-            if dstParent != srcParent {
-                await ensureRemoteDirectory(fs: fs, path: dstParent)
-            }
-            do {
-                try await fs.moveItem(from: step.from, to: step.to)
-            } catch {
-                errors.append((step.from as NSString).lastPathComponent + ": " + error.localizedDescription)
+            if !ledger.shouldSkip(step) {
+                let srcParent = fs.parentPath(for: step.from)
+                let dstParent = fs.parentPath(for: step.to)
+                if dstParent != srcParent {
+                    await ensureRemoteDirectory(fs: fs, path: dstParent)
+                }
+                do {
+                    try await fs.moveItem(from: step.from, to: step.to)
+                    ledger.record(step, succeeded: true)
+                } catch {
+                    ledger.record(step, succeeded: false)
+                    errors.append(ledger.displayName(for: step) + ": " + error.localizedDescription)
+                }
             }
             done += 1
             reporter.update(currentFile: (step.to as NSString).lastPathComponent,
                             progress: Double(done) / Double(max(1, total)),
                             bytesDone: 0, bytesTotal: 0, filesDone: done, filesTotal: total)
+        }
+        // Отмена или сбой: файлы, успевшие встать на временное имя, возвращаются на прежнее
+        // либо на новое — только на те имена, которые пакет сам не занял (сервер при
+        // переименовании может затирать молча, поэтому проверять нечем, кроме своего учёта).
+        while let stranded = ledger.nextStranded() {
+            var settled = false
+            for name in stranded.candidates {
+                if (try? await fs.moveItem(from: stranded.temp, to: name)) != nil {
+                    ledger.settled(stranded, at: name)
+                    settled = true
+                    break
+                }
+            }
+            if !settled {
+                ledger.abandon(stranded)
+                errors.append(L("mrt.error.leftOnTemp",
+                                (stranded.original as NSString).lastPathComponent,
+                                (stranded.temp as NSString).lastPathComponent))
+            }
         }
         if !errors.isEmpty {
             throw NSError(domain: "com.fcxl.queue.remoteRename", code: -2,
@@ -494,7 +593,13 @@ final class OperationQueueService: ObservableObject {
     }
 
     private func executeOperation(id: UUID, reporter: QueueOperationReporter) async {
-        guard let idx = index(of: id) else { return }
+        guard let idx = index(of: id) else {
+            // Строку успели отменить и убрать из списка. Работы не будет, но тот, кто ждёт
+            // конца операции, ждать вечно не должен.
+            reporters.removeValue(forKey: id)
+            fireCompletion(id)
+            return
+        }
         let op = operations[idx]
 
         do {
@@ -563,6 +668,11 @@ final class OperationQueueService: ObservableObject {
                     links: params.links,
                     reporter: reporter
                 )
+                // The "delete after packing" box: the archive is written — now the sources go.
+                // A pack that was stopped never gets here with its sources at stake.
+                if params.deleteSourcesAfterPack, !reporter.isCancelled, isActive(id) {
+                    try await trashSources(of: id, op.items)
+                }
 
             case .unpack:
                 guard let dest = op.destinationPath,
@@ -752,12 +862,10 @@ final class OperationQueueService: ObservableObject {
                 && nsError.code == CocoaError.userCancelled.rawValue
 
             if let idx = index(of: id) {
-                if wasCancelled || operations[idx].status == .cancelled {
-                    operations[idx].status = .cancelled
-                } else {
-                    operations[idx].status = .failed
-                    operations[idx].error = error.localizedDescription
-                }
+                let status = Self.statusAfterError(kind: op.kind, cancelledByUser: wasCancelled,
+                                                   rowCancelled: operations[idx].status == .cancelled)
+                operations[idx].status = status
+                if status == .failed { operations[idx].error = error.localizedDescription }
                 operations[idx].completedAt = Date()
             }
 
@@ -796,6 +904,17 @@ final class OperationQueueService: ObservableObject {
         processQueue()
     }
 
+    /// Чем кончается операция, из которой вылетела ошибка. Отмена обычно главнее: человек сам
+    /// остановил работу, и сбой недоделанного — не новость. Пакет переименования — исключение:
+    /// после отмены его исполнитель возвращает файлы с временных имён, и ошибка оттуда значит,
+    /// что файл не переименован либо остался под скрытым именем. Об этом молчать нельзя.
+    nonisolated static func statusAfterError(kind: OperationKind, cancelledByUser: Bool,
+                                             rowCancelled: Bool) -> OperationStatus {
+        if cancelledByUser { return .cancelled }
+        if rowCancelled && kind != .multiRename { return .cancelled }
+        return .failed
+    }
+
     private func fireCompletion(_ id: UUID) {
         if let callback = onCompletionCallbacks.removeValue(forKey: id) {
             callback()
@@ -817,12 +936,18 @@ final class AdoptedQueueOperation {
 
     /// Сообщает очереди итог, если операция ушла в неё. true — ушла: ошибку покажет её строка,
     /// а панели обновит её завершение.
+    ///
+    /// Итог получает именно эта строка, по своему номеру. Искать её по виду операции нельзя:
+    /// рядом может идти другая такая же, и закрылась бы она.
     @discardableResult
-    func finish(in queue: OperationQueueService, error: Error? = nil) -> Bool {
-        guard let id else { return false }
-        // Отменённую в самой очереди не трогаем — её строка уже закрыта.
+    func finish(in queue: OperationQueueService?, error: Error? = nil) -> Bool {
+        guard let id, let queue else { return false }
         if queue.operations.first(where: { $0.id == id })?.isActive == true {
             queue.markOperationCompleted(id, error: error)
+        } else {
+            // Отменённую в самой очереди заново не закрываем — её строка уже закрыта. Но место
+            // она держала до этой минуты: работа сворачивалась, и диск был занят.
+            queue.adoptedOperationStopped(id)
         }
         return true
     }

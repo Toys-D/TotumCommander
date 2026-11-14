@@ -17,9 +17,12 @@ final class RemoteReconnectTests: XCTestCase {
         var listCount = 0
         /// Сколько раз подключение обязано провалиться, прежде чем начнёт удаваться.
         var refuseConnects = 0
+        /// Чем подключение отвечает всегда, если задано: не «сервер молчит», а отказ по делу.
+        var connectError: Error?
 
         func connect() async throws {
             connectCount += 1
+            if let connectError { throw connectError }
             if refuseConnects > 0 {
                 refuseConnects -= 1
                 throw RemoteFileSystemError.connectionFailed("сервер молчит")
@@ -107,6 +110,27 @@ final class RemoteReconnectTests: XCTestCase {
 
         await vm.loadRemoteDirectory(at: "/")
         XCTAssertEqual(fs.connectCount, 1, "одна попытка на одно чтение папки, а не круг")
+    }
+
+    /// Сервер, чей ключ человек ещё не подтвердил, переподключением не открыть. Связь не
+    /// вернулась по этой причине — и назвать надо её, с отпечатком, который можно сверить,
+    /// а не общее «нет подключения».
+    func test_еслиСерверНеПодтверждёнНазванаЭтаПричина() async {
+        let fs = FlakyFileSystem()
+        let untrusted = RemoteFileSystemError.serverKeyUntrusted(
+            ServerKeyChallenge(status: .unknown, fingerprint: "SHA256:проба", keyType: "ED25519"))
+        fs.connectError = untrusted
+        let session = RemoteSession(connection: RemoteConnection(proto: .sftp, host: "х"),
+                                    fileSystem: fs)
+        let vm = panel()
+        vm.enterRemote(session: session)
+
+        await vm.loadRemoteDirectory(at: "/")
+
+        XCTAssertTrue(vm.items.isEmpty)
+        XCTAssertEqual(vm.errorMessage, untrusted.localizedDescription)
+        XCTAssertEqual(vm.errorMessage?.contains("SHA256:проба"), true,
+                       "отпечаток виден прямо в панели: \(vm.errorMessage ?? "пусто")")
     }
 
     // MARK: - Когда пробовать не надо

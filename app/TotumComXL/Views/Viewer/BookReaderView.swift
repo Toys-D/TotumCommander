@@ -16,6 +16,11 @@ struct BookReaderState: Equatable, Sendable {
 ///
 /// One chapter at a time in the web view — that, and not any clever streaming, is what keeps
 /// a forty-megabyte book from choking: the DOM never holds the whole thing.
+///
+/// A book is somebody else's page, and it is shown the way the HTML preview shows one: its
+/// scripts run, the network is shut (`HTMLPage.networkBlockRules`). Should the rules fail to
+/// compile, the book's scripts are switched off instead — a book that cannot tell anyone it
+/// was opened matters more than a book with scripts.
 struct BookReaderView: NSViewRepresentable {
     let document: BookDocument
     @Binding var state: BookReaderState
@@ -28,9 +33,35 @@ struct BookReaderView: NSViewRepresentable {
     var onStateChange: (BookReaderState) -> Void = { _ in }
 
     func makeNSView(context: Context) -> WKWebView {
+        let web = Self.makeWebView(coordinator: context.coordinator, scrolling: scrolling)
+        context.coordinator.load(chapter: state.chapterIndex, document: document, startAt: startAt)
+        return web
+    }
+
+    /// `text` as a JavaScript string literal — JSON's string syntax is JavaScript's too. The
+    /// place in a book is remembered from what its page said, so it goes back into the page
+    /// as data: with only the apostrophe escaped, a backslash in front of one ended the
+    /// string and the rest ran as code.
+    static func javaScriptLiteral(_ text: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: [text]),
+              let array = String(data: data, encoding: .utf8), array.count >= 2 else { return "\"\"" }
+        return String(array.dropFirst().dropLast())
+    }
+
+    /// The reader's web view, wired to its coordinator. Apart from `makeNSView` so that a
+    /// check can build one without a SwiftUI window around it.
+    @MainActor
+    static func makeWebView(coordinator: Coordinator, scrolling: Bool) -> WKWebView {
         let configuration = WKWebViewConfiguration()
+        // Nothing piles up between books: one book's cookies and storage are not there for
+        // the next one to read.
+        configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        configuration.userContentController.add(context.coordinator, name: "fcxlBook")
+        configuration.userContentController.add(coordinator, name: "fcxlBook")
+        // WebRTC is the one road out that the no-network rules do not close.
+        configuration.userContentController.addUserScript(
+            WKUserScript(source: HTMLPagePreview.noPeerConnections,
+                         injectionTime: .atDocumentStart, forMainFrameOnly: false))
         configuration.userContentController.addUserScript(
             WKUserScript(source: "window.fcxlScrolling = \(scrolling);",
                          injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -39,12 +70,10 @@ struct BookReaderView: NSViewRepresentable {
                          forMainFrameOnly: true))
 
         let web = WKWebView(frame: .zero, configuration: configuration)
-        web.navigationDelegate = context.coordinator
+        web.navigationDelegate = coordinator
         // Paper is white — asked for in as many words, and right: a wall of text on black is
         // tiring to read, and every reader from Preview to a Kindle shows a page, not a hole.
-        context.coordinator.web = web
-        context.coordinator.load(chapter: state.chapterIndex, document: document,
-                                 startAt: startAt)
+        coordinator.web = web
         return web
     }
 
@@ -81,6 +110,15 @@ struct BookReaderView: NSViewRepresentable {
         private var pendingAnchor: String?
         /// Set when the previous chapter was entered backwards: it must open at its end.
         private var landOnLastPage = false
+        /// Where the no-network rules come from — the ones the HTML preview uses. A check
+        /// puts its own source here.
+        var networkRules: (@escaping (WKContentRuleList?) -> Void) -> Void = { HTMLNetworkBlock.ruleList($0) }
+        /// The rules are in this web view — so the book's own scripts may run.
+        private var networkBlocked = false
+        private var rulesInstalled = false
+        /// Counts the chapters asked for: rules that arrive for a chapter already left behind
+        /// load nothing.
+        private var loadRequest = 0
 
         init(parent: BookReaderView) {
             self.parent = parent
@@ -91,8 +129,20 @@ struct BookReaderView: NSViewRepresentable {
             loadedChapter = index
             pendingAnchor = startAt?.anchor
             let file = document.chapters[index].file
-            // Read access to the book's own folder — pictures and CSS live beside the chapter.
-            web.loadFileURL(file, allowingReadAccessTo: document.root)
+            loadRequest += 1
+            let request = loadRequest
+            // The rules first, the chapter after: WebKit compiles them once per run, and a
+            // chapter that got in ahead of them would have the network to itself.
+            networkRules { [weak self, weak web] list in
+                guard let self, let web, request == self.loadRequest else { return }
+                if let list, !self.rulesInstalled {
+                    web.configuration.userContentController.add(list)
+                    self.rulesInstalled = true
+                }
+                self.networkBlocked = self.rulesInstalled
+                // Read access to the book's own folder — pictures and CSS live beside the chapter.
+                web.loadFileURL(file, allowingReadAccessTo: document.root)
+            }
         }
 
         func goToPage(_ page: Int) {
@@ -107,18 +157,20 @@ struct BookReaderView: NSViewRepresentable {
             }
             if let anchor = pendingAnchor {
                 pendingAnchor = nil
-                let escaped = anchor.replacingOccurrences(of: "'", with: "\\'")
                 webView.evaluateJavaScript(
-                    "window.fcxlBook && fcxlBook.scrollToAnchor('\(escaped)')")
+                    "window.fcxlBook && fcxlBook.scrollToAnchor(\(BookReaderView.javaScriptLiteral(anchor)))")
             }
         }
 
         /// Only the book's own files may be shown. A link out to the web in a pirated book
-        /// must not turn the reader into a browser.
+        /// must not turn the reader into a browser. And the book's scripts run only behind
+        /// the no-network rules; the paging is the program's own script and works either way.
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
-                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            guard let url = action.request.url else { return decisionHandler(.cancel) }
-            decisionHandler(url.isFileURL ? .allow : .cancel)
+                     preferences: WKWebpagePreferences,
+                     decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
+            preferences.allowsContentJavaScript = networkBlocked
+            guard let url = action.request.url else { return decisionHandler(.cancel, preferences) }
+            decisionHandler(url.isFileURL ? .allow : .cancel, preferences)
         }
 
         /// Move a page from outside — the header buttons and the viewer's key monitor.

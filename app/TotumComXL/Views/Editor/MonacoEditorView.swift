@@ -342,15 +342,16 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
         "liquid": "liquid",
     ]
 
-    /// Decode file bytes to text, remembering which encoding worked so a later save writes
-    /// the same encoding back. When nothing decodes, returns a placeholder flagged
-    /// non-decodable so the caller can open the document read-only. Shared by both the
-    /// standalone editor window and the embedded editor panel.
-    static func decodeText(_ data: Data) -> (text: String, encoding: String.Encoding, decodable: Bool) {
-        if let t = String(data: data, encoding: .utf8) { return (t, .utf8, true) }
-        if let t = String(data: data, encoding: .windowsCP1251) { return (t, .windowsCP1251, true) }
-        if let t = String(data: data, encoding: .isoLatin1) { return (t, .isoLatin1, true) }
-        return ("(Cannot decode file)", .utf8, false)
+    /// Decode file bytes to text, remembering how they were written — encoding and byte-order
+    /// mark — so a later save writes the file back the same way. The rules are the app's one
+    /// text decoder (TextFileCodec), shared with the viewer. When the bytes can't be read so
+    /// that a save would return them unchanged, the text is still shown, flagged non-decodable:
+    /// the caller opens the document read-only. Shared by both the standalone editor window
+    /// and the embedded editor panel.
+    static func decodeText(_ data: Data) -> (text: String, encoding: TextFileEncoding, decodable: Bool) {
+        if let exact = TextFileCodec.decodeForEditing(data) { return (exact.text, exact.encoding, true) }
+        let shown = TextFileCodec.decodeForDisplay(data)
+        return (shown.text, shown.encoding, false)
     }
 
     static func detectLanguage(for path: String) -> String {

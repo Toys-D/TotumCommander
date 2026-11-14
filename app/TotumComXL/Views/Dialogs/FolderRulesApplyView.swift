@@ -66,10 +66,12 @@ struct FolderRulesApplyView: View {
                     .buttonStyle(.plain)
                     .font(.system(size: 11))
                     .foregroundStyle(accent)
+                    .contentShape(Rectangle())
                 Button(L("rules.apply.all")) { chosen = Set(steps.map(\.source)) }
                     .buttonStyle(.plain)
                     .font(.system(size: 11))
                     .foregroundStyle(accent)
+                    .contentShape(Rectangle())
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 8)

@@ -100,13 +100,14 @@ enum ResumableTransfer {
     }
 
     /// Whether the same transfer is worth trying again. A cancel is not a failure; a missing
-    /// file or a refused permission will not become available by asking twice. Broken links,
-    /// timeouts and dead connections are exactly what retrying is for.
+    /// file or a refused permission will not become available by asking twice, and a server
+    /// whose key nobody has confirmed stays unconfirmed however often it is asked. Broken
+    /// links, timeouts and dead connections are exactly what retrying is for.
     static func worthRetrying(_ error: Error) -> Bool {
         guard let remote = error as? RemoteFileSystemError else { return false }
         switch remote {
         case .transferCancelled, .pathNotFound, .permissionDenied, .authenticationFailed,
-             .loginRefused:
+             .loginRefused, .serverKeyUntrusted:
             return false
         case .notConnected, .connectionFailed, .timeout, .transferFailed,
              .operationFailed, .protocolError, .resumeRefused:

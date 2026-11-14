@@ -7,6 +7,7 @@
 #include <cctype>
 #include <optional>
 #include <mutex>
+#include <utility>
 
 namespace fcxl::network {
 
@@ -31,6 +32,9 @@ struct FtpClient::Impl {
     // Последняя строка, пришедшая по управляющему каналу: «530 User cannot log in.».
     // Из неё складывается то, что человек прочтёт вместо английского «Login denied».
     std::string last_reply;
+    // Что сервер предъявил, когда подключение остановилось из-за ключа. Не сбрасывается
+    // в disconnect().
+    std::optional<ServerKeyReport> server_key;
 
     void apply_options();
     void reset_for_next_op();
@@ -250,10 +254,19 @@ void FtpClient::Impl::apply_options() {
     }
     if (info.use_tls) {
         curl_easy_setopt(curl, CURLOPT_USE_SSL, CURLUSESSL_ALL);
-        // TODO: Enable SSL certificate verification before production release.
-        // Currently disabled to allow self-signed certs during development.
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+        if (info.pinned_public_key.empty()) {
+            // Сервер ещё никто не подтверждал: сертификат обязан сойтись и с корневыми
+            // центрами системы, и с именем узла. Иначе имя и пароль уйдут кому угодно.
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+        } else {
+            // Человек сам сверил и подтвердил ключ этого сервера. Цепочку и имя больше не
+            // спрашиваем — у самоподписанного сертификата их и нет, — зато ключ обязан
+            // совпасть в точности. Привязка действует и на канал данных.
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+            curl_easy_setopt(curl, CURLOPT_PINNEDPUBLICKEY, info.pinned_public_key.c_str());
+        }
     }
     if (info.passive_mode) {
         curl_easy_setopt(curl, CURLOPT_FTP_USE_EPSV, 1L);
@@ -297,9 +310,61 @@ void FtpClient::Impl::reset_for_next_op() {
 
 // MARK: - Connection lifecycle
 
+/// Подробный вывод libcurl: из него вылавливается строка с хешем открытого ключа сервера.
+static int key_probe_debug_cb(CURL* /*handle*/, curl_infotype type, char* data, size_t size,
+                              void* ud) {
+    if (type != CURLINFO_TEXT || !ud || !data) return 0;
+    auto* pin = static_cast<std::string*>(ud);
+    if (!pin->empty()) return 0;
+    *pin = parse_public_key_pin(std::string_view(data, size));
+    return 0;
+}
+
+/// Узнать, какой открытый ключ предъявляет сервер, ничего ему о себе не сказав.
+///
+/// Способа спросить ключ прямо у libcurl нет, поэтому подключение делается с заведомо
+/// неверной привязкой: libcurl считает хеш ключа сервера, пишет его в подробный вывод,
+/// видит несовпадение и рвёт связь сразу после рукопожатия TLS — до первой команды FTP.
+/// Ни имени, ни пароля у этого подключения нет вовсе.
+///
+/// @return «sha256//…» либо пусто, если ключ узнать не удалось.
+static auto fetch_public_key_pin(const std::string& url, long timeout_seconds) -> std::string {
+    CURL* probe = curl_easy_init();
+    if (!probe) return {};
+    std::string pin;
+    WriteData ignored;
+    curl_easy_setopt(probe, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(probe, CURLOPT_USE_SSL, CURLUSESSL_ALL);
+    curl_easy_setopt(probe, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(probe, CURLOPT_SSL_VERIFYHOST, 0L);
+    // Хеш из одних нулей: ни один настоящий ключ с ним не совпадёт.
+    curl_easy_setopt(probe, CURLOPT_PINNEDPUBLICKEY,
+                     "sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+    curl_easy_setopt(probe, CURLOPT_VERBOSE, 1L);
+    curl_easy_setopt(probe, CURLOPT_DEBUGFUNCTION, key_probe_debug_cb);
+    curl_easy_setopt(probe, CURLOPT_DEBUGDATA, &pin);
+    curl_easy_setopt(probe, CURLOPT_WRITEFUNCTION, write_cb);
+    curl_easy_setopt(probe, CURLOPT_WRITEDATA, &ignored);
+    curl_easy_setopt(probe, CURLOPT_DIRLISTONLY, 1L);
+    curl_easy_setopt(probe, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(probe, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(probe, CURLOPT_TIMEOUT, timeout_seconds);
+    const CURLcode res = curl_easy_perform(probe);
+    curl_easy_cleanup(probe);
+    // Проба обязана кончиться отказом по привязке. Любой другой исход — не тот разговор,
+    // из которого можно брать ключ на подтверждение.
+    if (res != CURLE_SSL_PINNEDPUBKEYNOTMATCH) return {};
+    return pin;
+}
+
+auto FtpClient::last_server_key() const -> std::optional<ServerKeyReport> {
+    return impl_->server_key;
+}
+
 auto FtpClient::connect(const ConnectionInfo& info) -> common::Result<void> {
     disconnect();
     impl_->info = info;
+    impl_->server_key.reset();
     if (impl_->info.timeout_seconds <= 0) impl_->info.timeout_seconds = 60;
 
     impl_->curl = curl_easy_init();
@@ -318,10 +383,35 @@ auto FtpClient::connect(const ConnectionInfo& info) -> common::Result<void> {
     curl_easy_setopt(impl_->curl, CURLOPT_WRITEDATA, &resp);
     curl_easy_setopt(impl_->curl, CURLOPT_DIRLISTONLY, 1L);
     curl_easy_setopt(impl_->curl, CURLOPT_TIMEOUT, long(info.timeout_seconds));
+    // Чем именно сертификат не устроил, libcurl говорит только сюда. Буфер живёт до конца
+    // этой функции, поэтому сразу после запроса его у libcurl забирают.
+    char why[CURL_ERROR_SIZE] = "";
+    curl_easy_setopt(impl_->curl, CURLOPT_ERRORBUFFER, why);
 
     impl_->last_reply.clear();
     CURLcode res = curl_easy_perform(impl_->curl);
+    curl_easy_setopt(impl_->curl, CURLOPT_ERRORBUFFER, nullptr);
     if (res != CURLE_OK) {
+        // Дело в ключе сервера? Тогда наверх уходит не «связь не удалась», а сам ключ:
+        // его покажут человеку и спросят, тот ли это сервер.
+        const bool pinned = !impl_->info.pinned_public_key.empty();
+        const auto verdict = impl_->info.use_tls
+            ? judge_tls_failure(static_cast<int>(res), pinned) : std::nullopt;
+        if (verdict) {
+            auto pin = fetch_public_key_pin(url, long(impl_->info.timeout_seconds));
+            if (!pin.empty()) {
+                ServerKeyReport report;
+                report.verdict = *verdict;
+                report.fingerprint = std::move(pin);
+                if (*verdict == ServerKeyVerdict::Unknown) report.reason = why;
+                impl_->server_key = report;
+                disconnect();
+                return common::Error::make(common::ErrorCode::NetworkError,
+                                           *verdict == ServerKeyVerdict::Changed
+                                               ? "TLS public key of the server has changed"
+                                               : "TLS certificate of the server is not trusted yet");
+            }
+        }
         // Считать ДО disconnect(): он уносит с собой и последний ответ сервера.
         auto failure = describe_connect_failure(static_cast<int>(res), impl_->last_reply,
                                                 curl_easy_strerror(res));

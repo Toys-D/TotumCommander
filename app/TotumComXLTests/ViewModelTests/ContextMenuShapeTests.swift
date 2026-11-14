@@ -27,7 +27,8 @@ final class ContextMenuShapeTests: XCTestCase {
         return vc
     }
 
-    private func menu(for name: String, contents: Data = Data("x".utf8)) throws -> NSMenu {
+    private func menu(for name: String, contents: Data = Data("x".utf8),
+                      nestedOpenWith: Bool = false) throws -> NSMenu {
         let dir = (NSTemporaryDirectory() as NSString)
             .appendingPathComponent("fcxl-menu-\(UUID().uuidString)")
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -42,7 +43,7 @@ final class ContextMenuShapeTests: XCTestCase {
                             size: UInt64(contents.count), isDirectory: false, isHidden: false,
                             isSymlink: false, permissions: "-rw-r--r--", dateModified: Date())
         let menu = NSMenu()
-        vc.makeFileContextMenu(for: item, into: menu)
+        vc.makeFileContextMenu(for: item, into: menu, nestedOpenWith: nestedOpenWith)
         return menu
     }
 
@@ -93,5 +94,50 @@ final class ContextMenuShapeTests: XCTestCase {
                      L("context.fileTools.image")] {
             XCTAssertFalse(titles(plain).contains(name), "пустое подменю хуже, чем никакого")
         }
+    }
+
+    // MARK: - «Открыть с помощью» с Shift
+
+    private func openWithRow(_ menu: NSMenu) -> NSMenuItem? {
+        menu.items.first { $0.identifier?.rawValue == "context.openWith" }
+    }
+
+    /// Без Shift — по-прежнему одна строка, которая открывает окно выбора.
+    func test_безShift_открытьСПомощью_окно() throws {
+        let row = try XCTUnwrap(openWithRow(try menu(for: "записка.txt")))
+        XCTAssertEqual(row.title, L("context.openWith"))
+        XCTAssertNil(row.submenu, "без Shift подменю нет — открывается окно")
+    }
+
+    /// С Shift — подменю: программы, которые система называет для этого файла, черта
+    /// и «Другое…», ведущее в то самое окно.
+    func test_сShift_открытьСПомощью_подменюПрограмм() throws {
+        let row = try XCTUnwrap(openWithRow(try menu(for: "записка.txt", nestedOpenWith: true)))
+        XCTAssertEqual(row.title, L("context.openWith.nested"))
+        let sub = try XCTUnwrap(row.submenu, "с Shift — подменю")
+        let items = sub.items
+        XCTAssertEqual(items.last?.title, L("context.openWith.other"), "последним — «Другое…»")
+        let apps = items.prefix { !$0.isSeparatorItem }
+        let probe = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("x.txt")
+        if let defaultApp = NSWorkspace.shared.urlForApplication(toOpen: probe) {
+            let name = PanelViewController.applicationDisplayName(defaultApp)
+            XCTAssertEqual(apps.first?.title, String(format: L("context.openWith.default"), name),
+                           "первой — программа по умолчанию, с пометкой")
+            XCTAssertNotNil(apps.first?.image, "у программы — её значок")
+        }
+        XCTAssertEqual(row.image != nil, true)
+    }
+
+    /// Порядок: программа по умолчанию первой, остальные по имени, без повтора.
+    func test_порядокПрограмм_поУмолчаниюПервой() {
+        let a = URL(fileURLWithPath: "/Applications/Яблоко.app")
+        let b = URL(fileURLWithPath: "/Applications/Банан.app")
+        let c = URL(fileURLWithPath: "/Applications/Апельсин.app")
+        XCTAssertEqual(PanelViewController.orderedOpenWithApplications([a, b, c], defaultApp: b),
+                       [b, c, a])
+        XCTAssertEqual(PanelViewController.orderedOpenWithApplications([a, c], defaultApp: nil),
+                       [c, a])
+        XCTAssertEqual(PanelViewController.orderedOpenWithApplications([a], defaultApp: b), [b, a],
+                       "программа по умолчанию первой, даже если её нет в списке системы")
     }
 }

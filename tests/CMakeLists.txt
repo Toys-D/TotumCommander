@@ -21,6 +21,7 @@ set(TEST_SOURCES
     tools/checksum_test.cpp
     tools/file_splitter_test.cpp
     network/ftp_login_test.cpp
+    network/server_trust_test.cpp
     queue/operation_queue_test.cpp
     viewer/text_viewer_test.cpp
     viewer/hex_viewer_test.cpp

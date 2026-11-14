@@ -31,12 +31,6 @@ private struct FolderEntry: Identifiable {
     var id: String { path }
 }
 
-private struct EncodingProbe {
-    let name: String
-    let bomLength: Int
-    let value: String.Encoding
-}
-
 /// Режим, выбранный по содержимому файла, и для какого файла.
 private struct SniffedMode {
     let path: String
@@ -928,8 +922,10 @@ struct UnifiedFileViewer: View {
     private var plainTextContent: some View {
         Group {
             if useFastPreview {
-                FastTextPreview(filePath: fastPreviewFilePath, encoding: encoding,
-                                scrollJump: scrollJump)
+                FastTextPreview(filePath: fastPreviewFilePath, scrollJump: scrollJump) { path, name in
+                    // Ответ опоздавшего файла — уже не про тот, что на экране.
+                    if useFastPreview, fastPreviewFilePath == path { encoding = name }
+                }
             } else if let plainText {
                 // Не список строк SwiftUI: тот на длинных строках проседал и отставал от
                 // трекпада — см. NumberedTextView.
@@ -2395,13 +2391,11 @@ struct UnifiedFileViewer: View {
             isLoading = true
             loadTask = Task {
                 do {
-                    // Read small probe (64KB) to detect encoding and binary
+                    // Начало файла (64 КБ) — отличить двоичное от текста. Кодировку решает файл
+                    // целиком, тем же декодером, что у редактора (TextFileCodec).
                     let probeData = try await readFileDataAsync(path: filePath, maxBytes: 64 * 1024)
                     if Task.isCancelled { return }
-                    let encodingProbe = detectEncoding(probeData)
-                    encoding = encodingProbe.name
-
-                    let (_, isBinary) = decodeTextContent(data: probeData, probe: encodingProbe)
+                    let isBinary = TextFileCodec.looksBinary(sample: probeData)
 
                     if isBinary {
                         plainText = "(\(L("viewer.binaryFile")))\n\n" + L("viewer.useBinaryHint")
@@ -2413,6 +2407,8 @@ struct UnifiedFileViewer: View {
 
                         if fileSize > 256 * 1024 {
                             // Large file — use FastTextPreview with direct file path (memory-mapped loading in NSTextView)
+                            // Кодировка пока по началу файла; прочитав его весь, просмотр её уточнит.
+                            encoding = TextFileCodec.decodeForDisplay(probeData).encoding.name
                             useFastPreview = true
                             fastPreviewFilePath = filePath
                             plainText = nil
@@ -2420,22 +2416,22 @@ struct UnifiedFileViewer: View {
                             // Small file — use line-by-line SwiftUI view
                             let fullData = try await readFileDataAsync(path: filePath)
                             if Task.isCancelled { return }
-                            let (decodedText, _) = decodeTextContent(data: fullData, probe: encodingProbe)
+                            let decoded = TextFileCodec.decodeForDisplay(fullData)
+                            encoding = decoded.encoding.name
                             useFastPreview = false
-                            plainText = decodedText
+                            plainText = normalizedForDisplay(decoded.text)
                         }
                     }
 
                     let isMd = currentCategory == .markdown
                     isMarkdownFile = isMd
-                    if isMd {
+                    if isMd, !isBinary {
                         let mdData = try await readFileDataAsync(path: filePath, maxBytes: 2 * 1024 * 1024)
-                        if let mdString = String(data: mdData, encoding: .utf8) {
-                            // Parsed and styled off the main thread; the window stays alive.
-                            markdownContent = await Task.detached(priority: .userInitiated) {
-                                MarkdownStyler.render(mdString)
-                            }.value
-                        }
+                        let mdString = TextFileCodec.decodeForDisplay(mdData).text
+                        // Parsed and styled off the main thread; the window stays alive.
+                        markdownContent = await Task.detached(priority: .userInitiated) {
+                            MarkdownStyler.render(mdString)
+                        }.value
                     } else {
                         markdownContent = nil
                     }
@@ -2707,14 +2703,10 @@ struct UnifiedFileViewer: View {
 
     // MARK: - Keyboard
 
-    /// Ссылка, нажатая на странице HTML: файл — программой по умолчанию, как Enter в панели;
-    /// адрес в сети и почта — браузером и почтой.
+    /// Ссылка, нажатая на странице HTML: адрес в сети и почта — браузером и почтой; файл
+    /// показывается в панели (курсор встаёт на него) и ничем не запускается.
     private func openPageLink(_ url: URL) {
-        if url.isFileURL, let operations {
-            operations.openWithSystem(url.path)
-        } else {
-            NSWorkspace.shared.open(url)
-        }
+        HTMLPage.follow(url, in: viewModel)
     }
 
     private func installKeyMonitor() {
@@ -2898,48 +2890,8 @@ private func normalizedExtension(for item: FileItem) -> String {
     return URL(fileURLWithPath: item.path).pathExtension.lowercased()
 }
 
-private func detectEncoding(_ data: Data) -> EncodingProbe {
-    if data.count >= 4 {
-        let b0 = data[data.startIndex]
-        let b1 = data[data.startIndex + 1]
-        let b2 = data[data.startIndex + 2]
-        let b3 = data[data.startIndex + 3]
-        if b0 == 0x00 && b1 == 0x00 && b2 == 0xFE && b3 == 0xFF {
-            return EncodingProbe(name: "UTF-32BE", bomLength: 4, value: .utf32BigEndian)
-        }
-        if b0 == 0xFF && b1 == 0xFE && b2 == 0x00 && b3 == 0x00 {
-            return EncodingProbe(name: "UTF-32LE", bomLength: 4, value: .utf32LittleEndian)
-        }
-        if b0 == 0xEF && b1 == 0xBB && b2 == 0xBF {
-            return EncodingProbe(name: "UTF-8 (BOM)", bomLength: 3, value: .utf8)
-        }
-    }
-    if data.count >= 2 {
-        let b0 = data[data.startIndex]
-        let b1 = data[data.startIndex + 1]
-        if b0 == 0xFE && b1 == 0xFF {
-            return EncodingProbe(name: "UTF-16BE", bomLength: 2, value: .utf16BigEndian)
-        }
-        if b0 == 0xFF && b1 == 0xFE {
-            return EncodingProbe(name: "UTF-16LE", bomLength: 2, value: .utf16LittleEndian)
-        }
-    }
-    return EncodingProbe(name: "UTF-8", bomLength: 0, value: .utf8)
-}
-
-private func decodeTextContent(data: Data, probe: EncodingProbe) -> (text: String, isBinary: Bool) {
-    let payload = data.dropFirst(probe.bomLength)
-
-    // The one binary-or-text rule the app has — the compare tool asks the same question and
-    // the two must never disagree about a file.
-    if FileDiffService.looksBinary(sample: Data(payload.prefix(8192))) {
-        return (text: "", isBinary: true)
-    }
-
-    let decoded = String(data: payload, encoding: probe.value)
-        ?? String(data: payload, encoding: .utf8)
-        ?? String(decoding: payload, as: UTF8.self)
-
+/// Текст для списка строк просмотра: переводы строк одного вида, без нулевых знаков.
+private func normalizedForDisplay(_ decoded: String) -> String {
     // Single-pass normalization: \r\n → \n, \r → \n, strip \0
     var result = ""
     result.reserveCapacity(decoded.count)
@@ -2958,8 +2910,7 @@ private func decodeTextContent(data: Data, probe: EncodingProbe) -> (text: Strin
         result.append(ch)
         prev = ch
     }
-
-    return (text: result, isBinary: false)
+    return result
 }
 
 private func buildHexLines(data: Data, bytesPerLine: Int) -> [ViewerHexLine] {
@@ -3315,9 +3266,10 @@ private struct PDFKitPreviewView: NSViewRepresentable {
 
 private struct FastTextPreview: NSViewRepresentable {
     let filePath: String
-    let encoding: String
     /// Кнопка «в конец» просмотрщика.
     var scrollJump: ScrollJumpController? = nil
+    /// Файл прочитан: его путь и название кодировки — для строки над текстом. На главном потоке.
+    var onEncoding: ((String, String) -> Void)? = nil
 
     final class Coordinator {
         var loadedPath: String = ""
@@ -3362,34 +3314,31 @@ private struct FastTextPreview: NSViewRepresentable {
     }
 
     private func loadFile(into tv: NSTextView, context: Context) {
-        context.coordinator.loadedPath = filePath
+        let coordinator = context.coordinator
+        coordinator.loadedPath = filePath
         guard !filePath.isEmpty else {
             tv.string = ""
             return
         }
         // Load on background thread with memory-mapped I/O, set on main
         let path = filePath
+        let onEncoding = self.onEncoding
         DispatchQueue.global(qos: .userInitiated).async {
             guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: [.mappedIfSafe]) else {
-                DispatchQueue.main.async { tv.string = "Failed to load file" }
+                DispatchQueue.main.async {
+                    guard coordinator.loadedPath == path else { return }
+                    tv.string = "Failed to load file"
+                }
                 return
             }
-            // Try UTF-8 first, then fallback encodings
-            let text: String
-            if let s = String(data: data, encoding: .utf8) {
-                text = s
-            } else if let s = String(data: data, encoding: .utf16) {
-                text = s
-            } else if let s = String(data: data, encoding: .windowsCP1251) {
-                text = s
-            } else if let s = String(data: data, encoding: .isoLatin1) {
-                text = s
-            } else {
-                text = String(data: data, encoding: .ascii) ?? "Cannot decode file"
-            }
+            // Тем же декодером, что маленький файл и редактор.
+            let decoded = TextFileCodec.decodeForDisplay(data)
             DispatchQueue.main.async {
-                tv.string = text
+                // Пока файл читался, могли открыть другой — его текст уже на месте или в пути.
+                guard coordinator.loadedPath == path else { return }
+                tv.string = decoded.text
                 tv.scrollToBeginningOfDocument(nil)
+                onEncoding?(path, decoded.encoding.name)
             }
         }
     }

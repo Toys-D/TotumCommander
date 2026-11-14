@@ -155,6 +155,29 @@ final class MultiRenameViewModel: ObservableObject {
                 plans[i].status = .duplicate
             }
         }
+        // Имя освобождается, только если его нынешний владелец сам переезжает. Файл выделения,
+        // который остаётся на месте (без изменений, с ошибкой или упёрся в занятое имя), своё имя
+        // держит — строка, целящая в него, тоже останавливается. Повторять, пока есть перемены:
+        // остановившаяся строка сама становится «остающейся» для тех, кто целил в её имя.
+        var changed = true
+        while changed {
+            changed = false
+            var staying: Set<String> = []
+            for plan in plans {
+                switch plan.status {
+                case .unchanged, .error, .collidesOnDisk: staying.insert(plan.sourcePath.lowercased())
+                case .ok, .duplicate: break
+                }
+            }
+            for i in plans.indices {
+                guard case .ok = plans[i].status else { continue }
+                let target = (rootPath as NSString).appendingPathComponent(plans[i].newName).lowercased()
+                if target != plans[i].sourcePath.lowercased(), staying.contains(target) {
+                    plans[i].status = .collidesOnDisk
+                    changed = true
+                }
+            }
+        }
         return plans
     }
 

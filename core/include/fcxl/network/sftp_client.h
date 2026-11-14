@@ -3,11 +3,13 @@
 /// SFTP client using libssh2.
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 #include "fcxl/common/error.h"
 #include "fcxl/common/types.h"
+#include "fcxl/network/server_trust.h"
 
 namespace fcxl::network {
 
@@ -17,6 +19,9 @@ struct SftpConnectionInfo {
     std::string username;
     std::string password;
     std::string private_key_path;
+    /// Отпечаток ключа узла, которому человек уже доверился («SHA256:…»). Пусто — сервер
+    /// ещё не знаком: подключение остановится до входа и вернёт отпечаток на подтверждение.
+    std::string trusted_host_key;
     int timeout_seconds = 30;
 };
 
@@ -33,6 +38,11 @@ public:
     [[nodiscard]] auto connect(const SftpConnectionInfo& info) -> common::Result<void>;
     void disconnect();
     [[nodiscard]] auto is_connected() const -> bool;
+
+    /// Какой ключ сервер предъявил при последнем `connect()` и как он соотнёсся с
+    /// доверенным. Пусто — до ключа дело не дошло. Переживает `disconnect()`: отказ по
+    /// ключу рвёт соединение, а спросить, что предъявил сервер, нужно как раз после.
+    [[nodiscard]] auto last_server_key() const -> std::optional<ServerKeyReport>;
 
     [[nodiscard]] auto list_directory(std::string_view path)
         -> common::Result<std::vector<common::FileEntry>>;

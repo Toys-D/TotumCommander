@@ -486,7 +486,9 @@ final class PanelViewController: NSViewController,
         troubleLabel.font = .systemFont(ofSize: 12)
         troubleLabel.textColor = .secondaryLabelColor
         troubleLabel.lineBreakMode = .byWordWrapping
-        troubleLabel.maximumNumberOfLines = 4
+        // Шесть строк, а не четыре: отказ неподтверждённого сервера кончается отпечатком
+        // ключа, и в узкой панели он не должен обрезаться — его сверяют целиком.
+        troubleLabel.maximumNumberOfLines = 6
         troubleLabel.isHidden = true
         troubleSpinner = NSProgressIndicator()
         troubleSpinner.translatesAutoresizingMaskIntoConstraints = false
@@ -5347,21 +5349,90 @@ final class PanelViewController: NSViewController,
         if choice.always, let kind {
             bindDefaultApplication(choice.application, forFileAt: item.path, kind: kind)
         }
-        ExternalOpenService.open([URL(fileURLWithPath: item.path)],
-                                 withApplicationAt: choice.application)
+        open(item, withApplicationAt: choice.application)
+    }
+
+    /// Shift при открытии меню: у самого щелчка, открывшего меню, или зажатый сейчас. Щелчок
+    /// несёт свои клавиши и тогда, когда общее состояние клавиатуры о них не знает.
+    static var shiftHeldForMenu: Bool {
+        (NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false)
+            || NSEvent.modifierFlags.contains(.shift)
+    }
+
+    /// Открыть файл выбранной программой — одна дорога для окна выбора и для подменю.
+    private func open(_ item: FileItem, withApplicationAt application: URL) {
+        ExternalOpenService.open([URL(fileURLWithPath: item.path)], withApplicationAt: application)
+    }
+
+    /// «Открыть с помощью ▸» — подменю, когда меню открыто с Shift: программы, которые система
+    /// называет для этого файла, со значками; программа по умолчанию первой и с пометкой.
+    /// «Открывать всегда» в меню не живёт (меню закрывается от первого щелчка, галочку не
+    /// поставить), поэтому последним — «Другое…»: то самое окно, где и выбор вручную, и «всегда».
+    private func openWithSubmenuItem(for item: FileItem) -> NSMenuItem? {
+        guard item.name != "..", !item.isDirectory, !viewModel.insideArchive else { return nil }
+        let fileURL = URL(fileURLWithPath: item.path)
+        let defaultApp = NSWorkspace.shared.urlForApplication(toOpen: fileURL)
+        let submenu = NSMenu()
+        for app in Self.orderedOpenWithApplications(Self.applicationsThatOpen(item.path),
+                                                    defaultApp: defaultApp) {
+            let name = Self.applicationDisplayName(app)
+            let title = app == defaultApp ? String(format: L("context.openWith.default"), name) : name
+            let row = NSMenuItem(title: title, action: #selector(OpenWithAppMenuTarget.open(_:)),
+                                 keyEquivalent: "")
+            let icon = NSWorkspace.shared.icon(forFile: app.path)
+            icon.size = NSSize(width: 16, height: 16)
+            row.image = icon
+            let target = OpenWithAppMenuTarget { [weak self] in self?.open(item, withApplicationAt: app) }
+            row.target = target
+            row.representedObject = target
+            submenu.addItem(row)
+        }
+        if submenu.numberOfItems > 0 { submenu.addItem(.separator()) }
+        let other = NSMenuItem(title: L("context.openWith.other"),
+                               action: #selector(OpenWithAppMenuTarget.open(_:)), keyEquivalent: "")
+        let otherTarget = OpenWithAppMenuTarget { [weak self] in
+            // Следующим тактом: окно нельзя открывать из-под закрывающегося меню (см. выше).
+            DispatchQueue.main.async { self?.showOpenWithDialog(for: item) }
+        }
+        other.target = otherTarget
+        other.representedObject = otherTarget
+        submenu.addItem(other)
+
+        let parent = NSMenuItem(title: L("context.openWith.nested"), action: nil, keyEquivalent: "")
+        parent.submenu = submenu
+        return parent
+    }
+
+    /// Программа по умолчанию — первой, остальные по имени, как их видит человек; без повторов.
+    static func orderedOpenWithApplications(_ apps: [URL], defaultApp: URL?) -> [URL] {
+        let rest = apps.filter { $0 != defaultApp }
+            .sorted { applicationDisplayName($0).localizedStandardCompare(applicationDisplayName($1))
+                == .orderedAscending }
+        return (defaultApp.map { [$0] } ?? []) + rest
+    }
+
+    /// Имя программы так, как его показывает Finder: на языке системы и без «.app».
+    static func applicationDisplayName(_ app: URL) -> String {
+        let shown = FileManager.default.displayName(atPath: app.path)
+        return shown.hasSuffix(".app") ? String(shown.dropLast(4)) : shown
     }
 
     // MARK: - File Context Menu
 
     /// The menu builder's public door — the settings preview builds a real menu through it,
     /// and the shape tests hold the menu's order and captions through it too.
-    func makeFileContextMenu(for item: FileItem, into menu: NSMenu) {
-        buildFileContextMenu(for: item, into: menu)
+    func makeFileContextMenu(for item: FileItem, into menu: NSMenu,
+                             nestedOpenWith: Bool = PanelViewController.shiftHeldForMenu) {
+        buildFileContextMenu(for: item, into: menu, nestedOpenWith: nestedOpenWith)
         // И предпросмотр в настройках показывает меню таким, каким его разложил человек.
         applyContextLayout(to: menu)
     }
 
-    private func buildFileContextMenu(for item: FileItem, into menu: NSMenu) {
+    /// `nestedOpenWith` — Shift, зажатый, когда меню открывалось: «Открыть с помощью» тогда
+    /// подменю программ, а не окно. Спрашивается в момент сборки — и правый щелчок, и ⌃-щелчок
+    /// в любом виде списка приходят сюда, поэтому решение одно на все пути.
+    private func buildFileContextMenu(for item: FileItem, into menu: NSMenu,
+                                      nestedOpenWith: Bool = PanelViewController.shiftHeldForMenu) {
         // Программа не из «Программ» — в смонтированном образе, в «Загрузках»: самым первым
         // «Установить», копия в папку программ одним щелчком, как перетаскивание в Finder.
         if viewModel.isAppBundle(item), AppInstall.canInstall(item) {
@@ -5408,7 +5479,7 @@ final class PanelViewController: NSViewController,
         }
         // Right under "Open": the two answer the same question — what happens to this file —
         // and hunting for the submenu halfway down the menu was the complaint.
-        if let openWith = openWithMenuItem(for: item) {
+        if let openWith = nestedOpenWith ? openWithSubmenuItem(for: item) : openWithMenuItem(for: item) {
             openWith.image = NSImage(systemSymbolName: "arrow.up.forward.app",
                                      accessibilityDescription: nil)
             openWith.identifier = NSUserInterfaceItemIdentifier("context.openWith")

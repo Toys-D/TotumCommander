@@ -40,6 +40,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
     private var terminalWindowController: NSWindowController?
     private var viewerWindowController: NSWindowController?
     private var terminalKeyMonitor: Any?
+    /// Двойной щелчок по строке заголовка — см. TitlebarDoubleClick.
+    private let titlebarDoubleClickMonitor = EventMonitorBox()
 
     // Quick Look (system QLPreviewPanel) — single-item data source bound to
     // the active panel's cursor. Arrow keys are forwarded to the file
@@ -249,6 +251,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
                   self?.window?.isKeyWindow == true else { return event }
             self?.handleTerminal()
             return nil  // consume event — don't let macOS cycle windows
+        }
+
+        // Двойной щелчок по заголовку: узкая панель на macOS 27 глотает его, и окно не
+        // разворачивалось — выполняем системное действие сами (см. TitlebarDoubleClick).
+        titlebarDoubleClickMonitor.install(matching: .leftMouseDown) { [weak self] event in
+            guard let window = self?.window else { return event }
+            return TitlebarDoubleClick.handle(event, in: window) ? nil : event
         }
     }
 
@@ -3125,6 +3134,15 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
                 tabsVM.endLoading(tabID, tag: "remote-connect")
                 vm.exitRemote()
                 tabsVM.closeRemoteTabs()
+                // Сервер предъявил ключ, которого программа не знает, — или не тот, что был
+                // подтверждён. Ни имя, ни пароль ему ещё не названы; называть ли — решает
+                // человек, увидев отпечаток. Это раньше вопроса о пароле: пароль тут ни при
+                // чём.
+                if case RemoteFileSystemError.serverKeyUntrusted(let challenge) = error {
+                    self.askToTrustAndRetry(connection, challenge: challenge,
+                                            errorTitle: errorTitle)
+                    return
+                }
                 // Сервер не принял имя или пароль — спрашиваем их в нашем окне и пробуем ещё
                 // раз. Раньше здесь был тупик: окно с английскими словами libcurl и пустая
                 // панель, а сменить пароль можно было только через менеджер подключений.
@@ -3167,6 +3185,20 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
                 ConnectionManagerService.shared.useOnce(password, for: updated.id)
             }
             self.openRemoteConnection(updated, errorTitle: errorTitle)
+        }
+    }
+
+    /// Показать отпечаток ключа сервера и спросить, доверять ли ему. Согласие запоминается
+    /// за сервером (узел и порт), и подключение открывается заново — уже с именем и паролем.
+    /// Отказ — конец истории: серверу так ничего и не сказано.
+    private func askToTrustAndRetry(_ connection: RemoteConnection,
+                                    challenge: ServerKeyChallenge, errorTitle: String) {
+        fcxlPresentModal { [weak self] in
+            guard let self else { return }
+            guard DialogService.shared.askToTrustServer(
+                challenge, server: ServerTrustStore.address(of: connection)) else { return }
+            ServerTrustStore.shared.trust(challenge.fingerprint, for: connection)
+            self.openRemoteConnection(connection, errorTitle: errorTitle)
         }
     }
 

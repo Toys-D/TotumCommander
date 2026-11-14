@@ -132,10 +132,12 @@ struct ImageAnnotationToolbar: View {
             HStack(spacing: 6) {
                 Button(action: onUndo) { face(L("viewer.draw.undo"), "arrow.uturn.backward", selected: false) }
                     .buttonStyle(.plain)
+                    .contentShape(Rectangle())
                     .disabled(!canUndo)
                     .opacity(canUndo ? 1 : 0.4)
                 Button(action: onDone) { face(L("viewer.draw.done"), "checkmark", selected: false) }
                     .buttonStyle(.plain)
+                    .contentShape(Rectangle())
             }
         }
     }
@@ -146,6 +148,7 @@ struct ImageAnnotationToolbar: View {
             face(L(item.titleKey), item.symbol, selected: selected, showsTitle: showsTitle)
         }
         .buttonStyle(.plain)
+        .contentShape(Rectangle())
         .opacity(selected ? 1 : 0.75)
         .help(showsTitle ? "" : L(item.titleKey))
         .accessibilityAddTraits(selected ? .isSelected : [])

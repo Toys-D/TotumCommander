@@ -1,6 +1,7 @@
 // FCXLNTFSBridge.mm — Objective-C++ bridge for NTFS write operations
-// Handles admin-privileged unmount/chmod via NSTask + osascript,
-// then delegates actual NTFS I/O to libntfs-3g via fcxl::NtfsWriter.
+// Handles the admin-privileged step (unmount + hand the device node to the user) via
+// NSTask (sudo or the osascript password dialog), then delegates actual NTFS I/O to
+// libntfs-3g via fcxl::NtfsWriter.
 
 #import "FCXLNTFSBridge.h"
 #import <Security/Security.h>
@@ -35,14 +36,53 @@ static NSString* loadStoredAdminPassword(void) {
     return pw.length > 0 ? pw : nil;
 }
 
-/// Runs a command as root via `sudo -S`, feeding the password through stdin
+/// The privileged step as a fixed script. What it works on arrives as positional
+/// parameters and never becomes part of the script text: a volume is named by whoever
+/// formatted the disk, and that name must not be able to turn into a command for root.
+///
+/// The device node is handed to the user running the program (`$3`), not opened to
+/// everyone: a node keeps its owner and mode until the disk is detached — remounting the
+/// volume does not reset them — so a world-writable node would stay writable for every
+/// account and every process long after the work is done.
+static NSString* const kFCXLPrepareScript =
+    @"/usr/sbin/diskutil unmount force \"$1\" && /usr/sbin/chown \"$3\" \"$2\"";
+
+/// `$0` of that script — it only shows up in the shell's own error messages.
+static NSString* const kFCXLPrepareName = @"fcxl-ntfs";
+
+/// Whether the privileged step may be run on these two values at all. Both come from the
+/// mount table of whatever was plugged in, and the step runs as root: only a disk node is
+/// ever handed over, and only a full path is unmounted.
+static BOOL canPrepare(NSString* devicePath, NSString* mountPoint) {
+    static NSRegularExpression* diskNode;
+    static NSCharacterSet* nul;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        diskNode = [NSRegularExpression regularExpressionWithPattern:@"/dev/disk[0-9]+(s[0-9]+)*"
+                                                             options:0 error:nil];
+        nul = [NSCharacterSet characterSetWithRange:NSMakeRange(0, 1)];
+    });
+    // The whole string has to be the node name: `$` in a pattern would let a trailing
+    // line break through.
+    NSRange whole = NSMakeRange(0, devicePath.length);
+    NSRange node = [diskNode rangeOfFirstMatchInString:devicePath
+                                               options:NSMatchingAnchored range:whole];
+    if (whole.length == 0 || !NSEqualRanges(node, whole)) return NO;
+
+    if (![mountPoint hasPrefix:@"/"]) return NO;
+    // A word of a command line ends at the first NUL, so the path would be cut short.
+    return [mountPoint rangeOfCharacterFromSet:nul].location == NSNotFound;
+}
+
+/// Runs a command line as root via `sudo -S`, feeding the password through stdin
 /// (never via argv, so it can't leak into the process list). Returns NO on any
 /// failure, including a wrong password — the caller then falls back to the
 /// interactive dialog.
-static BOOL runWithSudoPassword(NSString* command, NSString* password, NSError** outError) {
+static BOOL runWithSudoPassword(NSArray<NSString*>* commandLine, NSString* password,
+                                NSError** outError) {
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/sudo"];
-    task.arguments = @[@"-S", @"-p", @"", @"/bin/sh", @"-c", command];
+    task.arguments = [@[@"-S", @"-p", @""] arrayByAddingObjectsFromArray:commandLine];
 
     NSPipe* inPipe = [NSPipe pipe];
     NSPipe* errPipe = [NSPipe pipe];
@@ -78,29 +118,25 @@ static BOOL runWithSudoPassword(NSString* command, NSString* password, NSError**
     return YES;
 }
 
-/// Run a shell command with administrator privileges. If the user saved an admin
-/// password in the Keychain, runs it silently via `sudo -S`; otherwise (or if
-/// that password no longer works) falls back to the osascript password dialog.
-static BOOL runPrivilegedShellCommand(NSString* command, NSError** outError) {
+/// Run the privileged step. If the user saved an admin password in the Keychain, runs
+/// `commandLine` silently via `sudo -S`; otherwise (or if that password no longer works)
+/// runs `dialogCommandLine`, which brings up the system password dialog.
+///
+/// Nothing is written to disk on the way: a script file that root is about to execute could
+/// be swapped by any process of the same user between being written and being run.
+static BOOL runPrivilegedStep(NSArray<NSString*>* commandLine,
+                              NSArray<NSString*>* dialogCommandLine, NSError** outError) {
     NSString* stored = loadStoredAdminPassword();
     if (stored != nil) {
-        if (runWithSudoPassword(command, stored, NULL)) return YES;
+        if (runWithSudoPassword(commandLine, stored, NULL)) return YES;
         // Stored password failed (e.g. changed) — fall through to the dialog
         // rather than hard-failing the operation.
     }
-    // Write command to a temp script file — avoids all quoting/escaping issues
-    NSString* tmpPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"fcxl_ntfs.sh"];
-    NSString* script = [NSString stringWithFormat:@"#!/bin/sh\n%@\n", command];
-    [script writeToFile:tmpPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    chmod(tmpPath.UTF8String, 0755);
-
-    // Build AppleScript: do shell script "/tmp/.../fcxl_ntfs.sh" with administrator privileges
-    NSString* appleScript = [NSString stringWithFormat:
-        @"do shell script \"%@\" with administrator privileges", tmpPath];
 
     NSTask* task = [[NSTask alloc] init];
-    task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/osascript"];
-    task.arguments = @[@"-e", appleScript];
+    task.executableURL = [NSURL fileURLWithPath:dialogCommandLine.firstObject];
+    task.arguments = [dialogCommandLine subarrayWithRange:
+                         NSMakeRange(1, dialogCommandLine.count - 1)];
 
     NSPipe* errPipe = [NSPipe pipe];
     task.standardError = errPipe;
@@ -109,13 +145,11 @@ static BOOL runPrivilegedShellCommand(NSString* command, NSError** outError) {
     NSError* launchError = nil;
     [task launchAndReturnError:&launchError];
     if (launchError) {
-        [[NSFileManager defaultManager] removeItemAtPath:tmpPath error:nil];
         if (outError) *outError = launchError;
         return NO;
     }
 
     [task waitUntilExit];
-    [[NSFileManager defaultManager] removeItemAtPath:tmpPath error:nil];
 
     if (task.terminationStatus != 0) {
         NSData* errData = [errPipe.fileHandleForReading readDataToEndOfFile];
@@ -155,6 +189,32 @@ static BOOL runPrivilegedShellCommand(NSString* command, NSError** outError) {
     return task.terminationStatus == 0;
 }
 
++ (nullable NSArray<NSString*>*)shellArgumentsToPrepareDevice:(NSString*)devicePath
+                                                   mountPoint:(NSString*)mountPoint
+                                                        owner:(unsigned int)owner {
+    if (!canPrepare(devicePath, mountPoint)) return nil;
+    return @[@"/bin/sh", @"-c", kFCXLPrepareScript, kFCXLPrepareName, mountPoint, devicePath,
+             [NSString stringWithFormat:@"%u", owner]];
+}
+
++ (nullable NSArray<NSString*>*)appleScriptArgumentsToPrepareDevice:(NSString*)devicePath
+                                                         mountPoint:(NSString*)mountPoint
+                                                              owner:(unsigned int)owner
+                                                         privileged:(BOOL)privileged {
+    if (!canPrepare(devicePath, mountPoint)) return nil;
+    // The AppleScript text is fixed as well: the values reach it as `argv`, and
+    // `quoted form of` is AppleScript's own way of making any text one shell word.
+    NSString* call = [NSString stringWithFormat:
+        @"do shell script \"/bin/sh -c \" & quoted form of (item 1 of argv)"
+        @" & \" %@ \" & quoted form of (item 2 of argv)"
+        @" & \" \" & quoted form of (item 3 of argv)"
+        @" & \" \" & quoted form of (item 4 of argv)", kFCXLPrepareName];
+    if (privileged) call = [call stringByAppendingString:@" with administrator privileges"];
+    return @[@"/usr/bin/osascript", @"-e", @"on run argv", @"-e", call, @"-e", @"end run",
+             kFCXLPrepareScript, mountPoint, devicePath,
+             [NSString stringWithFormat:@"%u", owner]];
+}
+
 + (nullable NSDictionary<NSString*, id>*)detectNTFSVolumeAtPath:(NSString*)path {
     auto info = fcxl::detect_ntfs_volume(path.UTF8String);
     if (info.fs_type.empty()) return nil;
@@ -170,17 +230,26 @@ static BOOL runPrivilegedShellCommand(NSString* command, NSError** outError) {
 - (BOOL)openVolumeWithDevice:(NSString*)devicePath
                   mountPoint:(NSString*)mountPoint
                        error:(NSError**)error {
+    // Step 1: Force-unmount macOS read-only NTFS driver + make the user the owner of the
+    // device node, so libntfs-3g can open it without running as root.
+    // Force is needed because our own app may have open handles on the volume (panel browsing).
+    NSArray<NSString*>* step = [FCXLNTFSBridge shellArgumentsToPrepareDevice:devicePath
+                                                                  mountPoint:mountPoint
+                                                                       owner:getuid()];
+    NSArray<NSString*>* dialogStep = [FCXLNTFSBridge appleScriptArgumentsToPrepareDevice:devicePath
+                                                                              mountPoint:mountPoint
+                                                                                   owner:getuid()
+                                                                              privileged:YES];
+    if (step == nil || dialogStep == nil) {
+        // Not a disk volume: nothing is asked of the administrator and nothing is run.
+        if (error) *error = makeError("Failed to prepare NTFS volume: not a disk volume");
+        return NO;
+    }
     _devicePath = [devicePath copy];
     _mountPoint = [mountPoint copy];
 
-    // Step 1: Force-unmount macOS read-only NTFS driver + chmod device for user access.
-    // Force is needed because our own app may have open handles on the volume (panel browsing).
-    NSString* cmd = [NSString stringWithFormat:
-        @"diskutil unmount force \"%@\" && chmod 666 \"%@\"",
-        mountPoint, devicePath];
-
     NSError* privError = nil;
-    if (!runPrivilegedShellCommand(cmd, &privError)) {
+    if (!runPrivilegedStep(step, dialogStep, &privError)) {
         if (error) {
             *error = [NSError errorWithDomain:@"FCXLNTFSBridge" code:-1
                 userInfo:@{NSLocalizedDescriptionKey:
@@ -204,7 +273,7 @@ static BOOL runPrivilegedShellCommand(NSString* command, NSError** outError) {
     // Step 1: Close libntfs-3g
     auto result = _writer.close_volume();
 
-    // Step 2: Restore device permissions and re-mount (always try, even if close failed)
+    // Step 2: Re-mount (always try, even if close failed)
     [self restoreVolumeIgnoringError];
 
     if (!result.success) {
@@ -217,7 +286,9 @@ static BOOL runPrivilegedShellCommand(NSString* command, NSError** outError) {
 - (void)restoreVolumeIgnoringError {
     if (!_devicePath) return;
     // Remount the volume via diskutil (no admin privileges needed).
-    // Device permissions are automatically restored by macOS when the volume is remounted.
+    // The device node is NOT given back to root here: that would take a second password
+    // prompt, and macOS does not reset a node's owner on remount. It stays the user's
+    // until the disk is detached; nobody else gains access to it.
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:@"/usr/sbin/diskutil"];
     task.arguments = @[@"mount", _devicePath];

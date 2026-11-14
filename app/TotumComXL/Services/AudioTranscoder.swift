@@ -75,29 +75,13 @@ enum AudioTranscoder {
         let partial = target.deletingPathExtension().appendingPathExtension("partial.flac")
         try? fm.removeItem(at: partial)
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: helper)
-        process.arguments = ["-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-                             "-i", source.path, "-map", "0:a:0", "-map_metadata", "0",
-                             "-c:a", "flac", "-frame_size", "4096", "-f", "flac", partial.path]
         // Размер блока — обычный. RealAudio отдаёт звук кусочками по 160 выборок, и FLAC из
         // таких блоков системный проигрыватель отвергает («fmt?»), хоть файл и верный.
-        let errors = Pipe()
-        process.standardError = errors
-        process.standardOutput = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-
-        let box = ProcessBox(process)
-        let status: Int32 = try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
-                do { try process.run() } catch { continuation.resume(throwing: error) }
-            }
-        } onCancel: {
-            box.terminate()
-        }
-        let message = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            .split(separator: "\n").last.map(String.init) ?? ""
+        let (status, message) = try await runHelper(
+            URL(fileURLWithPath: helper),
+            arguments: ["-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                        "-i", source.path, "-map", "0:a:0", "-map_metadata", "0",
+                        "-c:a", "flac", "-frame_size", "4096", "-f", "flac", partial.path])
 
         guard status == 0, !Task.isCancelled, fm.fileExists(atPath: partial.path) else {
             try? fm.removeItem(at: partial)
@@ -109,6 +93,41 @@ enum AudioTranscoder {
         try fm.moveItem(at: partial, to: target)
         prune()
         return target
+    }
+
+    /// Запустить помощника и дождаться его: код выхода и последняя строка его жалоб. Отмена
+    /// задачи останавливает помощника.
+    ///
+    /// Жалобы читаются по ходу работы, а не после: канал вмещает 64 КБ, и помощник, которому
+    /// больше некуда писать, замирает на записи навсегда — на повреждённом файле ffmpeg
+    /// пишет по строке на каждый битый кадр.
+    static func runHelper(_ executable: URL,
+                          arguments: [String]) async throws -> (status: Int32, lastLine: String) {
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = arguments
+        let errors = Pipe()
+        process.standardError = errors
+        process.standardOutput = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+
+        let box = ProcessBox(process)
+        let tail = ErrorTail()
+        let status: Int32 = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+                do {
+                    try process.run()
+                    // Только у запущенного: у незапущенного канал никто не закроет.
+                    tail.drain(errors.fileHandleForReading)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        } onCancel: {
+            box.terminate()
+        }
+        return (status, await tail.lastLine())
     }
 
     /// Держать кэш в пределах `cacheLimit`: новое остаётся, старое уходит.
@@ -132,5 +151,39 @@ enum AudioTranscoder {
         let process: Process
         init(_ process: Process) { self.process = process }
         func terminate() { if process.isRunning { process.terminate() } }
+    }
+
+    /// Жалобы помощника: читаются в фоне, пока он работает; хранится только их конец —
+    /// нужна одна последняя строка, а написать он может мегабайты.
+    private final class ErrorTail: @unchecked Sendable {
+        private static let limit = 16 * 1024
+        private let lock = NSLock()
+        private var bytes = Data()
+        private let finished = DispatchGroup()
+
+        /// Читать `handle`, пока помощник не закроет свой конец канала.
+        func drain(_ handle: FileHandle) {
+            finished.enter()
+            DispatchQueue.global(qos: .utility).async { [self] in
+                while true {
+                    let chunk = handle.availableData
+                    if chunk.isEmpty { break }
+                    lock.withLock {
+                        bytes.append(chunk)
+                        if bytes.count > Self.limit { bytes = Data(bytes.suffix(Self.limit)) }
+                    }
+                }
+                finished.leave()
+            }
+        }
+
+        /// Последняя строка жалоб — когда прочитано всё.
+        func lastLine() async -> String {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                finished.notify(queue: .global(qos: .utility)) { continuation.resume() }
+            }
+            let text = lock.withLock { String(decoding: bytes, as: UTF8.self) }
+            return text.split(separator: "\n").last.map(String.init) ?? ""
+        }
     }
 }

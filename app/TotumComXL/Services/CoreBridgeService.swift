@@ -186,23 +186,33 @@ final class CoreBridgeService {
                            destinationPath: String,
                            overwriteExisting: Bool,
                            password: String = "",
+                           entries knownEntries: [ArchiveListEntry]? = nil,
                            progress: @escaping (String, Double, Int64, Int64, Int, Int) -> Void) throws {
-        _ = try archiveBridge.extractAll(
-            fromArchive: archivePath,
-            toDestination: destinationPath,
-            overwriteExisting: overwriteExisting,
-            password: password.isEmpty
-                ? (ArchivePasswords.remembered(for: archivePath) ?? "") : password
-        ) { currentFile, progressValue, bytesDone, bytesTotal, filesDone, filesTotal in
-            progress(
-                currentFile,
-                progressValue,
-                bytesDone,
-                bytesTotal,
-                Int(filesDone),
-                Int(filesTotal)
-            )
-        }
+        // Архив из сети: всё вынутое получит его признак карантина. `knownEntries` — список,
+        // уже прочитанный вызывающим: у сжатого tar второе чтение — лишний проход по архиву.
+        try ArchiveQuarantine.extracting(
+            archivePath, into: destinationPath, overwriteExisting: overwriteExisting,
+            entries: {
+                try knownEntries ?? listArchiveEntries(archivePath: archivePath, password: password)
+            },
+            extract: {
+                _ = try archiveBridge.extractAll(
+                    fromArchive: archivePath,
+                    toDestination: destinationPath,
+                    overwriteExisting: overwriteExisting,
+                    password: password.isEmpty
+                        ? (ArchivePasswords.remembered(for: archivePath) ?? "") : password
+                ) { currentFile, progressValue, bytesDone, bytesTotal, filesDone, filesTotal in
+                    progress(
+                        currentFile,
+                        progressValue,
+                        bytesDone,
+                        bytesTotal,
+                        Int(filesDone),
+                        Int(filesTotal)
+                    )
+                }
+            })
     }
 
     /// Сколько байт выйдет по каждому пути архива (папка — всё под ней): для хода извлечения.
@@ -218,6 +228,9 @@ final class CoreBridgeService {
     func extractArchiveEntry(archivePath: String,
                              entryPath: String,
                              destinationPath: String) throws {
+        // Одна запись из скачанного архива — то же скачанное: признак карантина идёт с ней.
+        let quarantine = ArchiveQuarantine(archivePath: archivePath)
+        defer { quarantine?.mark(extracted: entryPath, under: destinationPath) }
         _ = try archiveBridge.extractEntry(
             inArchive: archivePath,
             entryPath: entryPath,

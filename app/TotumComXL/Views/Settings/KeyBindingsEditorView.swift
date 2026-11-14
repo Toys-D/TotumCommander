@@ -215,6 +215,7 @@ struct KeyBindingsEditorView: View {
                        waiting: waiting, empty: combo == nil)
             }
             .buttonStyle(.plain)
+            .contentShape(Rectangle())
             .help(L("settings.keys.editor.capTip"))
         }
         .padding(.vertical, 5)

@@ -47,8 +47,8 @@ final class TrashServiceTests: XCTestCase {
             + key(trashName) + Data("ptbNustr".utf8) + ustr(originalName)
     }
 
-    private func writeStore(_ payload: Data) throws -> URL {
-        let url = tmp.appendingPathComponent(".DS_Store")
+    private func writeStore(_ payload: Data, in folder: URL? = nil) throws -> URL {
+        let url = (folder ?? tmp).appendingPathComponent(".DS_Store")
         // Real files open with "Bud1" and allocator blocks; the parser scans rather than walks the
         // B-tree, so a plausible prefix is enough to prove it is not relying on a fixed offset.
         try (Data("Bud1".utf8) + Data(repeating: 0, count: 28) + payload).write(to: url)
@@ -191,6 +191,221 @@ final class TrashServiceTests: XCTestCase {
             [entry(at: inTrash, folder: nil, name: "mystery.txt")]))
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: inTrash.path))
+    }
+
+    // MARK: - Корзина внешнего диска
+
+    /// «Диск» для записей, собранных руками, — папка: в корзине настоящего тома самодельный
+    /// `.DS_Store` система стирает за доли секунды. Настоящий том — в проверках ниже, где
+    /// запись пишет сама система.
+    private func disk(_ name: String = "Флешка") throws -> URL {
+        let disk = tmp.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: disk, withIntermediateDirectories: true)
+        // Корень диска программа называет настоящим путём — таким он и нужен для сверки.
+        return disk.resolvingSymlinksInPath()
+    }
+
+    /// Файл в корзине диска — `<диск>/.Trashes/<uid>` — и запись о том, откуда он, в том виде,
+    /// в каком их оставляет система: путь идёт от корня диска, косая черта с обеих сторон.
+    private func putInTrash(of disk: URL, name: String, from folder: String,
+                            content: String = "bytes") throws -> (trash: URL, file: URL) {
+        let trash = disk.appendingPathComponent(".Trashes")
+            .appendingPathComponent(String(getuid()))
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        let file = trash.appendingPathComponent(name)
+        try Data(content.utf8).write(to: file)
+        _ = try writeStore(record(trashName: name, folder: folder, originalName: name), in: trash)
+        return (trash, file)
+    }
+
+    /// Запись возврата хранит путь от корня СВОЕГО диска, и у каждой корзины этот корень свой.
+    func testEachTrashFolderKnowsTheDiskItBelongsTo() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        XCTAssertEqual(TrashService.volumeRoot(
+            ofTrashFolder: home.appendingPathComponent(".Trash")), "/")
+        XCTAssertEqual(TrashService.volumeRoot(
+            ofTrashFolder: home.appendingPathComponent("Library/Mobile Documents/.Trash")), "/")
+        XCTAssertEqual(TrashService.volumeRoot(
+            ofTrashFolder: URL(fileURLWithPath: "/Volumes/Флешка/.Trashes/501")), "/Volumes/Флешка")
+    }
+
+    /// «/Volumes/Macintosh HD» — ссылка на загрузочный диск: корень у него «/», а не она сама.
+    /// Сверяется с тем, куда ссылка ведёт; саму ссылку в ответе раскрывать здесь нельзя —
+    /// иначе проверка проходила бы и без раскрытия в программе.
+    func testADiskThatIsALinkCountsFromWhereTheLinkLeads() throws {
+        let real = try disk("настоящий")
+        let link = tmp.appendingPathComponent("ссылка")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+
+        let root = TrashService.volumeRoot(
+            ofTrashFolder: link.appendingPathComponent(".Trashes").appendingPathComponent("501"))
+
+        XCTAssertEqual(root, real.path)
+    }
+
+    /// Файл с внешнего диска «возвращался» на загрузочный: путь из записи считался от «/».
+    /// Чаще всего такой папки там нет, и возврат падал; а на резервном диске с тем же деревом
+    /// папок файл молча уезжал на другой диск.
+    func testAFileFromAnExternalDiskGoesBackToThatDisk() throws {
+        let disk = try disk()
+        let (trash, inTrash) = try putInTrash(of: disk, name: "снимок.jpg",
+                                              from: "/Photos/2024/", content: "кадр")
+        let home = disk.path + "/Photos/2024"
+
+        let entry = try XCTUnwrap(TrashService.entries(in: [trash]).first)
+        XCTAssertEqual(entry.originalFolder, home)
+        XCTAssertEqual(TrashService.originalFolder(forTrashedPath: inTrash.path), home)
+
+        // Возврат идёт, только когда место назначения — внутри своей папки: проверка ничего
+        // не создаёт в корне загрузочного диска, даже пока исправления нет.
+        guard entry.restoreDestination?.hasPrefix(disk.path + "/") == true else { return }
+        let restored = try TrashService.restore([entry])
+
+        XCTAssertEqual(restored, [home + "/снимок.jpg"])
+        XCTAssertEqual(try String(contentsOfFile: home + "/снимок.jpg", encoding: .utf8), "кадр")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: inTrash.path))
+    }
+
+    /// У файла из самого корня диска запись — одна косая черта.
+    func testAFileFromTheRootOfAnExternalDiskGoesBackToItsRoot() throws {
+        let disk = try disk()
+        let (trash, _) = try putInTrash(of: disk, name: "заметка.txt", from: "/",
+                                        content: "из корня")
+
+        let entry = try XCTUnwrap(TrashService.entries(in: [trash]).first)
+        XCTAssertEqual(entry.originalFolder, disk.path)
+
+        guard entry.restoreDestination?.hasPrefix(disk.path + "/") == true else { return }
+        try TrashService.restore([entry])
+
+        XCTAssertEqual(try String(contentsOfFile: disk.path + "/заметка.txt", encoding: .utf8),
+                       "из корня")
+    }
+
+    /// Диск чужой, и запись на нём мог написать кто угодно. Путь с «..» выводит за пределы
+    /// диска — по такой записи файл не возвращается никуда.
+    func testARecordThatClimbsOutOfItsDiskIsNotTrusted() throws {
+        let disk = try disk()
+        let (trash, inTrash) = try putInTrash(of: disk, name: "подарок.txt",
+                                              from: "/Photos/../../снаружи/")
+
+        let entry = try XCTUnwrap(TrashService.entries(in: [trash]).first)
+        // Пока место возврата есть, вызывать возврат нельзя: он унёс бы файл с «диска».
+        guard entry.originalFolder == nil else {
+            return XCTFail("запись с «..» принята: \(entry.originalFolder ?? "")")
+        }
+        XCTAssertThrowsError(try TrashService.restore([entry]))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: inTrash.path),
+                      "отказ оставляет файл в корзине")
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: tmp.appendingPathComponent("снаружи").path))
+    }
+
+    /// Имя в записи — одно звено пути. Путь на его месте Finder не пишет никогда: даже «/» из
+    /// имени на диске хранится двоеточием.
+    func testARecordWhoseNameIsAPathIsIgnored() throws {
+        for name in ["../../evil.txt", "вложенная/папка.txt", "..", "."] {
+            let url = try writeStore(record(trashName: "x.txt", folder: "Users/dimas/",
+                                            originalName: name))
+            XCTAssertNil(PutBackIndex.parse(url)["x.txt"], name)
+        }
+        // Двоеточие — обычная буква имени, такая запись читается.
+        let url = try writeStore(record(trashName: "a:b.txt", folder: "Users/dimas/",
+                                        originalName: "a:b.txt"))
+        XCTAssertEqual(PutBackIndex.parse(url)["a:b.txt"]?.name, "a:b.txt")
+    }
+
+    // MARK: - То же вживую: настоящий том, запись пишет система
+
+    /// В корзину отправляет сама программа, запись о возврате пишет система — проверяется, что
+    /// её вид понят верно, а не только наше о нём представление. Два файла разом: из папки и из
+    /// самого корня диска. Затем всё, что человек видит и делает: колонка «Откуда» и возврат.
+    ///
+    /// На главном потоке не только ради панели: из фонового потока XCTest записывает не все
+    /// неудачи, идущие подряд, — первая видна всегда, остальные через раз.
+    @MainActor
+    private func assertFilesTheSystemTrashedComeBack(fileSystem: String, megabytes: Int,
+                                                     file: StaticString = #filePath,
+                                                     line: UInt = #line) async throws {
+        let disk = try TestDiskImage(megabytes: megabytes, fileSystem: fileSystem, inVolumes: true)
+        defer { disk.detach() }
+        let root = URL(fileURLWithPath: disk.mountPoint)
+        let folder = root.appendingPathComponent("Документы/2024")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let deep = folder.appendingPathComponent("отчёт.txt")
+        let top = root.appendingPathComponent("заметка.txt")
+        try Data("вернусь".utf8).write(to: deep)
+        try Data("из корня".utf8).write(to: top)
+
+        let moved = try await DarwinFileOperations.trash(urls: [deep, top])
+        let trashedDeep = try XCTUnwrap(
+            moved.values.first { $0.lastPathComponent == deep.lastPathComponent },
+            "система не сказала, куда убрала файл", file: file, line: line)
+        let trashedTop = try XCTUnwrap(
+            moved.values.first { $0.lastPathComponent == top.lastPathComponent },
+            "система не сказала, куда убрала файл", file: file, line: line)
+        XCTAssertTrue(trashedDeep.path.hasPrefix(disk.mountPoint + "/"),
+                      "корзина не на том же диске: \(trashedDeep.path)", file: file, line: line)
+
+        // Записи система пишет не сразу и по одной: ждать обеих, а не гадать о сроке.
+        var entries: [TrashService.Entry] = []
+        for _ in 0..<80 {
+            entries = TrashService.entries().filter {
+                $0.url.path == trashedDeep.path || $0.url.path == trashedTop.path
+            }
+            if entries.count == 2, entries.allSatisfy({ $0.originalFolder != nil }) { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        guard let deepEntry = entries.first(where: { $0.url.path == trashedDeep.path }),
+              let topEntry = entries.first(where: { $0.url.path == trashedTop.path }),
+              let deepFrom = deepEntry.originalFolder, let topFrom = topEntry.originalFolder else {
+            throw XCTSkip("система не записала, откуда файлы (\(fileSystem)): проверять нечего")
+        }
+
+        XCTAssertEqual(deepFrom, folder.path, "файл из папки", file: file, line: line)
+        XCTAssertEqual(topFrom, disk.mountPoint, "файл из корня диска", file: file, line: line)
+        XCTAssertEqual(TrashService.items().first { $0.path == trashedDeep.path }?.owner,
+                       folder.path, "строка списка корзины", file: file, line: line)
+        XCTAssertEqual(TrashService.originalFolder(forTrashedPath: trashedDeep.path),
+                       folder.path, "по пути файла в корзине", file: file, line: line)
+        let id = UUID().uuidString
+        let panel = PanelViewModel(
+            service: CoreBridgeService(),
+            initialPath: NSHomeDirectory(),
+            pathDefaultsKey: "panel.path.trash.volume.test.\(id)",
+            viewModeDefaultsKey: "panel.mode.trash.volume.test.\(id)",
+            showHiddenFiles: false
+        )
+        panel.loadTrashDirectory()
+        XCTAssertEqual(panel.trashOrigins[trashedDeep.path], folder.path,
+                       "колонка «Откуда» в панели", file: file, line: line)
+
+        // Возврат идёт, только когда оба места назначения — на своём образе: проверка ничего
+        // не создаёт на загрузочном диске, даже пока исправления нет.
+        guard [deepEntry, topEntry].allSatisfy({
+            $0.restoreDestination?.hasPrefix(disk.mountPoint + "/") == true
+        }) else { return }
+        let restored = try TrashService.restore(paths: [trashedDeep.path, trashedTop.path])
+
+        XCTAssertEqual(Set(restored), [deep.path, top.path], file: file, line: line)
+        XCTAssertEqual(try String(contentsOf: deep, encoding: .utf8), "вернусь",
+                       file: file, line: line)
+        XCTAssertEqual(try String(contentsOf: top, encoding: .utf8), "из корня",
+                       file: file, line: line)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: trashedDeep.path),
+                       file: file, line: line)
+    }
+
+    @MainActor func testFilesTheSystemTrashedOnAnHFSDiskComeBack() async throws {
+        try await assertFilesTheSystemTrashedComeBack(fileSystem: "HFS+", megabytes: 4)
+    }
+
+    @MainActor func testFilesTheSystemTrashedOnAnAPFSDiskComeBack() async throws {
+        try await assertFilesTheSystemTrashedComeBack(fileSystem: "APFS", megabytes: 32)
+    }
+
+    @MainActor func testFilesTheSystemTrashedOnAnExFATDiskComeBack() async throws {
+        try await assertFilesTheSystemTrashedComeBack(fileSystem: "ExFAT", megabytes: 16)
     }
 
     // MARK: - Paths

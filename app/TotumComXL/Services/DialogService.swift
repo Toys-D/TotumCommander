@@ -162,6 +162,32 @@ final class DialogService {
         return result.buttonIndex == 1
     }
 
+    /// Вид вопроса о ключе сервера. Отдельно от показа — чтобы проверить без модального окна.
+    nonisolated static func serverTrustDialog(for challenge: ServerKeyChallenge,
+                                              server: String) -> FCXLMessageConfig {
+        let changed = challenge.status == .changed
+        return FCXLMessageConfig(
+            title: challenge.title,
+            message: challenge.question(server: server),
+            icon: changed ? "exclamationmark.triangle.fill" : "key.fill",
+            iconColor: changed ? .orange : .accentColor,
+            // Отказ слева, согласие справа. Если ключ сменился, по Enter — «Отмена»:
+            // согласиться с подменой случайным нажатием нельзя.
+            buttons: [
+                FCXLMessageButton(title: L("button.cancel"), kind: changed ? .primary : .normal),
+                FCXLMessageButton(title: changed ? L("network.serverKey.trustNew")
+                                                 : L("network.serverKey.trust"),
+                                  kind: changed ? .normal : .primary)
+            ])
+    }
+
+    /// Спросить, доверять ли серверу с таким ключом. true — человек согласился.
+    func askToTrustServer(_ challenge: ServerKeyChallenge, server: String) -> Bool {
+        // Согласие — всегда вторая кнопка; Escape и «Отмена» — отказ.
+        FCXLMessageDialog.run(Self.serverTrustDialog(for: challenge, server: server))
+            .buttonIndex == 1
+    }
+
     func showSaveChangesConfirmation(title: String, message: String) -> SaveChangesDecision {
         let result = FCXLMessageDialog.run(FCXLMessageConfig(
             title: title,

@@ -1,4 +1,5 @@
 import AppKit
+import Network
 import SwiftUI
 import XCTest
 @testable import TotumComXLApp
@@ -69,12 +70,39 @@ final class AppUpdaterTests: XCTestCase {
 
     // MARK: - Кому можно на месте
 
-    private func fakeBundle(named name: String, in dir: URL, payload: String) throws -> URL {
+    private func fakeBundle(named name: String, in dir: URL, payload: String,
+                            version: String? = nil) throws -> URL {
         let bundle = dir.appendingPathComponent(name)
         let macos = bundle.appendingPathComponent("Contents/MacOS")
         try FileManager.default.createDirectory(at: macos, withIntermediateDirectories: true)
         try Data(payload.utf8).write(to: macos.appendingPathComponent("TotumComXL"))
+        if let version {
+            try NSDictionary(dictionary: ["CFBundleShortVersionString": version])
+                .write(to: bundle.appendingPathComponent("Contents/Info.plist"))
+        }
         return bundle
+    }
+
+    /// Корзина для проверок: запоминает, что в неё отправили, и убирает это само — настоящая
+    /// Корзина человека не трогается.
+    private final class RecordingTrash: FileManager {
+        var trashed: [URL] = []
+
+        override func trashItem(at url: URL,
+                                resultingItemURL outResultingURL: AutoreleasingUnsafeMutablePointer<NSURL?>?) throws {
+            trashed.append(url)
+            try removeItem(at: url)
+        }
+    }
+
+    /// Обновить поддельную копию версии `version` и вернуть имена того, что ушло в Корзину.
+    private func retiredNames(oldVersion version: String?, apps: URL) throws -> [String] {
+        let old = try fakeBundle(named: "Totum Commander.app", in: apps, payload: "old", version: version)
+        let fresh = try fakeBundle(named: "Totum Commander.app", in: root.appendingPathComponent("image"),
+                                   payload: "new", version: "1.16")
+        let trash = RecordingTrash()
+        try UpdateSteps.install(from: fresh, over: old, tag: "1.16", retire: .trash, fileManager: trash)
+        return trash.trashed.map(\.lastPathComponent)
     }
 
     func test_препятствия() throws {
@@ -115,6 +143,40 @@ final class AppUpdaterTests: XCTestCase {
         XCTAssertEqual(payload, "new")
         let leftovers = try FileManager.default.contentsOfDirectory(atPath: apps.path)
         XCTAssertEqual(leftovers, ["Totum Commander.app"], "ни входящей, ни отставленной копии")
+    }
+
+    /// Старая копия уходит в Корзину под человеческим именем с номером версии, а не скрытым
+    /// «.Totum Commander.app.retired-123»: такое в Корзине не видно и не опознать.
+    func test_вКорзинуСтараяКопияУходитПодВидимымИменем() throws {
+        let apps = root.appendingPathComponent("Программы", isDirectory: true)
+        XCTAssertEqual(try retiredNames(oldVersion: "1.15", apps: apps), ["Totum Commander 1.15.app"])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: apps.path), ["Totum Commander.app"],
+                       "рядом с новой копией ничего не осталось")
+    }
+
+    /// Версию старой копии прочитать не удалось — имя всё равно видимое и говорящее.
+    func test_безНомераВерсииСтараяКопияТожеВидна() throws {
+        let apps = root.appendingPathComponent("Программы", isDirectory: true)
+        XCTAssertEqual(try retiredNames(oldVersion: nil, apps: apps),
+                       ["Totum Commander (\(L("updates.previousVersion"))).app"])
+    }
+
+    /// Из номера версии в имя идут только буквы, цифры, точка, дефис и подчёркивание — косая
+    /// черта увела бы копию в другую папку.
+    func test_номерВерсииВИмениБезРазделителей() throws {
+        let apps = root.appendingPathComponent("Программы", isDirectory: true)
+        XCTAssertEqual(try retiredNames(oldVersion: "1.15/beta 2", apps: apps), ["Totum Commander 1.15beta2.app"])
+    }
+
+    /// Рядом уже лежит что-то с таким именем — оно остаётся как было, старая копия уходит под
+    /// следующим свободным.
+    func test_занятоеИмяСтаройКопииНеЗатирается() throws {
+        let apps = root.appendingPathComponent("Программы", isDirectory: true)
+        let keepsake = try fakeBundle(named: "Totum Commander 1.15.app", in: apps, payload: "памятная")
+        XCTAssertEqual(try retiredNames(oldVersion: "1.15", apps: apps), ["Totum Commander 1.15 (2).app"])
+        let payload = try String(contentsOf: keepsake.appendingPathComponent("Contents/MacOS/TotumComXL"),
+                                 encoding: .utf8)
+        XCTAssertEqual(payload, "памятная")
     }
 
     /// Копия без исполняемого файла на место не встаёт — старая остаётся как была.
@@ -184,5 +246,215 @@ final class AppUpdaterTests: XCTestCase {
                 try png.write(to: URL(fileURLWithPath: dir + "/\(name).png"))
             }
         }
+    }
+
+    // MARK: - Отмена загрузки
+
+    /// Загрузка образа слушает отмену: задачу отменили — соединение рвётся сразу, а не тянется
+    /// до конца файла или до обрыва связи.
+    @MainActor
+    func test_загрузкаОстанавливаетсяПоОтмене() async throws {
+        let server = try StalledServer()
+        try await server.ready()
+        defer { server.stop() }
+        let url = try XCTUnwrap(URL(string: "http://127.0.0.1:\(server.port)/Totum-Commander-9.9.9.dmg"))
+        let destination = root.appendingPathComponent("образ.dmg")
+        let seen = LockedBox(0.0)
+        let verdict = LockedBox<Result<Void, Error>?>(nil)
+
+        let task = Task.detached {
+            do {
+                try await UpdateSteps.download(url, to: destination) { seen.value = max(seen.value, $0) }
+                verdict.value = .success(())
+            } catch {
+                verdict.value = .failure(error)
+            }
+        }
+        await updaterWaitUntil(10) { seen.value > 0 }
+        guard seen.value > 0 else {
+            task.cancel()
+            server.stop()
+            await task.value
+            return XCTFail("загрузка не пошла")
+        }
+
+        task.cancel()
+        await updaterWaitUntil(3) { verdict.value != nil }
+        let stopped = verdict.value
+        XCTAssertNotNil(stopped, "загрузка не остановилась по отмене")
+        server.stop()
+        await task.value
+
+        if let stopped {
+            switch stopped {
+            case .success:
+                XCTFail("отменённая загрузка сообщила об успехе")
+            case .failure(let error):
+                let ns = error as NSError
+                XCTAssertTrue(error is CancellationError
+                                || (ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled),
+                              "ошибка отменённой загрузки — не отмена: \(error)")
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path),
+                       "от отменённой загрузки остался файл")
+    }
+
+    /// «Отмена» под полосой хода: загрузка останавливается, кнопка «Обновить» возвращается,
+    /// программа на месте не тронута.
+    @MainActor
+    func test_отменаЗагрузкиВозвращаетВПокой() async throws {
+        let server = try StalledServer()
+        try await server.ready()
+        defer { server.stop() }
+        let app = try fakeBundle(named: "Totum Commander.app", in: root, payload: "старая", version: "1.0")
+        let base = "http://127.0.0.1:\(server.port)"
+        let json = Data("""
+        {"tag_name": "v9.9.9", "html_url": "\(base)/release", "assets": [
+          {"name": "SHA256SUMS.txt", "browser_download_url": "\(base)/SHA256SUMS.txt"},
+          {"name": "Totum-Commander-9.9.9.dmg", "browser_download_url": "\(base)/Totum-Commander-9.9.9.dmg"}
+        ]}
+        """.utf8)
+        let release = UpdateChecker.Release(version: "9.9.9",
+                                            url: try XCTUnwrap(URL(string: base + "/release")))
+        let updater = AppUpdater()
+        func downloaded() -> Double {
+            if case .downloading(let done) = updater.stage { return done }
+            return 0
+        }
+
+        updater.start(release, bundle: app, fetch: { json })
+        await updaterWaitUntil(10) { downloaded() > 0 }
+        guard downloaded() > 0 else {
+            server.stop()
+            await updaterWaitUntil(5) { !updater.isBusy }
+            return XCTFail("загрузка не пошла: \(updater.stage)")
+        }
+
+        updater.cancel()
+        await updaterWaitUntil(3) { updater.stage == .idle }
+        XCTAssertEqual(updater.stage, .idle, "загрузка не остановилась — кнопка «Обновить» не вернулась")
+
+        server.stop()
+        await updaterWaitUntil(5) { !updater.isBusy }
+        XCTAssertFalse(updater.isBusy, "обновление так и не закончилось")
+        let binary = app.appendingPathComponent("Contents/MacOS/TotumComXL")
+        XCTAssertEqual(try String(contentsOf: binary, encoding: .utf8), "старая", "программа на месте тронута")
+        let work = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("fcxl-update-\(ProcessInfo.processInfo.processIdentifier)")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: work.path), "рабочая папка загрузки не убрана")
+    }
+
+    /// Под полосой хода загрузки стоит «Отмена», и она нажимается — в обеих темах.
+    @MainActor
+    func test_строкаЗагрузки_отменаПодПолосой() throws {
+        MouseLikeAPerson.setAccessibility(true)
+        defer { MouseLikeAPerson.setAccessibility(false) }
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            let theme = name == .aqua ? "светлая" : "тёмная"
+            let presses = PressCounter()
+            let view = UpdateDownloadRow(fraction: 0.42) { presses.count += 1 }
+                .padding(16)
+                .frame(width: 420, height: 90, alignment: .leading)
+                .background(Color(nsColor: .windowBackgroundColor))
+            let host = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 420, height: 90),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.appearance = NSAppearance(named: name)
+            window.contentView = host
+            window.makeKeyAndOrderFront(nil)
+            defer { window.orderOut(nil) }
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+
+            if let dir = ProcessInfo.processInfo.environment["FCXL_LOOK_DIR"],
+               let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                host.cacheDisplay(in: host.bounds, to: rep)
+                try rep.representation(using: .png, properties: [:])?
+                    .write(to: URL(fileURLWithPath: dir).appendingPathComponent("загрузка-\(theme).png"))
+            }
+
+            XCTAssertTrue(MouseLikeAPerson.press(L("button.cancel"), in: window),
+                          "под полосой хода нет кнопки «Отмена» (\(theme))")
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            XCTAssertEqual(presses.count, 1, "«Отмена» не нажалась (\(theme))")
+        }
+    }
+}
+
+/// Сервер на 127.0.0.1, который начинает отдавать образ и замирает: 256 КБ из обещанных 50 МБ.
+/// Так выглядит загрузка на оборвавшейся связи — и на ней видно, слушает ли она отмену.
+private final class StalledServer: @unchecked Sendable {
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "fcxl.tests.stalled-server")
+    private let lock = NSLock()
+    private var connections: [NWConnection] = []
+
+    var port: UInt16 { listener.port?.rawValue ?? 0 }
+
+    init() throws {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
+        listener = try NWListener(using: parameters)
+        listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { return connection.cancel() }
+            self.lock.withLock { self.connections.append(connection) }
+            connection.start(queue: self.queue)
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { _, _, _, _ in
+                let head = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
+                    + "Content-Length: 50000000\r\n\r\n"
+                var body = Data(head.utf8)
+                body.append(Data(count: 256 * 1024))
+                connection.send(content: body, completion: .contentProcessed { _ in })
+            }
+        }
+    }
+
+    func ready() async throws {
+        let answered = LockedBox(false)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            listener.stateUpdateHandler = { state in
+                guard !answered.value else { return }
+                switch state {
+                case .ready:
+                    answered.value = true
+                    continuation.resume()
+                case .failed(let error):
+                    answered.value = true
+                    continuation.resume(throwing: error)
+                default:
+                    break
+                }
+            }
+            listener.start(queue: queue)
+        }
+    }
+
+    func stop() {
+        listener.cancel()
+        lock.withLock { connections }.forEach { $0.cancel() }
+    }
+}
+
+private final class LockedBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+
+    init(_ value: Value) { stored = value }
+
+    var value: Value {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+}
+
+private final class PressCounter { var count = 0 }
+
+@MainActor
+private func updaterWaitUntil(_ timeout: TimeInterval, _ condition: () -> Bool) async {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !condition(), Date() < deadline {
+        try? await Task.sleep(nanoseconds: 5_000_000)
     }
 }

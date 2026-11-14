@@ -66,6 +66,58 @@ final class UndoJournalTests: XCTestCase {
         XCTAssertFalse(UndoJournal.shared.canUndo, "the replay's own operation was recorded")
     }
 
+    /// A replay may take a while — a folder coming back from another disk. A second Cmd+Z in
+    /// the meantime must not pick up the very record that is still being replayed.
+    func testASecondUndoWhileOneRunsDoesNothing() async throws {
+        UndoJournal.shared.record(.renamed(from: "/a/один", to: "/a/два"))
+        UndoJournal.shared.record(.renamed(from: "/a/три", to: "/a/четыре"))
+        UndoJournal.shared.record(.renamed(from: "/a/пять", to: "/a/шесть"))
+        try await UndoJournal.shared.undo { _ in }      // two left to undo, one to redo
+
+        var replays = 0
+        let slow = Task { @MainActor in
+            try await UndoJournal.shared.undo { _ in
+                replays += 1
+                try await Task.sleep(nanoseconds: 200_000_000)
+            }
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        try await UndoJournal.shared.undo { _ in replays += 1 }
+        try await slow.value
+
+        XCTAssertEqual(replays, 1, "a second undo started while the first was still running")
+        XCTAssertEqual(UndoJournal.shared.undoStack.count, 1, "exactly one record was undone")
+        XCTAssertEqual(UndoJournal.shared.redoStack.count, 2)
+    }
+
+    /// Nor may a redo run alongside an undo — and the menu offers neither until it is over.
+    func testNothingIsOfferedWhileAReplayRuns() async throws {
+        UndoJournal.shared.record(.renamed(from: "/a/один", to: "/a/два"))
+        UndoJournal.shared.record(.renamed(from: "/a/три", to: "/a/четыре"))
+        try await UndoJournal.shared.undo { _ in }      // one left to undo, one to redo
+
+        var replays = 0
+        var offeredUndo = true, offeredRedo = true
+        let slow = Task { @MainActor in
+            try await UndoJournal.shared.undo { _ in
+                replays += 1
+                offeredUndo = UndoJournal.shared.canUndo
+                offeredRedo = UndoJournal.shared.canRedo
+                try await Task.sleep(nanoseconds: 200_000_000)
+            }
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        try await UndoJournal.shared.redo { _ in replays += 1 }
+        try await slow.value
+
+        XCTAssertEqual(replays, 1, "a redo started while an undo was still running")
+        XCTAssertFalse(offeredUndo, "undo was on offer in the middle of a replay")
+        XCTAssertFalse(offeredRedo, "redo was on offer in the middle of a replay")
+        XCTAssertFalse(UndoJournal.shared.canUndo, "the one record left was undone")
+        XCTAssertTrue(UndoJournal.shared.canRedo, "and both can be redone once it is over")
+        XCTAssertEqual(UndoJournal.shared.redoStack.count, 2)
+    }
+
     func testTheStackIsBounded() {
         for i in 0..<40 {
             UndoJournal.shared.record(.created(path: "/a/\(i)", isDirectory: true))

@@ -18,6 +18,7 @@ set(FCXL_CORE_SOURCES
     src/archive/archive_ops.cpp
     src/network/ftp_client.cpp
     src/network/sftp_client.cpp
+    src/network/server_trust.cpp
     src/terminal/pty_handler.cpp
     src/viewer/text_viewer.cpp
     src/viewer/hex_viewer.cpp

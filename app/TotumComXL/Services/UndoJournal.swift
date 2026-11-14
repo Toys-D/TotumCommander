@@ -55,8 +55,10 @@ final class UndoJournal: ObservableObject {
 
     private init() {}
 
-    var canUndo: Bool { !undoStack.isEmpty }
-    var canRedo: Bool { !redoStack.isEmpty }
+    /// Neither is on offer while a replay runs: it may take a while — a folder coming back from
+    /// another disk — and a second Cmd+Z would pick up the very record still being walked.
+    var canUndo: Bool { !isReplaying && !undoStack.isEmpty }
+    var canRedo: Bool { !isReplaying && !redoStack.isEmpty }
     var undoDescription: String? { undoStack.last?.menuDescription }
     var redoDescription: String? { redoStack.last?.menuDescription }
 
@@ -74,7 +76,7 @@ final class UndoJournal: ObservableObject {
     /// The stack changes only when the replay SUCCEEDS — a failed undo keeps the record, so
     /// fixing whatever was in the way (a name now occupied, say) and pressing Cmd+Z again works.
     func undo(replay: (Record) async throws -> Void) async throws {
-        guard let record = undoStack.last else { return }
+        guard !isReplaying, let record = undoStack.last else { return }
         isReplaying = true
         defer { isReplaying = false }
         try await replay(record)
@@ -84,7 +86,7 @@ final class UndoJournal: ObservableObject {
     }
 
     func redo(replay: (Record) async throws -> Void) async throws {
-        guard let record = redoStack.last else { return }
+        guard !isReplaying, let record = redoStack.last else { return }
         isReplaying = true
         defer { isReplaying = false }
         try await replay(record)

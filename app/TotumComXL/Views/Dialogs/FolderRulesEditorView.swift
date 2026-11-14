@@ -219,6 +219,7 @@ struct FolderRulesEditorView: View {
                         .buttonStyle(.plain)
                         .font(.system(size: 12))
                         .foregroundStyle(accent)
+                        .contentShape(Rectangle())
                         Spacer()
                     }
                 }
