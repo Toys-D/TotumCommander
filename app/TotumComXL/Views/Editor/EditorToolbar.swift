@@ -24,12 +24,45 @@ final class EditorViewOptions: ObservableObject {
     @Published var fontSize = 13 {
         didSet { if fontSize != oldValue { editor?.setFontSize(fontSize) } }
     }
-    @Published var theme = "vs-dark" {
+    /// Тема текста (TextTheme): системная — за темой программы. Запоминается для следующих окон.
+    @Published var theme = TextTheme.system.rawValue {
         didSet {
             guard theme != oldValue else { return }
-            editor?.setTheme(theme)
-            onThemeChange?(theme)
+            textTheme.store(forKey: TextTheme.editorKey, in: defaults)
+            sendTheme()
         }
+    }
+
+    var textTheme: TextTheme { TextTheme(rawValue: theme) ?? .system }
+    /// Тема Monaco сейчас — у системной она зависит от темы программы.
+    var monacoTheme: String { textTheme.monacoTheme(appIsDark: TextTheme.appIsDark) }
+
+    private let defaults: UserDefaults
+    nonisolated(unsafe) private var appearanceObserver: NSObjectProtocol?
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        theme = TextTheme.stored(forKey: TextTheme.editorKey, in: defaults).rawValue
+        // Тема программы сменилась (кнопка солнца и луны или сама macOS): системная —
+        // за ней, вместе с рамкой окна.
+        appearanceObserver = NotificationCenter.default.addObserver(
+            forName: .fcxlAppearanceChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.textTheme == .system else { return }
+                self.objectWillChange.send()
+                self.sendTheme()
+            }
+        }
+    }
+
+    deinit {
+        if let appearanceObserver { NotificationCenter.default.removeObserver(appearanceObserver) }
+    }
+
+    private func sendTheme() {
+        editor?.setTheme(monacoTheme)
+        onThemeChange?(monacoTheme)
     }
     @Published var wordWrap = true {
         didSet { if wordWrap != oldValue { editor?.toggleWordWrap(wordWrap) } }
@@ -55,7 +88,7 @@ final class EditorViewOptions: ObservableObject {
     func apply(to editor: MonacoEditorController) {
         editor.setFontFamily(font)
         editor.setFontSize(fontSize)
-        editor.setTheme(theme)
+        editor.setTheme(monacoTheme)
         editor.toggleWordWrap(wordWrap)
         editor.toggleWhitespace(Self.whitespaceModes[whitespace])
         editor.toggleMinimap(minimap)
@@ -105,7 +138,7 @@ struct EditorChromeModifier: ViewModifier {
     @ObservedObject var options: EditorViewOptions
 
     func body(content: Content) -> some View {
-        let chrome = EditorChrome.forTheme(options.theme)
+        let chrome = EditorChrome.forTheme(options.monacoTheme)
         content
             .background(Color(nsColor: chrome.background))
             .environment(\.colorScheme, chrome.scheme)
@@ -136,8 +169,8 @@ struct EditorToolbar: View {
                             title: { $0 }, symbol: "textformat", captionWidth: 64)
                     .help(L("editor.toolbar.font.tip"))
                 fontSize
-                FCXLBarMenu(items: MonacoEditorController.editorThemes.map(\.id), selection: $options.theme,
-                            title: { id in MonacoEditorController.editorThemes.first { $0.id == id }?.name ?? id },
+                FCXLBarMenu(items: TextTheme.allCases.map(\.rawValue), selection: $options.theme,
+                            title: { TextTheme(rawValue: $0)?.title ?? $0 },
                             symbol: "circle.lefthalf.filled")
                     .help(L("editor.toolbar.theme.tip"))
                 separator

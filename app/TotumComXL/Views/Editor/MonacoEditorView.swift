@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import WebKit
 
 /// Breaks the WKUserContentController → handler retain cycle. The content controller is
@@ -83,7 +84,7 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
     /// The trailing `\r` step is essential: inside a template literal ECMAScript
     /// normalizes a raw CR / CRLF to LF, so a Windows file would silently lose its
     /// line endings on the round-trip. Emitting the `\r` escape preserves them.
-    static func escapeForJSTemplate(_ s: String) -> String {
+    nonisolated static func escapeForJSTemplate(_ s: String) -> String {
         s.replacingOccurrences(of: "\\", with: "\\\\")
          .replacingOccurrences(of: "`", with: "\\`")
          .replacingOccurrences(of: "$", with: "\\$")
@@ -91,7 +92,7 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
     }
 
     /// Escape a string for safe insertion into a JS single-quoted string ('...')
-    static func escapeForJSString(_ s: String) -> String {
+    nonisolated static func escapeForJSString(_ s: String) -> String {
         s.replacingOccurrences(of: "\\", with: "\\\\")
          .replacingOccurrences(of: "'", with: "\\'")
          .replacingOccurrences(of: "\n", with: "\\n")
@@ -100,10 +101,6 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
     // MARK: - Shared Constants
 
     static let editorFonts = ["SF Mono", "Menlo", "Monaco", "Courier New", "Fira Code", "JetBrains Mono", "Consolas", "Source Code Pro"]
-
-    static let editorThemes: [(name: String, id: String)] = [
-        (L("editor.theme.dark"), "vs-dark"), (L("editor.theme.light"), "vs"), (L("editor.theme.highContrast"), "hc-black")
-    ]
 
     static let editorLanguages: [(name: String, id: String)] = [
         (L("editor.language.plainText"), "plaintext"),
@@ -132,15 +129,37 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
 
     // MARK: - Public API
 
+    /// Текст — в редактор. Текст идёт аргументом (`callAsyncJavaScript`), а не вставкой в код
+    /// страницы: файл в десятки МБ, вставленный в код, WebKit выполнять отказывался («Request
+    /// to run JavaScript failed»), и лист оставался пустым; экранировать при этом нечего —
+    /// и переводы строк Windows (\r\n) доходят как есть. Пока редактор не показал текст —
+    /// `onLoadingChanged(true)`: окно и панель показывают «Загрузка…», а не пустой лист.
     func setContent(_ text: String, language: String) {
-        if isReady {
-            let escaped = Self.escapeForJSTemplate(text)
-            let langEsc = Self.escapeForJSString(language)
-            webView.evaluateJavaScript("setContent(`\(escaped)`, '\(langEsc)')")
-        } else {
+        guard isReady else {
             pendingContent = (text, language)
+            onLoadingChanged?(true)
+            return
+        }
+        contentGeneration += 1
+        let generation = contentGeneration
+        onLoadingChanged?(true)
+        webView.callAsyncJavaScript("setContent(text, language)",
+                                    arguments: ["text": text, "language": language],
+                                    in: nil, in: .page) { [weak self] result in
+            // Пока текст шёл, могли открыть другой файл — его «готово» важнее.
+            guard let self, generation == self.contentGeneration else { return }
+            if case .failure(let error) = result {
+                Self.diary.error("setContent failed: \(error.localizedDescription, privacy: .public)")
+            }
+            self.onLoadingChanged?(false)
         }
     }
+
+    private static let diary = Logger(subsystem: "com.fcxl.filecommander", category: "editor")
+
+    /// Редактор занят текстом (true) или уже показал его (false).
+    var onLoadingChanged: ((Bool) -> Void)?
+    private var contentGeneration = 0
 
     func getContent(completion: @escaping (String) -> Void) {
         webView.evaluateJavaScript("getContent()") { result, _ in
@@ -348,7 +367,7 @@ final class MonacoEditorController: NSObject, WKScriptMessageHandler, WKNavigati
     /// that a save would return them unchanged, the text is still shown, flagged non-decodable:
     /// the caller opens the document read-only. Shared by both the standalone editor window
     /// and the embedded editor panel.
-    static func decodeText(_ data: Data) -> (text: String, encoding: TextFileEncoding, decodable: Bool) {
+    nonisolated static func decodeText(_ data: Data) -> (text: String, encoding: TextFileEncoding, decodable: Bool) {
         if let exact = TextFileCodec.decodeForEditing(data) { return (exact.text, exact.encoding, true) }
         let shown = TextFileCodec.decodeForDisplay(data)
         return (shown.text, shown.encoding, false)

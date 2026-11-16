@@ -51,6 +51,9 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
     private var tabBar: NSView?
     /// Подложка под текстом и строкой состояния — цветом темы текста (EditorChrome).
     private var contentContainer: NSView?
+    /// «Загрузка…» поверх листа — см. showLoading.
+    private var loadingOverlay: NSView?
+    private var loadingSpinner: NSProgressIndicator?
 
     /// Paths of unsaved (dirty) tabs backed by a real file on the given volume. Archive-sourced
     /// tabs live in a temp dir (not the volume), so they're excluded — the eject warning only
@@ -126,6 +129,26 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
         // WebView
         monaco.webView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(monaco.webView)
+
+        // «Загрузка…» — над листом, по центру; видна, пока редактор не показал файл.
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        let loadingLabel = NSTextField(labelWithString: L("editor.loading"))
+        loadingLabel.textColor = .secondaryLabelColor
+        let loading = NSStackView(views: [spinner, loadingLabel])
+        loading.orientation = .horizontal
+        loading.spacing = 8
+        loading.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(loading)
+        NSLayoutConstraint.activate([
+            loading.centerXAnchor.constraint(equalTo: monaco.webView.centerXAnchor),
+            loading.centerYAnchor.constraint(equalTo: monaco.webView.centerYAnchor),
+        ])
+        loadingOverlay = loading
+        loadingSpinner = spinner
+        monaco.onLoadingChanged = { [weak self] on in self?.showLoading(on) }
+        showLoading(true)
         NSLayoutConstraint.activate([
             findBar.topAnchor.constraint(equalTo: container.topAnchor),
             findBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -200,7 +223,7 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
     /// Окно под тему текста: тёмная тема — тёмное окно со светлыми подписями, светлая — светлое.
     /// Заголовок и вкладки берут оформление окна, подложка под текстом — ровно цвет текста.
     private func applyChrome() {
-        let chrome = EditorChrome.forTheme(viewOptions.theme)
+        let chrome = EditorChrome.forTheme(viewOptions.monacoTheme)
         window?.appearance = chrome.appearance
         contentContainer?.layer?.backgroundColor = chrome.background.cgColor
         renderTabBar()
@@ -243,24 +266,43 @@ final class MonacoEditorWindow: NSWindowController, NSWindowDelegate {
         refreshStatus()
     }
 
+    /// Файл вкладки — в редактор. Чтение и разбор кодировки — в фоне: файл в десятки МБ на
+    /// главном потоке держал окно, а лист тем временем стоял пустым.
     private func loadFileContent() {
         guard activeTabIndex < tabs.count else { return }
-        let tab = tabs[activeTabIndex]
-        do {
-            let data = try Data(contentsOf: URL(fileURLWithPath: tab.path), options: [.mappedIfSafe])
-            let decoded = MonacoEditorController.decodeText(data)
-            tabs[activeTabIndex].content = decoded.text
-            tabs[activeTabIndex].lastSaved = decoded.text
-            tabs[activeTabIndex].encoding = decoded.encoding
-            tabs[activeTabIndex].isReadOnly = !decoded.decodable
-            monaco.setContent(decoded.text, language: tab.language)
-            viewOptions.language = tab.language
-            viewOptions.apply(to: monaco)
-        } catch {
-            tabs[activeTabIndex].isReadOnly = true
-            monaco.setContent("// Error loading file: \(error.localizedDescription)", language: "plaintext")
+        let index = activeTabIndex
+        let path = tabs[index].path
+        let language = tabs[index].language
+        showLoading(true)
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let result = Result { try Data(contentsOf: URL(fileURLWithPath: path), options: [.mappedIfSafe]) }
+                .map { MonacoEditorController.decodeText($0) }
+            await MainActor.run {
+                // Пока читалось, могли перейти на другую вкладку.
+                guard let self, index < self.tabs.count, self.activeTabIndex == index,
+                      self.tabs[index].path == path else { return }
+                switch result {
+                case .success(let decoded):
+                    self.tabs[index].content = decoded.text
+                    self.tabs[index].lastSaved = decoded.text
+                    self.tabs[index].encoding = decoded.encoding
+                    self.tabs[index].isReadOnly = !decoded.decodable
+                    self.monaco.setContent(decoded.text, language: language)
+                    self.viewOptions.language = language
+                    self.viewOptions.apply(to: self.monaco)
+                case .failure(let error):
+                    self.tabs[index].isReadOnly = true
+                    self.monaco.setContent("// Error loading file: \(error.localizedDescription)", language: "plaintext")
+                }
+                self.resetStatus()
+            }
         }
-        resetStatus()
+    }
+
+    /// «Загрузка…» поверх листа, пока редактор не показал файл.
+    private func showLoading(_ on: Bool) {
+        loadingOverlay?.isHidden = !on
+        if on { loadingSpinner?.startAnimation(nil) } else { loadingSpinner?.stopAnimation(nil) }
     }
 
     // MARK: - Tabs

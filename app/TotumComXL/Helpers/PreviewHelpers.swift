@@ -698,14 +698,27 @@ enum LongLineClip {
         let source = text as NSString
         let length = source.length
         guard length > totalLimit else { return clip(text, limit: lineLimit) }
-        // По концу строки, если он не слишком далеко назад; иначе — по целому знаку.
-        var cut = source.lineRange(for: NSRange(location: totalLimit, length: 0)).location
-        if cut < totalLimit / 2 {
-            cut = source.rangeOfComposedCharacterSequence(at: totalLimit).location
+        let head = chunk(of: source, from: 0, totalLimit: totalLimit, lineLimit: lineLimit)
+        let tail = head.text.hasSuffix("\n") ? "" : "\n"
+        return head.text + tail + "\n" + totalMarker(shown: head.end, total: length) + "\n"
+    }
+
+    /// Порция текста для «Показать дальше»: от `from` не длиннее `totalLimit` знаков, по концу
+    /// строки, если он не слишком далеко назад, иначе — по целому знаку; длинные строки внутри
+    /// обрезаны, как в `clip`. `end` — откуда начнётся следующая. Звать вне главного потока.
+    static func chunk(of source: NSString, from: Int, totalLimit: Int = defaultTotal,
+                      lineLimit: Int = defaultLimit) -> (text: String, end: Int) {
+        let length = source.length
+        var cut = length
+        if length - from > totalLimit {
+            let limit = from + totalLimit
+            cut = source.lineRange(for: NSRange(location: limit, length: 0)).location
+            if cut <= from + totalLimit / 2 {
+                cut = source.rangeOfComposedCharacterSequence(at: limit).location
+            }
         }
-        let head = clip(source.substring(to: cut), limit: lineLimit)
-        let tail = head.hasSuffix("\n") ? "" : "\n"
-        return head + tail + "\n" + totalMarker(shown: cut, total: length) + "\n"
+        let text = source.substring(with: NSRange(location: from, length: cut - from))
+        return (clip(text, limit: lineLimit), cut)
     }
 
     static func marker(remaining: Int) -> String {

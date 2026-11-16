@@ -165,7 +165,14 @@
     }
 
     function setFontSize(size) { if (editor) editor.updateOptions({ fontSize: size }); }
-    function setTheme(theme) { monaco.editor.setTheme(theme); }
+    // Фон страницы — цветом темы: плашки Monaco (например «много неоднозначных символов»)
+    // прозрачны и показывали тёмный фон страницы под тёмными буквами светлой темы.
+    var themeBackgrounds = { 'vs': '#fffffe', 'vs-dark': '#1e1e1e', 'hc-black': '#000000' };
+    function setTheme(theme) {
+        monaco.editor.setTheme(theme);
+        document.documentElement.style.background = document.body.style.background =
+            themeBackgrounds[theme] || '#1e1e1e';
+    }
     function toggleMinimap(show) { if (editor) editor.updateOptions({ minimap: { enabled: show } }); }
     function toggleWordWrap(wrap) { if (editor) editor.updateOptions({ wordWrap: wrap ? 'on' : 'off' }); }
     function toggleWhitespace(mode) { if (editor) editor.updateOptions({ renderWhitespace: mode }); }

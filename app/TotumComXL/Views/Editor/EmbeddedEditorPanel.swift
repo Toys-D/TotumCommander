@@ -75,6 +75,14 @@ struct EmbeddedEditorPanel: View {
                 isDirty: $isDirty,
                 statusText: $statusText
             )
+            .overlay {
+                if controller.isLoading {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(L("editor.loading")).foregroundStyle(.secondary)
+                    }
+                }
+            }
 
             // Status bar
             HStack {
@@ -189,6 +197,8 @@ final class EmbeddedMonacoState: ObservableObject {
     var source: EditorDocumentSource = .fileSystem
     /// Set once the archive's temp copy has been saved, so it differs from the archive.
     var archiveNeedsUpdate = false
+    /// Редактор ещё не показал файл — над листом «Загрузка…», а не пустота.
+    @Published var isLoading = true
 
     func save(to path: String, completion: @escaping (Bool) -> Void) {
         guard let monaco else { completion(false); return }
@@ -237,6 +247,7 @@ struct EmbeddedMonacoWebView: NSViewRepresentable {
         let monaco = MonacoEditorController(findModel: controller.findModel)
         controller.monaco = monaco
         controller.options.editor = monaco
+        monaco.onLoadingChanged = { [weak controller] on in controller?.isLoading = on }
 
         monaco.onDirtyChanged = { dirty in
             DispatchQueue.main.async { self.isDirty = dirty }
@@ -260,29 +271,40 @@ struct EmbeddedMonacoWebView: NSViewRepresentable {
 
         monaco.onReady = { [weak controller] in
             let lang = MonacoEditorController.detectLanguage(for: filePath)
-            guard let data = try? Data(contentsOf: URL(fileURLWithPath: filePath), options: [.mappedIfSafe]) else {
-                controller?.isReadOnly = true
-                monaco.setContent("// Error loading file", language: "plaintext")
-                return
+            // Чтение и разбор кодировки — в фоне: файл в десятки МБ держал бы окно программы.
+            Task.detached(priority: .userInitiated) {
+                let data = try? Data(contentsOf: URL(fileURLWithPath: filePath), options: [.mappedIfSafe])
+                let decoded = data.map(MonacoEditorController.decodeText)
+                await MainActor.run { fill(decoded, language: lang, controller: controller, monaco: monaco) }
             }
-            let decoded = MonacoEditorController.decodeText(data)
-            controller?.encoding = decoded.encoding
-            controller?.isReadOnly = !decoded.decodable
-            monaco.setContent(decoded.text, language: lang)
-            // Курсор в начале; редактор сообщит о нём, только когда он сдвинется, а кодировку
-            // файла надо показать сразу.
-            let encodingName = decoded.encoding.name
-            DispatchQueue.main.async {
-                self.statusText = L("editor.status.initial") + "  |  " + encodingName
-            }
-            // Всё выбранное на полосе — шрифт, перенос строк (он включён сразу), миникарта…
-            controller?.options.apply(to: monaco)
-            // Focus the editor so typing works right after F4 (no click needed).
-            monaco.webView.window?.makeFirstResponder(monaco.webView)
-            monaco.focusEditor()
         }
 
         return monaco.webView
+    }
+
+    /// Прочитанный файл — в редактор (или пометка, что не прочитался).
+    @MainActor
+    private func fill(_ decoded: (text: String, encoding: TextFileEncoding, decodable: Bool)?, language lang: String,
+                      controller: EmbeddedMonacoState?, monaco: MonacoEditorController) {
+        guard let decoded else {
+            controller?.isReadOnly = true
+            monaco.setContent("// Error loading file", language: "plaintext")
+            return
+        }
+        controller?.encoding = decoded.encoding
+        controller?.isReadOnly = !decoded.decodable
+        monaco.setContent(decoded.text, language: lang)
+        // Курсор в начале; редактор сообщит о нём, только когда он сдвинется, а кодировку
+        // файла надо показать сразу.
+        let encodingName = decoded.encoding.name
+        DispatchQueue.main.async {
+            self.statusText = L("editor.status.initial") + "  |  " + encodingName
+        }
+        // Всё выбранное на полосе — шрифт, перенос строк (он включён сразу), миникарта…
+        controller?.options.apply(to: monaco)
+        // Focus the editor so typing works right after F4 (no click needed).
+        monaco.webView.window?.makeFirstResponder(monaco.webView)
+        monaco.focusEditor()
     }
 
     func updateNSView(_ nsView: WKWebView, context: Context) {}

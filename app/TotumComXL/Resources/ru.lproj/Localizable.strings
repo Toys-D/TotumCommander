@@ -741,6 +741,7 @@
 "viewer.binaryFile" = "Бинарный файл";
 "viewer.longLineClipped" = "  … ещё %@ знаков в этой строке — целиком в редакторе (F4)";
 "viewer.textClipped" = "… показаны первые %@ знаков из %@ — целиком в редакторе (F4)";
+"viewer.showMore" = "Показать дальше — ещё %@ знаков";
 "viewer.useBinaryHint" = "Используйте режим HEX для просмотра бинарных данных";
 "viewer.noFilesInPanel" = "В текущей панели нет файлов для просмотра";
 "quickView.noFile" = "Нет файла для предпросмотра";
@@ -1329,6 +1330,7 @@
 "volume.iface.diskImage.mode" = "Лежит на диске компьютера — читается целиком, наблюдение за папкой включено.";
 "volume.iface.external.mode" = "Энергосбережение — внешний диск. Размеры папок отключены, метаданные по запросу";
 "editor.status.initial" = "Стр 1, Кол 1";
+"editor.loading" = "Загрузка…";
 "editor.status.position" = "Стр %d, Кол %d  |  Строк: %d";
 "editor.status.selection" = "Выд: %d";
 "editor.toolbar.find" = "Найти";
@@ -2921,3 +2923,10 @@ Totum Commander может забирать свои F-клавиши, пока 
 "terminal.splitStacked" = "Разделить друг под другом";
 "terminal.newTab" = "Новый терминал";
 "terminal.closePane" = "Закрыть часть";
+
+/* Тема текста (TextTheme) */
+"textTheme.system" = "Системная";
+"textTheme.light" = "Светлая";
+"textTheme.dark" = "Тёмная";
+"textTheme.contrast" = "Контрастная";
+"viewer.textTheme.tip" = "Тема текста: системная идёт за темой программы";

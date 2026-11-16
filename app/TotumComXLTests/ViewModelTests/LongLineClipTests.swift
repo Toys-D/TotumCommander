@@ -75,5 +75,35 @@ final class LongLineClipTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 2.0)
         XCTAssertLessThanOrEqual((shown as NSString).length, LongLineClip.defaultTotal + 500)
     }
+
+    // MARK: - Порции для «Показать дальше»
+
+    /// Порции идут подряд, режутся по концу строки и вместе дают весь текст.
+    func test_порцииПодрядИВместеВесьТекст() {
+        let text = (0..<3_000).map { "строка \($0) " + String(repeating: "ж", count: $0 % 50) }
+            .joined(separator: "\n")
+        let source = text as NSString
+        var parts: [String] = []
+        var offset = 0
+        while offset < source.length {
+            let part = LongLineClip.chunk(of: source, from: offset, totalLimit: 10_000, lineLimit: 100_000)
+            XCTAssertGreaterThan(part.end, offset)
+            if part.end < source.length {
+                XCTAssertEqual(source.character(at: part.end - 1), 0x0A, "порция кончается концом строки")
+            }
+            parts.append(part.text)
+            offset = part.end
+        }
+        XCTAssertGreaterThan(parts.count, 3)
+        XCTAssertEqual(parts.joined(), text)
+    }
+
+    /// Строка длиннее порции режется по целому знаку, а длинные строки внутри порции — как в `clip`.
+    func test_порцияВнутриОднойОгромнойСтроки() {
+        let source = String(repeating: "Q", count: 50_000) as NSString
+        let first = LongLineClip.chunk(of: source, from: 0, totalLimit: 20_000, lineLimit: 1_000)
+        XCTAssertEqual(first.end, 20_000)
+        XCTAssertTrue(first.text.contains(LongLineClip.marker(remaining: 19_000)))
+    }
 }
 

@@ -94,6 +94,9 @@ struct UnifiedFileViewer: View {
     /// большой и показывается прямо с диска).
     @State private var plainText: String?
     @State private var fastPreviewFilePath: String = ""
+    /// Тема текста просмотра (TextTheme): у всех просмотров одна, запоминается.
+    @AppStorage(TextTheme.viewerKey) private var textThemeRaw = TextTheme.system.rawValue
+    private var textTheme: TextTheme { TextTheme(rawValue: textThemeRaw) ?? .system }
     @State private var useFastPreview: Bool = false
     @State private var markdownContent: NSAttributedString?
     @State private var isMarkdownFile: Bool = false
@@ -590,11 +593,47 @@ struct UnifiedFileViewer: View {
             if isHTMLFile, effectiveMode == .text {
                 htmlSourceButton
             }
+            if showsPlainText {
+                textThemeButton
+            }
 
             Spacer()
             editButton
             printButton
         }
+    }
+
+    /// Показан простой текст — не страница HTML и не оформленный Markdown: у него своя тема.
+    private var showsPlainText: Bool {
+        effectiveMode == .text && !showsHTMLPage && !(isMarkdownFile && markdownContent != nil)
+    }
+
+    /// Тема текста: системная (как программа), светлая, тёмная, контрастная.
+    private var textThemeButton: some View {
+        ProgramMenuButton(makeMenu: textThemeMenu) {
+            HStack(spacing: 4) {
+                Image(systemName: textTheme.symbol).font(.system(size: 11))
+                Text(textTheme.title).font(.caption).lineLimit(1)
+                MenuChevron()
+            }
+            .frame(minHeight: 30)
+            .contentShape(Rectangle())
+        }
+        .fixedSize()
+        .help(L("viewer.textTheme.tip"))
+    }
+
+    private func textThemeMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for theme in TextTheme.allCases {
+            menu.addStyledItem(title: theme.title, symbolName: theme.symbol) {
+                textThemeRaw = theme.rawValue
+                returnFocusToPanel()
+            }
+            menu.items.last?.state = theme == textTheme ? .on : .off
+        }
+        return menu
     }
 
     /// Код HTML вместо страницы — и обратно. Горит, пока показан код.
@@ -922,14 +961,14 @@ struct UnifiedFileViewer: View {
     private var plainTextContent: some View {
         Group {
             if useFastPreview {
-                FastTextPreview(filePath: fastPreviewFilePath, scrollJump: scrollJump) { path, name in
+                FastTextPreview(filePath: fastPreviewFilePath, scrollJump: scrollJump, theme: textTheme) { path, name in
                     // Ответ опоздавшего файла — уже не про тот, что на экране.
                     if useFastPreview, fastPreviewFilePath == path { encoding = name }
                 }
             } else if let plainText {
                 // Не список строк SwiftUI: тот на длинных строках проседал и отставал от
                 // трекпада — см. NumberedTextView.
-                NumberedTextPreview(text: plainText, scrollJump: scrollJump)
+                NumberedTextPreview(text: plainText, scrollJump: scrollJump, theme: textTheme)
             } else if !isLoading {
                 Text(L("viewer.emptyFile"))
                     .foregroundStyle(.secondary)
@@ -3273,12 +3312,16 @@ private struct FastTextPreview: NSViewRepresentable {
     let filePath: String
     /// Кнопка «в конец» просмотрщика.
     var scrollJump: ScrollJumpController? = nil
+    /// Тема текста (TextTheme).
+    var theme: TextTheme = .system
     /// Файл прочитан: его путь и название кодировки — для строки над текстом. На главном потоке.
     var onEncoding: ((String, String) -> Void)? = nil
 
-    final class Coordinator {
+    @MainActor final class Coordinator {
         var loadedPath: String = ""
         let jump = ScrollJumpLink()
+        /// Порции текста и «Показать дальше» (ChunkedTextFeeder).
+        let feeder = ChunkedTextFeeder()
     }
 
     static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
@@ -3306,12 +3349,16 @@ private struct FastTextPreview: NSViewRepresentable {
         // Performance: only layout visible text, not the entire document
         tv.layoutManager?.allowsNonContiguousLayout = true
 
+        scrollView.applyTextTheme(theme)
+        tv.delegate = context.coordinator.feeder
+        context.coordinator.feeder.textView = tv
         loadFile(into: tv, context: context)
         context.coordinator.jump.attach(scrollJump, to: scrollView)
         return scrollView
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
+        nsView.applyTextTheme(theme)
         guard let tv = nsView.documentView as? NSTextView else { return }
         if context.coordinator.loadedPath != filePath {
             loadFile(into: tv, context: context)
@@ -3322,7 +3369,7 @@ private struct FastTextPreview: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.loadedPath = filePath
         guard !filePath.isEmpty else {
-            tv.string = ""
+            coordinator.feeder.showPlain("")
             return
         }
         // Load on background thread with memory-mapped I/O, set on main
@@ -3332,18 +3379,20 @@ private struct FastTextPreview: NSViewRepresentable {
             guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: [.mappedIfSafe]) else {
                 DispatchQueue.main.async {
                     guard coordinator.loadedPath == path else { return }
-                    tv.string = "Failed to load file"
+                    coordinator.feeder.showPlain("Failed to load file")
                 }
                 return
             }
             // Тем же декодером, что маленький файл и редактор.
             let decoded = TextFileCodec.decodeForDisplay(data)
-            // Здесь, в фоне: длинную строку и большой текст NSTextView раскладывал бы целиком на главном потоке.
-            let shown = LongLineClip.preview(decoded.text)
+            // Здесь, в фоне: длинную строку и большой текст NSTextView раскладывал бы целиком на
+            // главном потоке. Показывается первая порция, остальное — «Показать дальше».
+            let source = decoded.text as NSString
+            let first = LongLineClip.chunk(of: source, from: 0)
             DispatchQueue.main.async {
                 // Пока файл читался, могли открыть другой — его текст уже на месте или в пути.
                 guard coordinator.loadedPath == path else { return }
-                tv.string = shown
+                coordinator.feeder.show(first, of: source)
                 tv.scrollToBeginningOfDocument(nil)
                 onEncoding?(path, decoded.encoding.name)
             }

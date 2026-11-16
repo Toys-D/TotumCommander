@@ -1295,6 +1295,7 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "viewer.binaryFile" = "Binary file";
 "viewer.longLineClipped" = "  … %@ more characters in this line — the editor (F4) shows it whole";
 "viewer.textClipped" = "… the first %@ of %@ characters are shown — the editor (F4) shows the whole file";
+"viewer.showMore" = "Show more — %@ more characters";
 "viewer.cannotLoadImage" = "Could not load the image";
 "viewer.truncated" = "file truncated for preview";
 "viewer.useBinaryHint" = "Use HEX mode to inspect binary data";
@@ -1323,6 +1324,7 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "volume.iface.diskImage.mode" = "Lives on the computer's own disk — read in one go, folder watching on.";
 "volume.iface.external.mode" = "Power saving — external drive. Folder sizes are off, metadata on demand";
 "editor.status.initial" = "Ln 1, Col 1";
+"editor.loading" = "Loading…";
 "editor.status.position" = "Ln %d, Col %d  |  Lines: %d";
 "editor.status.selection" = "Sel: %d";
 "editor.toolbar.find" = "Find";
@@ -2915,3 +2917,10 @@ Totum Commander can take its F-keys back while it is in front — that needs the
 "terminal.splitStacked" = "Split one above the other";
 "terminal.newTab" = "New Terminal";
 "terminal.closePane" = "Close part";
+
+/* Тема текста (TextTheme) */
+"textTheme.system" = "System";
+"textTheme.light" = "Light";
+"textTheme.dark" = "Dark";
+"textTheme.contrast" = "High contrast";
+"viewer.textTheme.tip" = "Text theme: System follows the app's theme";

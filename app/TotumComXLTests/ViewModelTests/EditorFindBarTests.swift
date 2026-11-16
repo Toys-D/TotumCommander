@@ -130,12 +130,19 @@ final class EditorFindBarTests: XCTestCase {
     }
 
     func test_сменаТемыДоходитДоОкна() {
-        let options = EditorViewOptions()
+        let options = EditorViewOptions(defaults: ownDefaults())
         var themes: [String] = []
         options.onThemeChange = { themes.append($0) }
-        options.theme = "vs"
-        options.theme = "vs"
+        options.theme = TextTheme.light.rawValue
+        options.theme = TextTheme.light.rawValue
         XCTAssertEqual(themes, ["vs"], "окно перекрашивается один раз на смену")
+    }
+
+    /// Свой набор настроек: выбор темы запоминается, и общие настройки тест не трогает.
+    private func ownDefaults() -> UserDefaults {
+        let suite = "fcxl.editorbars.tests.\(UUID().uuidString)"
+        addTeardownBlock { UserDefaults().removePersistentDomain(forName: suite) }
+        return UserDefaults(suiteName: suite)!
     }
 
     /// Полосы редактора картинкой в каждой теме текста — в папку FCXL_LOOK_DIR. Программа при этом в
@@ -145,9 +152,10 @@ final class EditorFindBarTests: XCTestCase {
         find.opened(replace: true, seed: "Совет")
         find.pageState(revealed: true, count: 8, position: 3)
         find.matchCase = true
-        let options = EditorViewOptions()
-        for theme in MonacoEditorController.editorThemes.map(\.id) {
-            options.theme = theme
+        let options = EditorViewOptions(defaults: ownDefaults())
+        for textTheme in TextTheme.allCases {
+            options.theme = textTheme.rawValue
+            let theme = options.monacoTheme
             let chrome = EditorChrome.forTheme(theme)
             let bars = VStack(spacing: 0) {
                 EditorToolbar(options: options, onFind: {}, onReplace: {})

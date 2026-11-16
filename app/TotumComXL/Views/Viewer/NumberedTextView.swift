@@ -192,11 +192,14 @@ struct NumberedTextPreview: NSViewRepresentable {
     let text: String
     /// Кнопка «в конец» просмотрщика.
     var scrollJump: ScrollJumpController? = nil
+    /// Тема текста (TextTheme).
+    var theme: TextTheme = .system
 
     func makeCoordinator() -> ScrollJumpLink { ScrollJumpLink() }
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NumberedTextView.makeScrollView()
+        scroll.applyTextTheme(theme)
         (scroll.documentView as? NumberedTextView)?.show(text)
         context.coordinator.attach(scrollJump, to: scroll)
         return scroll
@@ -207,6 +210,7 @@ struct NumberedTextPreview: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
+        scroll.applyTextTheme(theme)
         guard let view = scroll.documentView as? NumberedTextView, view.shownText != text else { return }
         view.show(text)
     }
