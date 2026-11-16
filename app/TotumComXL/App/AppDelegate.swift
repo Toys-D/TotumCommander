@@ -13,6 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var mainWindowController: MainWindowController?
     private var appearanceObserver: NSKeyValueObservation?
+    /// Папка или файл, пришедшие от системы до того, как появилось окно (программу запустили
+    /// самим запросом «Показать в Finder»): показываются, когда окно готово.
+    private var pendingFileViewerTarget: FileViewerRequest.Target?
 
     // MARK: - Entry Point
 
@@ -113,8 +116,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Give the active (left) panel keyboard focus right away so the cursor is visible and
         // arrow / F-keys work on launch without the user first clicking a panel.
-        DispatchQueue.main.async { [weak controller] in
+        DispatchQueue.main.async { [weak self, weak controller] in
             controller?.focusActivePanelList()
+            // Запущены запросом «Показать в Finder» — показать то, о чём просили.
+            if let target = self?.pendingFileViewerTarget {
+                self?.pendingFileViewerTarget = nil
+                controller?.showFromSystem(target)
+            }
+        }
+    }
+
+    /// Папки и файлы от системы: «Показать в Finder», когда в `NSFileViewer` стоит эта
+    /// программа, и `open -a "Totum Commander" <путь>` (см. FileViewerRequest). Ничего не
+    /// запускается: папка открывается в активной панели, файл показывается в своей папке.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let target = FileViewerRequest.target(for: urls) else { return }
+        if let controller = mainWindowController {
+            controller.showFromSystem(target)
+        } else {
+            pendingFileViewerTarget = target
         }
     }
 

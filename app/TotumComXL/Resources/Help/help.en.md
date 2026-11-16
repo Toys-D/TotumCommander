@@ -47,6 +47,17 @@ Above each list, top to bottom: the volume bar (disks), breadcrumbs (path), tabs
 
 After a change of screen resolution the window opens centred, not in a corner.
 
+
+Double-clicking an empty spot of the title bar does what is set in System Settings ▸ Desktop & Dock: zooms the window or minimises it.
+
+**Instead of Finder.** To make "Show in Finder" in other programs open Totum Commander, run in Terminal:
+
+```
+defaults write -g NSFileViewer -string com.fcxl.filecommander
+```
+
+A folder then opens in the active panel, a file opens in its folder with the cursor on it; the file itself is not launched. Back to Finder: `defaults delete -g NSFileViewer`. macOS does not document this setting officially; other file managers use it too. `open -a "Totum Commander" <folder>` opens a folder even without it.
+
 ---
 
 ## 2. The Panel: File List

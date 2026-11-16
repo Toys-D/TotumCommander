@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Что Totum Commander принимает от системы (launch.sh вливает это в Info.plist).
+     Папки — ролью «просмотр» и рангом «запасной»: двойной щелчок по папке в Finder остаётся
+     за Finder, а «Показать в Finder» при NSFileViewer = com.fcxl.filecommander и
+     open -a "Totum Commander" <папка> приходят сюда (FileViewerRequest). Файлы не объявлены:
+     их открытие программа не перехватывает. -->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Folder</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key><array><string>public.folder</string></array>
+        </dict>
+    </array>
+</dict>
+</plist>

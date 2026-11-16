@@ -1293,6 +1293,8 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 "settings.section.editor" = "Editor";
 "settings.viewerInPanel" = "Viewer (F3) in the opposite panel";
 "viewer.binaryFile" = "Binary file";
+"viewer.longLineClipped" = "  … %@ more characters in this line — the editor (F4) shows it whole";
+"viewer.textClipped" = "… the first %@ of %@ characters are shown — the editor (F4) shows the whole file";
 "viewer.cannotLoadImage" = "Could not load the image";
 "viewer.truncated" = "file truncated for preview";
 "viewer.useBinaryHint" = "Use HEX mode to inspect binary data";

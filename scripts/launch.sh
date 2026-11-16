@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 APP="Totum Commander.app"
 # debug for the everyday run; release.sh sets FCXL_CONFIG=release and FCXL_NO_LAUNCH=1.
 CONFIG="${FCXL_CONFIG:-debug}"
-APP_VERSION="1.17"
+APP_VERSION="1.18.1"
 # One-time migration from the previous bundle name, so the skeleton (icon, entitlements) carries over.
 [ -d "$APP" ] || { [ -d "TotumComXL.app" ] && mv "TotumComXL.app" "$APP"; } || true
 # A fresh clone has no bundle yet: lay down the skeleton the steps below fill in.
@@ -116,6 +116,12 @@ PLIST="$APP/Contents/Info.plist"
 # line as AppIdentity.copyright, which "About" in Settings shows; a test keeps them equal.
 /usr/libexec/PlistBuddy -c "Set :NSHumanReadableCopyright '© 2026 Pixmap Labs'" "$PLIST" 2>/dev/null \
     || /usr/libexec/PlistBuddy -c "Add :NSHumanReadableCopyright string '© 2026 Pixmap Labs'" "$PLIST"
+
+# Папки, которые программа принимает от системы: «Показать в Finder» при NSFileViewer и
+# open -a с папкой (FileViewerRequest). Объявление — в scripts/document-types.plist; прежнее
+# снимается, чтобы правка файла доходила до бандла, а не копилась поверх.
+/usr/libexec/PlistBuddy -c "Delete :CFBundleDocumentTypes" "$PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Merge scripts/document-types.plist" "$PLIST"
 
 # Localizations the OS should know about. Without them the bundle counted as English-only,
 # and every SYSTEM menu — PDFKit's context menu, a text field's Cut/Copy/Paste — came up in

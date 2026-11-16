@@ -3005,6 +3005,20 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         }
     }
 
+    /// Папка или файл, о которых попросила система (FileViewerRequest): в активной панели,
+    /// окно — вперёд, клавиатура — списку. Свёрнутое окно разворачивается, спрятанная программа
+    /// показывается: человек просил увидеть файл.
+    func showFromSystem(_ target: FileViewerRequest.Target) {
+        FileViewerRequest.show(target, in: splitVC.activePanelViewModel)
+        NSApp.unhide(nil)
+        if let window {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+        }
+        NSApp.activate()
+        focusActivePanelList()
+    }
+
     /// Public entry point for F9 search — called from PanelViewController F-key handler.
     func triggerSearch() { handleSearch() }
 

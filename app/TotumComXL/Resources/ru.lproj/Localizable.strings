@@ -739,6 +739,8 @@
 "viewer.truncated" = "файл обрезан для просмотра";
 "viewer.cannotLoadImage" = "Не удалось загрузить изображение";
 "viewer.binaryFile" = "Бинарный файл";
+"viewer.longLineClipped" = "  … ещё %@ знаков в этой строке — целиком в редакторе (F4)";
+"viewer.textClipped" = "… показаны первые %@ знаков из %@ — целиком в редакторе (F4)";
 "viewer.useBinaryHint" = "Используйте режим HEX для просмотра бинарных данных";
 "viewer.noFilesInPanel" = "В текущей панели нет файлов для просмотра";
 "quickView.noFile" = "Нет файла для предпросмотра";

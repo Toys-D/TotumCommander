@@ -670,3 +670,82 @@ enum FileTypeIconCache {
         return icon
     }
 }
+
+// MARK: - Long lines
+
+/// Сверхдлинные строки в просмотре — обрезаны.
+///
+/// Строку в восемь миллионов знаков (ответ сервера в .har, сжатый JS, base64 одной строкой)
+/// NSTextView раскладывает целиком, и раскладка идёт на главном потоке: просмотр такого файла
+/// держал программу 40 секунд и больше. Показывается начало строки и пометка, сколько в ней
+/// ещё; сам файл не меняется, целиком его открывает редактор (F4). Звать вне главного потока.
+enum LongLineClip {
+    /// Знаков строки, которые показываются; дальше — пометка.
+    static let defaultLimit = 10_000
+    /// Знаков всего текста, которые показываются. Дело не только в длинных строках: 35 МБ
+    /// по обычным строкам NSTextView тоже раскладывал целиком (прокрутка к началу, кнопка
+    /// «в конец») — те же десятки секунд на главном потоке.
+    static let defaultTotal = 1_000_000
+
+    static func totalMarker(shown: Int, total: Int) -> String {
+        String(format: L("viewer.textClipped"), shown.formatted(.number), total.formatted(.number))
+    }
+
+    /// Текст для просмотра: начало не длиннее `totalLimit` знаков, обрезанное по концу строки,
+    /// с пометкой, сколько показано; длинные строки внутри — как в `clip`. Звать вне главного потока.
+    static func preview(_ text: String, lineLimit: Int = defaultLimit,
+                        totalLimit: Int = defaultTotal) -> String {
+        let source = text as NSString
+        let length = source.length
+        guard length > totalLimit else { return clip(text, limit: lineLimit) }
+        // По концу строки, если он не слишком далеко назад; иначе — по целому знаку.
+        var cut = source.lineRange(for: NSRange(location: totalLimit, length: 0)).location
+        if cut < totalLimit / 2 {
+            cut = source.rangeOfComposedCharacterSequence(at: totalLimit).location
+        }
+        let head = clip(source.substring(to: cut), limit: lineLimit)
+        let tail = head.hasSuffix("\n") ? "" : "\n"
+        return head + tail + "\n" + totalMarker(shown: cut, total: length) + "\n"
+    }
+
+    static func marker(remaining: Int) -> String {
+        String(format: L("viewer.longLineClipped"), remaining.formatted(.number))
+    }
+
+    static func clip(_ text: String, limit: Int = defaultLimit) -> String {
+        let source = text as NSString
+        let length = source.length
+        // Быстрый проход: длинных строк нет — текст отдаётся как был, без копии.
+        guard length > limit else { return text }
+        let newlines = CharacterSet.newlines
+        var lines: [NSRange] = []
+        var location = 0
+        var anyLong = false
+        while location < length {
+            let found = source.rangeOfCharacter(from: newlines,
+                                                range: NSRange(location: location, length: length - location))
+            let end = found.location == NSNotFound ? length : found.location
+            if end - location > limit { anyLong = true }
+            lines.append(NSRange(location: location, length: end - location))
+            if found.location == NSNotFound { break }
+            location = found.location + found.length
+        }
+        guard anyLong else { return text }
+
+        let out = NSMutableString(capacity: min(length, lines.count * 128))
+        var copied = 0
+        for line in lines where line.length > limit {
+            // Всё до этой строки — как было, вместе с переводами строк.
+            out.append(source.substring(with: NSRange(location: copied, length: line.location - copied)))
+            // Конец показанного не режет знак пополам.
+            var cut = line.location + limit
+            let composed = source.rangeOfComposedCharacterSequence(at: cut)
+            if composed.location < cut { cut = composed.location }
+            out.append(source.substring(with: NSRange(location: line.location, length: cut - line.location)))
+            out.append(marker(remaining: line.location + line.length - cut))
+            copied = line.location + line.length
+        }
+        out.append(source.substring(from: copied))
+        return out as String
+    }
+}

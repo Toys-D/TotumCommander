@@ -2419,7 +2419,12 @@ struct UnifiedFileViewer: View {
                             let decoded = TextFileCodec.decodeForDisplay(fullData)
                             encoding = decoded.encoding.name
                             useFastPreview = false
-                            plainText = normalizedForDisplay(decoded.text)
+                            // Строка в 256 КБ тоже долго раскладывается — обрезка та же, что у большого.
+                            let shown = await Task.detached(priority: .userInitiated) {
+                                LongLineClip.preview(decoded.text)
+                            }.value
+                            if Task.isCancelled { return }
+                            plainText = normalizedForDisplay(shown)
                         }
                     }
 
@@ -3333,10 +3338,12 @@ private struct FastTextPreview: NSViewRepresentable {
             }
             // Тем же декодером, что маленький файл и редактор.
             let decoded = TextFileCodec.decodeForDisplay(data)
+            // Здесь, в фоне: длинную строку и большой текст NSTextView раскладывал бы целиком на главном потоке.
+            let shown = LongLineClip.preview(decoded.text)
             DispatchQueue.main.async {
                 // Пока файл читался, могли открыть другой — его текст уже на месте или в пути.
                 guard coordinator.loadedPath == path else { return }
-                tv.string = decoded.text
+                tv.string = shown
                 tv.scrollToBeginningOfDocument(nil)
                 onEncoding?(path, decoded.encoding.name)
             }
