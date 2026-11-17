@@ -3019,6 +3019,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         focusActivePanelList()
     }
 
+    /// Waiting for the panel to arrive in the searched folder — see showSearchResults.
+    private var searchResultsArrival: AnyCancellable?
+
     /// Public entry point for F9 search — called from PanelViewController F-key handler.
     func triggerSearch() { handleSearch() }
 
@@ -3029,6 +3032,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
 
         AdvancedSearchPanelController.shared.show(
             rootPath: vm.currentPath,
+            otherPanelPath: dstVM.currentPath,
             onNavigate: { [weak self] path in
                 // Show the found item: open its folder in the active panel AND put
                 // the cursor right on it (the search window closes so it's visible).
@@ -3036,34 +3040,51 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
                 self?.splitVC.activePanelViewModel.loadDirectory(
                     at: dirPath, preferredCursorPath: path)
             },
-            onCopy: { paths, destination in
-                // Results usually live in SUBFOLDERS — build items from their full
-                // paths (looking them up in the panel's current listing found nothing).
+            onTransfer: { [weak self] paths, isCopy in
+                // The one road every copy and move in the program takes: its dialog offers the
+                // other panel's folder and lets it be changed, and the queue, the conflict
+                // questions and the reload of both panels come with it. Results usually live
+                // in SUBFOLDERS, so the items are built from their full paths.
                 let items = paths.compactMap { FileItem.fromPath($0) }
-                guard !items.isEmpty else { return }
-                Task { @MainActor [weak self] in
-                    do {
-                        // queueService, like every other copy gesture: it is what enables the
-                        // "send to background queue" button inside the transfer.
-                        try await ops.copyItems(items, to: destination,
-                                                queueService: self?.queueService)
-                    } catch {
-                        DialogService.shared.showOperationError(title: L("copy.errorTitle"),
-                                                       error: error)
-                    }
-                    vm.loadDirectory(resetCursor: false)
-                    dstVM.loadDirectory(resetCursor: false)
+                guard let self, !items.isEmpty else { return }
+                self.performTransfer(items: items, sourceVM: self.splitVC.activePanelViewModel,
+                                     isCopy: isCopy)
+            },
+            onEdit: { [weak self] path in
+                guard let self, let item = FileItem.fromPath(path), !item.isDirectory else { return }
+                let panel = self.splitVC.activePanelViewModel
+                if panel.insideArchive || panel.insideRemote {
+                    // A find is a plain file on disk, whatever the panel behind is showing.
+                    self.operationsService.openEditor(for: item, archivePath: nil,
+                                                      insideArchive: false)
+                } else {
+                    self.openEditor(for: item, vm: panel)
                 }
             },
+            onShowInPanel: { [weak self] paths, root in
+                self?.showSearchResults(inPanel: paths, root: root)
+            },
             onDelete: { paths in
-                let items = paths.compactMap { FileItem.fromPath($0) }
-                guard !items.isEmpty else { return }
                 Task { @MainActor in
                     do {
-                        try await ops.trashItems(items)
+                        // The same question F8 asks in a panel (and the same "do not ask"
+                        // setting behind it) — the search used to send its selection to the
+                        // Trash without a word. Shown on a runloop callout, because a modal
+                        // run straight from a Task starves its own buttons.
+                        let deleted = try await SearchDeletion.run(
+                            paths: paths,
+                            confirm: { items, totalBytes in
+                                await fcxlPresentModalAsync {
+                                    DialogService.shared.showDeleteConfirmation(
+                                        items: items, totalBytes: totalBytes)
+                                }
+                            },
+                            trash: { try await ops.trashItems($0) })
                         // Out of the results only when they really left the disk — dropping the
                         // rows on a failed delete showed files as gone while they still existed.
-                        AdvancedSearchPanelController.shared.removeFromResults(paths)
+                        if deleted {
+                            AdvancedSearchPanelController.shared.removeFromResults(paths)
+                        }
                     } catch {
                         DialogService.shared.showOperationError(title: L("delete.errorTitle"),
                                                        error: error)
@@ -3072,6 +3093,40 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
                 }
             }
         )
+    }
+
+    /// "Results to panel": the finds of a search as a flat list in the active panel.
+    ///
+    /// The panel has to stand in the folder that was searched before it can show the list —
+    /// that is where ".." leads back to. If it stands elsewhere it is sent there first, and
+    /// the list goes in once it has arrived.
+    private func showSearchResults(inPanel paths: [String], root: String) {
+        let vm = splitVC.activePanelViewModel
+        let target = (root as NSString).standardizingPath
+        func arrived() -> Bool {
+            !vm.insideArchive && !vm.insideRemote
+                && (vm.currentPath as NSString).standardizingPath == target
+        }
+        if !arrived() {
+            vm.loadDirectory(at: target)
+        }
+        if arrived() {
+            vm.showFoundFiles(paths, root: target)
+            focusActivePanelList()
+            return
+        }
+        // The folder is still being read: wait for the panel to stand in it, but not forever.
+        searchResultsArrival = vm.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self, weak vm] _ in
+                guard let self, let vm, arrived() else { return }
+                self.searchResultsArrival = nil
+                vm.showFoundFiles(paths, root: target)
+                self.focusActivePanelList()
+            }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            self?.searchResultsArrival = nil
+        }
     }
 
     // MARK: - Network

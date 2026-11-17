@@ -68,10 +68,6 @@ auto map_error_code(const std::error_code& ec,
     return common::Error::make(code, std::move(message), path.string());
 }
 
-auto is_hidden_name(std::string_view name) -> bool {
-    return !name.empty() && name.front() == '.';
-}
-
 auto to_system_clock_time(std::filesystem::file_time_type file_time)
     -> std::chrono::system_clock::time_point {
     const auto file_now = std::filesystem::file_time_type::clock::now();
@@ -114,18 +110,10 @@ auto has_date_to_filter(const common::SearchFilter& filter) -> bool {
     return filter.date_to.time_since_epoch() != std::chrono::system_clock::duration::zero();
 }
 
-/// A mask with no wildcard in it is a piece of a name rather than a whole one, and is wrapped on
-/// both sides: typing "отчёт" has always meant "…отчёт…".
-auto make_name_mask(const std::string& pattern) -> NameMask {
-    const bool has_wildcard = pattern.find('*') != std::string::npos ||
-                              pattern.find('?') != std::string::npos;
-    return NameMask(has_wildcard ? pattern : "*" + pattern + "*");
-}
-
 auto matches_pattern(const std::string& name,
                      const common::SearchFilter& filter,
                      const std::regex* compiled_regex,
-                     const NameMask* name_mask) -> bool {
+                     const NameMaskSet* name_mask) -> bool {
     if (filter.name_pattern.empty()) {
         return true;
     }
@@ -187,7 +175,7 @@ auto FileSearch::search(std::string_view root_path,
     }
 
     std::optional<std::regex> compiled_regex;
-    std::optional<NameMask> name_mask;
+    std::optional<NameMaskSet> name_mask;
     if (filter.use_regex && !filter.name_pattern.empty()) {
         try {
             compiled_regex.emplace(to_composed_form(filter.name_pattern), std::regex::ECMAScript);
@@ -197,8 +185,8 @@ auto FileSearch::search(std::string_view root_path,
                                        root.string());
         }
     } else if (!filter.name_pattern.empty()) {
-        // Worked out once: every name in the tree is matched against the same mask.
-        name_mask.emplace(make_name_mask(filter.name_pattern));
+        // Worked out once: every name in the tree is matched against the same masks.
+        name_mask.emplace(filter.name_pattern);
     }
 
     cancelled_ = false;
@@ -255,10 +243,22 @@ auto FileSearch::search(std::string_view root_path,
             continue;
         }
 
-        const bool hidden = is_hidden_name(name);
-        if (!filter.include_hidden && hidden) {
-            advance_iterator_ignoring_errors(iterator, ec);
-            continue;
+        // Hidden means the whole subtree: a hidden directory is not entered, or everything
+        // inside ".git" would come back as an ordinary find. A directory is asked about its
+        // flag here, because that decides the descent; a file is asked only once it has
+        // matched, so the walk does not pay for a second look at every file in the tree.
+        bool hidden = is_hidden_name(name);
+        if (!filter.include_hidden) {
+            if (!hidden && is_directory_entry) {
+                hidden = has_hidden_flag(entry_path);
+            }
+            if (hidden) {
+                if (is_directory_entry) {
+                    iterator.disable_recursion_pending();
+                }
+                advance_iterator_ignoring_errors(iterator, ec);
+                continue;
+            }
         }
 
         const bool is_regular_file = dir_entry.is_regular_file(ec);
@@ -287,6 +287,14 @@ auto FileSearch::search(std::string_view root_path,
                              name_mask ? &name_mask.value() : nullptr)) {
             advance_iterator_ignoring_errors(iterator, ec);
             continue;
+        }
+
+        if (!filter.include_hidden && !is_directory_entry && has_hidden_flag(entry_path)) {
+            advance_iterator_ignoring_errors(iterator, ec);
+            continue;
+        }
+        if (filter.include_hidden && !hidden) {
+            hidden = has_hidden_flag(entry_path);
         }
 
         uint64_t size = 0;

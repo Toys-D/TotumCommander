@@ -17,6 +17,7 @@
 /// CHARACTERS, which is also what makes `?` stand for one character instead of one byte.
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace fcxl::search {
 
@@ -41,5 +42,27 @@ public:
 private:
     std::u32string folded_mask_;
 };
+
+/// What the "file mask" field holds: one mask or several, separated by semicolons —
+/// "*.jpg;*.png", as commander users have always typed it. A name matches when any piece does.
+///
+/// A piece with no wildcard in it is a piece of a name, not a whole one: "отчёт" means
+/// "*отчёт*". An empty set, or one holding a bare "*", lets every name through.
+class NameMaskSet {
+public:
+    explicit NameMaskSet(std::string_view spec);
+
+    [[nodiscard]] auto matches(std::string_view name) const -> bool;
+    /// True when no name can fail — a caller may then skip the question altogether.
+    [[nodiscard]] auto matches_everything() const -> bool { return everything_; }
+
+private:
+    std::vector<NameMask> masks_;
+    bool everything_ = false;
+};
+
+/// Text brought to one case for a case-blind comparison, still UTF-8. Bytes that are not
+/// UTF-8 get the ASCII part of the job and are otherwise returned as they came.
+[[nodiscard]] auto to_folded_text(std::string_view text) -> std::string;
 
 }  // namespace fcxl::search

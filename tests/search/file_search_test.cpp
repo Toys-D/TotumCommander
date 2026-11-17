@@ -9,6 +9,9 @@
 #include <system_error>
 #include <vector>
 
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include "fcxl/search/exclusions.h"
 #include "fcxl/search/file_search.h"
 #include "fcxl/search/name_match.h"
@@ -414,4 +417,108 @@ TEST_F(FileSearchTest, should_keep_matching_bracket_expressions) {
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(names_from_results(result.value()), (std::vector<std::string>{"a.txt", "b.txt"}));
+}
+
+// ---------------------------------------------------------------------------
+// Hidden means the whole subtree, and it means what the panels mean by it
+// ---------------------------------------------------------------------------
+
+TEST_F(FileSearchTest, should_not_enter_a_hidden_directory_by_default) {
+    stdfs::create_directories(test_dir_ / ".git" / "objects");
+    stdfs::create_directories(test_dir_ / "sub");
+    create_file_with_content(test_dir_ / ".git" / "HEAD.txt", "ref");
+    create_file_with_content(test_dir_ / ".git" / "objects" / "pack.txt", "x");
+    create_file_with_content(test_dir_ / "sub" / "a.txt", "a");
+
+    auto filter = make_filter("*.txt");
+    filter.include_hidden = false;
+    const auto result = file_search_.search(test_dir_.string(), filter);
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(names_from_results(result.value()), (std::vector<std::string>{"a.txt"}));
+}
+
+TEST_F(FileSearchTest, should_enter_hidden_directories_when_requested) {
+    stdfs::create_directories(test_dir_ / ".git");
+    create_file_with_content(test_dir_ / ".git" / "HEAD.txt", "ref");
+    create_file_with_content(test_dir_ / "a.txt", "a");
+
+    auto filter = make_filter("*.txt");
+    filter.include_hidden = true;
+    const auto result = file_search_.search(test_dir_.string(), filter);
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(names_from_results(result.value()),
+              (std::vector<std::string>{"HEAD.txt", "a.txt"}));
+}
+
+TEST_F(FileSearchTest, should_treat_the_finder_hidden_flag_as_hidden) {
+    // What keeps ~/Library out of Finder is a flag, not a dot — and the panels honour it.
+    stdfs::create_directories(test_dir_ / "Library");
+    create_file_with_content(test_dir_ / "Library" / "inner.txt", "x");
+    create_file_with_content(test_dir_ / "flagged.txt", "x");
+    create_file_with_content(test_dir_ / "plain.txt", "x");
+    ASSERT_EQ(::chflags((test_dir_ / "Library").c_str(), UF_HIDDEN), 0);
+    ASSERT_EQ(::chflags((test_dir_ / "flagged.txt").c_str(), UF_HIDDEN), 0);
+
+    auto filter = make_filter("*.txt");
+    filter.include_hidden = false;
+    const auto hidden_off = file_search_.search(test_dir_.string(), filter);
+    ASSERT_TRUE(hidden_off.has_value());
+    EXPECT_EQ(names_from_results(hidden_off.value()), (std::vector<std::string>{"plain.txt"}));
+
+    filter.include_hidden = true;
+    const auto hidden_on = file_search_.search(test_dir_.string(), filter);
+    ASSERT_TRUE(hidden_on.has_value());
+    EXPECT_EQ(names_from_results(hidden_on.value()),
+              (std::vector<std::string>{"flagged.txt", "inner.txt", "plain.txt"}));
+}
+
+// ---------------------------------------------------------------------------
+// Several masks at once
+// ---------------------------------------------------------------------------
+
+TEST_F(FileSearchTest, should_match_any_of_several_masks) {
+    create_file_with_content(test_dir_ / "pic.JPG", "x");
+    create_file_with_content(test_dir_ / "shot.png", "x");
+    create_file_with_content(test_dir_ / "doc.txt", "x");
+
+    const auto result = file_search_.search(test_dir_.string(), make_filter("*.jpg;*.png"));
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(names_from_results(result.value()),
+              (std::vector<std::string>{"pic.JPG", "shot.png"}));
+}
+
+TEST_F(FileSearchTest, should_trim_spaces_around_each_mask) {
+    create_file_with_content(test_dir_ / "pic.jpg", "x");
+    create_file_with_content(test_dir_ / "shot.png", "x");
+    create_file_with_content(test_dir_ / "doc.txt", "x");
+
+    const auto result = file_search_.search(test_dir_.string(), make_filter(" *.jpg ; *.png ;"));
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(names_from_results(result.value()),
+              (std::vector<std::string>{"pic.jpg", "shot.png"}));
+}
+
+TEST_F(FileSearchTest, should_read_a_bare_word_among_masks_as_a_piece_of_a_name) {
+    create_file_with_content(test_dir_ / "годовой отчёт 2026.pdf", "x");
+    create_file_with_content(test_dir_ / "shot.png", "x");
+    create_file_with_content(test_dir_ / "doc.txt", "x");
+
+    const auto result = file_search_.search(test_dir_.string(), make_filter("отчёт;*.png"));
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(names_from_results(result.value()),
+              (std::vector<std::string>{"shot.png", "годовой отчёт 2026.pdf"}));
+}
+
+TEST_F(FileSearchTest, should_match_everything_with_an_empty_or_star_mask_set) {
+    EXPECT_TRUE(search::NameMaskSet("").matches("anything.bin"));
+    EXPECT_TRUE(search::NameMaskSet("*").matches("anything.bin"));
+    EXPECT_TRUE(search::NameMaskSet(" ; ").matches("anything.bin"));
+    EXPECT_TRUE(search::NameMaskSet("*.txt;*").matches("anything.bin"));
+    EXPECT_FALSE(search::NameMaskSet("*.txt;*.md").matches("anything.bin"));
+    EXPECT_TRUE(search::NameMaskSet("*.txt;*.md").matches("README.MD"));
 }

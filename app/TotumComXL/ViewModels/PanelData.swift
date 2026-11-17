@@ -39,6 +39,9 @@ final class PanelData {
     /// Root of the flattened subtree while the panel is in branch view (Ctrl+B);
     /// nil = an ordinary folder listing.
     var branchViewRoot: String? = nil
+    /// Находки поиска, показанные в панели плоским списком («Результаты в панель»); nil — в
+    /// панели обычная ветвь или обычная папка. Живёт только вместе с `branchViewRoot`.
+    var foundListPaths: [String]? = nil
 
     /// What the panel actually shows: `allItems` narrowed by the quick filter.
     ///

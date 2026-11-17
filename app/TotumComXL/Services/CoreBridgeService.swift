@@ -17,6 +17,9 @@ struct SearchHit: Identifiable, Hashable {
     let dateModified: Date?
     let size: UInt64?
     let isDirectory: Bool
+    /// How many lines of the file matched — a content find stands for all of them and shows
+    /// the first. 1 for everything that is not a content find.
+    var matchCount: Int = 1
 
     var id: String {
         if let lineNumber {
@@ -395,7 +398,8 @@ final class CoreBridgeService {
                         dateFrom: Date? = nil, dateTo: Date? = nil,
                         typeFilter: Int = 0,
                         excludePatterns: [String] = [],
-                        onScanDir: ((String) -> Void)? = nil) throws -> [SearchHit] {
+                        onScanDir: ((String) -> Void)? = nil,
+                        onFound: (([SearchHit]) -> Void)? = nil) throws -> [SearchHit] {
         let rawItems = try searchBridge.advancedSearch(
             atPath: rootPath, pattern: pattern, useRegex: useRegex,
             recursive: recursive, includeHidden: includeHidden,
@@ -404,26 +408,52 @@ final class CoreBridgeService {
             dateTo: dateTo?.timeIntervalSince1970 ?? 0,
             typeFilter: Int32(typeFilter),
             excludePatterns: excludePatterns,
-            onScanDir: onScanDir
+            onScanDir: onScanDir,
+            onFound: onFound.map { told in { batch in told(batch.compactMap(Self.nameHit)) } }
         )
+        return rawItems.compactMap(Self.nameHit)
+    }
 
-        return rawItems.compactMap { raw in
-            guard let path = raw["path"] as? String, let name = raw["name"] as? String else { return nil }
-            return SearchHit(
-                path: path, name: name,
-                lineNumber: nil, column: nil, lineContent: nil,
-                dateModified: raw["dateModified"] as? Date,
-                size: (raw["size"] as? NSNumber)?.uint64Value,
-                isDirectory: (raw["isDirectory"] as? NSNumber)?.boolValue ?? false
-            )
-        }
+    /// A find of the name search, as the bridge hands it over.
+    private static func nameHit(_ raw: [String: Any]) -> SearchHit? {
+        guard let path = raw["path"] as? String, let name = raw["name"] as? String else { return nil }
+        return SearchHit(
+            path: path, name: name,
+            lineNumber: nil, column: nil, lineContent: nil,
+            dateModified: raw["dateModified"] as? Date,
+            size: (raw["size"] as? NSNumber)?.uint64Value,
+            isDirectory: (raw["isDirectory"] as? NSNumber)?.boolValue ?? false
+        )
+    }
+
+    /// A find of the content search: one per file, with the first matching line.
+    private static func contentHit(_ raw: [String: Any]) -> SearchHit? {
+        guard let path = raw["path"] as? String, let name = raw["name"] as? String else { return nil }
+        return SearchHit(
+            path: path,
+            name: name,
+            lineNumber: (raw["lineNumber"] as? NSNumber)?.uint64Value,
+            column: (raw["column"] as? NSNumber)?.uint64Value,
+            lineContent: raw["lineContent"] as? String,
+            dateModified: raw["dateModified"] as? Date,
+            size: (raw["size"] as? NSNumber)?.uint64Value,
+            isDirectory: false,
+            matchCount: (raw["matchCount"] as? NSNumber)?.intValue ?? 1
+        )
     }
 
     func findDuplicates(rootPath: String, mode: Int = 2, recursive: Bool = true,
+                        includeHidden: Bool = false,
+                        minSize: UInt64 = 0, maxSize: UInt64 = 0,
+                        dateFrom: Date? = nil, dateTo: Date? = nil,
                         excludePatterns: [String] = [],
                         onScanDir: ((String) -> Void)? = nil) throws -> [DuplicateGroup] {
         let rawGroups = try searchBridge.findDuplicates(atPath: rootPath, mode: Int32(mode),
                                                         recursive: recursive,
+                                                        includeHidden: includeHidden,
+                                                        minSize: minSize, maxSize: maxSize,
+                                                        dateFrom: dateFrom?.timeIntervalSince1970 ?? 0,
+                                                        dateTo: dateTo?.timeIntervalSince1970 ?? 0,
                                                         excludePatterns: excludePatterns,
                                                         onScanDir: onScanDir)
 
@@ -441,36 +471,30 @@ final class CoreBridgeService {
                        pattern: String,
                        useRegex: Bool,
                        recursive: Bool = true,
+                       caseSensitive: Bool = false,
+                       includeHidden: Bool = false,
+                       nameMask: String = "",
+                       minSize: UInt64 = 0, maxSize: UInt64 = 0,
+                       dateFrom: Date? = nil, dateTo: Date? = nil,
                        excludePatterns: [String] = [],
-                       onScanDir: ((String) -> Void)? = nil) throws -> [SearchHit] {
+                       onScanDir: ((String) -> Void)? = nil,
+                       onFound: (([SearchHit]) -> Void)? = nil) throws -> [SearchHit] {
         let rawItems = try searchBridge.findContent(
             atPath: rootPath,
             pattern: pattern,
             useRegex: useRegex,
             recursive: recursive,
+            caseSensitive: caseSensitive,
+            includeHidden: includeHidden,
+            nameMask: nameMask,
+            minSize: minSize, maxSize: maxSize,
+            dateFrom: dateFrom?.timeIntervalSince1970 ?? 0,
+            dateTo: dateTo?.timeIntervalSince1970 ?? 0,
             excludePatterns: excludePatterns,
-            onScanDir: onScanDir
+            onScanDir: onScanDir,
+            onFound: onFound.map { told in { batch in told(batch.compactMap(Self.contentHit)) } }
         )
-
-        return rawItems.compactMap { raw in
-            guard
-                let path = raw["path"] as? String,
-                let name = raw["name"] as? String
-            else {
-                return nil
-            }
-
-            return SearchHit(
-                path: path,
-                name: name,
-                lineNumber: (raw["lineNumber"] as? NSNumber)?.uint64Value,
-                column: (raw["column"] as? NSNumber)?.uint64Value,
-                lineContent: raw["lineContent"] as? String,
-                dateModified: nil,
-                size: nil,
-                isDirectory: false
-            )
-        }
+        return rawItems.compactMap(Self.contentHit)
     }
 
     func cancelSearch() {

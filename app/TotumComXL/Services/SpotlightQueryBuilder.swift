@@ -28,7 +28,31 @@ enum SpotlightQueryBuilder {
     /// The literal always goes in through `%@`, never string interpolation: a mask carrying a
     /// quote or a backslash would otherwise build a malformed format string, and NSPredicate
     /// answers malformed formats with an exception, not an error.
+    ///
+    /// Several masks separated by ";" are each translated on their own and joined with OR.
+    /// If any of them needs the sieve, the sieve runs — over the whole list of masks, so a
+    /// name let through by one widened predicate is still checked against all of them.
     nonisolated static func maskPlan(_ raw: String) -> MaskPlan {
+        let pieces = raw.split(separator: ";")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard pieces.count > 1 else { return singleMaskPlan(pieces.first ?? "") }
+
+        let plans = pieces.map(singleMaskPlan)
+        // One piece that matches every name makes the whole set match every name.
+        if plans.contains(.everything) { return .everything }
+        let needsSieve = plans.contains { $0.postFilter }
+        // A piece with no literal to ask the index for: everything is fetched and sieved.
+        if plans.contains(where: { $0.predicate == nil }) {
+            return MaskPlan(predicate: nil, postFilter: true)
+        }
+        return MaskPlan(
+            predicate: NSCompoundPredicate(orPredicateWithSubpredicates: plans.compactMap(\.predicate)),
+            postFilter: needsSieve)
+    }
+
+    /// One mask, with no ";" in it.
+    nonisolated static func singleMaskPlan(_ raw: String) -> MaskPlan {
         let mask = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !mask.isEmpty, mask != "*" else { return .everything }
 
@@ -151,9 +175,10 @@ enum SpotlightQueryBuilder {
     /// different. The `d` flag folds exactly that difference away (and `c` folds case, which
     /// FNM_CASEFOLD only ever managed for ASCII). Same operator the content-mode name filter
     /// already uses, so both sieves answer alike.
+    ///
+    /// The mask may be several, separated by ";" — the rules are `SearchNameMask`'s, the same
+    /// ones the rest of the dialog follows.
     nonisolated static func nameMatches(mask raw: String, name: String) -> Bool {
-        let mask = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !mask.isEmpty, mask != "*" else { return true }
-        return NSPredicate(format: "SELF LIKE[cd] %@", mask).evaluate(with: name)
+        SearchNameMask.matches(raw, name: name)
     }
 }

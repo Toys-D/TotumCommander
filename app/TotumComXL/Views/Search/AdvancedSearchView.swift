@@ -1,25 +1,45 @@
 import AppKit
+import Combine
+import Quartz
 import SwiftUI
 import UniformTypeIdentifiers
 
 // MARK: - Search Mode
 
+/// The four ways to search — the tabs at the top of the window, from the plainest to the
+/// most particular.
 enum SearchMode: String, CaseIterable {
     case byName = "search.mode.name"
+    case byContent = "search.mode.content"
     /// Ask macOS's index instead of walking the disk — a separate mode rather than a switch on
     /// "by name", because it answers a different question: it is instant across a whole disk
     /// and can read inside PDFs, but it knows nothing about hidden files, package interiors or
     /// unindexed volumes, and has no regular expressions. A hidden switch that quietly changed
     /// what the other controls mean would be exactly the kind of surprise this app avoids.
     case spotlight = "search.mode.spotlight"
-    case byContent = "search.mode.content"
     case duplicates = "search.mode.duplicates"
+
+    var title: String { L(rawValue) }
+
+    var symbol: String {
+        switch self {
+        case .byName: return "textformat"
+        case .byContent: return "doc.text.magnifyingglass"
+        case .spotlight: return "sparkle.magnifyingglass"
+        case .duplicates: return "square.on.square"
+        }
+    }
 }
 
 enum DuplicateMode: Int, CaseIterable {
     case byName = 0
     case bySize = 1
     case byHash = 2
+
+    /// In the order the window offers them: the one that means "the same file twice" first.
+    /// "Same size" is not offered: two files of one size are not copies of each other, and a
+    /// list of them answered a question nobody asks. The engine still knows the criterion.
+    static let shown: [DuplicateMode] = [.byHash, .byName]
 
     var label: String {
         switch self {
@@ -30,18 +50,21 @@ enum DuplicateMode: Int, CaseIterable {
     }
 }
 
+/// Units of the size condition — by the thousand, the way the panels and Finder count a
+/// file's size. By 1024, a file the panel shows as "10 MB" (ten million bytes) failed the
+/// condition "from 10 MB".
 enum SizeUnit: Int64, CaseIterable {
     case bytes = 1
-    case kb = 1024
-    case mb = 1_048_576
-    case gb = 1_073_741_824
+    case kb = 1_000
+    case mb = 1_000_000
+    case gb = 1_000_000_000
 
     var label: String {
         switch self {
-        case .bytes: return "B"
-        case .kb: return "KB"
-        case .mb: return "MB"
-        case .gb: return "GB"
+        case .bytes: return L("search.unit.b")
+        case .kb: return L("search.unit.kb")
+        case .mb: return L("search.unit.mb")
+        case .gb: return L("search.unit.gb")
         }
     }
 }
@@ -72,6 +95,9 @@ final class AdvancedSearchViewModel: ObservableObject {
     /// the one part of a search that costs a fraction of a second PER FILE, and nobody should
     /// pay for it without asking.
     @Published var readPictures: Bool = false
+    /// "By content" only: tell «Договор» from «договор». Off by default — someone looking for
+    /// a word wants it however it was capitalised, and has to ask for the opposite.
+    @Published var caseSensitive: Bool = false
     /// Set when the picture search stopped at its own limit rather than at the end of the folder.
     @Published var pictureLimitReached = false
     @Published var rootPath: String = ""
@@ -85,11 +111,89 @@ final class AdvancedSearchViewModel: ObservableObject {
 
     @Published var minSizeValue: String = ""
     @Published var maxSizeValue: String = ""
-    @Published var sizeUnit: SizeUnit = .kb
+    @Published var sizeUnit: SizeUnit = .mb
 
     @Published var dateFrom: Date? = nil
     @Published var dateTo: Date? = nil
-    @Published var useDateFilter: Bool = false
+    /// Which stretch of time the search is limited to. "Custom" uses the two dates above.
+    @Published var datePreset: SearchDatePreset = .any {
+        didSet {
+            // The fields must show what the search will use: the first time "custom" is
+            // chosen they open on the last week rather than on "01.01.0001 — today".
+            guard datePreset == .custom, dateFrom == nil, dateTo == nil else { return }
+            let range = SearchDateRange.initial()
+            dateFrom = range.from
+            dateTo = range.to
+        }
+    }
+
+    /// The folders the two panels show — for the quick places next to "Where".
+    var panelPath: String = ""
+    var otherPanelPath: String = ""
+    /// Where the recent places are kept; the tests hand in their own.
+    var placesDefaults: UserDefaults = .standard
+
+    /// True once a search has been started in this window — the empty list then means
+    /// "nothing found" rather than "nothing asked yet".
+    @Published var hasSearched: Bool = false
+
+    // MARK: Order of the list
+
+    static let sortKeyDefaultsKey = "fcxl.search.sortKey"
+    static let sortAscendingDefaultsKey = "fcxl.search.sortAscending"
+
+    /// The column the list is ordered by, and which way. Remembered between launches: someone
+    /// who looks for the biggest files wants them on top the next time as well.
+    @Published private(set) var sortKey: SearchSortKey =
+        SearchSortKey(rawValue: UserDefaults.standard.string(forKey: sortKeyDefaultsKey) ?? "") ?? .name
+    @Published private(set) var sortAscending: Bool =
+        UserDefaults.standard.object(forKey: sortAscendingDefaultsKey) as? Bool ?? true
+    /// Where the order is remembered; nil in tests, which must not touch the real settings.
+    var sortDefaults: UserDefaults? = .standard
+
+    /// Lists longer than this are put in order off the main thread: comparing a hundred
+    /// thousand names the way a person reads them takes long enough to be felt.
+    static let sortInlineLimit = 5_000
+
+    func setSort(key: SearchSortKey, ascending: Bool) {
+        guard key != sortKey || ascending != sortAscending else { return }
+        sortKey = key
+        sortAscending = ascending
+        sortDefaults?.set(key.rawValue, forKey: Self.sortKeyDefaultsKey)
+        sortDefaults?.set(ascending, forKey: Self.sortAscendingDefaultsKey)
+        resort()
+    }
+
+    /// A click on a column header: a new column starts ascending, the same one turns around.
+    func sort(by key: SearchSortKey) {
+        setSort(key: key, ascending: key == sortKey ? !sortAscending : true)
+    }
+
+    private func resort() {
+        let key = sortKey
+        let ascending = sortAscending
+        guard results.count > Self.sortInlineLimit else {
+            results = SearchSort.sorted(results, by: key, ascending: ascending)
+            resultsRevision += 1
+            return
+        }
+        let unordered = results
+        Task { [weak self] in
+            let ordered = await Task.detached(priority: .userInitiated) {
+                SearchSort.sorted(unordered, by: key, ascending: ascending)
+            }.value
+            // The list may have been replaced, or the order changed again, while this ran.
+            guard let self, self.sortKey == key, self.sortAscending == ascending,
+                  self.results.count == unordered.count else { return }
+            self.results = ordered
+            self.resultsRevision += 1
+        }
+    }
+
+    /// The mode of the search the list on screen came from. The list belongs to that search,
+    /// not to whichever tab is open now: switching the tab to prepare the next question must
+    /// not reinterpret — or seem to empty — the answer to the last one.
+    @Published var resultsMode: SearchMode = .byName
 
     @Published var results: [SearchHit] = []
     @Published var duplicateResults: [DuplicateGroup] = []
@@ -200,8 +304,23 @@ final class AdvancedSearchViewModel: ObservableObject {
     private var activeSearchService: CoreBridgeService?
     private var spotlight: SpotlightSearchService?
     var onNavigateToFile: ((String) -> Void)?
-    var onCopyFiles: (([String], String) -> Void)?
+    /// The folder "Go to" last took the panel to. While the panel still stands there, reopening
+    /// the window continues the same search instead of pointing it at that subfolder.
+    var visitedFromResults: String?
     var onDeleteFiles: (([String]) -> Void)?
+    /// Copy (true) or move (false) the finds — through the program's own copy dialog, which
+    /// offers the other panel's folder and lets it be changed.
+    var onTransfer: (([String], Bool) -> Void)?
+    var onEdit: ((String) -> Void)?
+    /// All the finds, and the folder they were looked for in — to be shown in a panel.
+    var onShowInPanel: (([String], String) -> Void)?
+    /// Show or hide the quick look of the selected finds; the window owns the preview.
+    var onQuickLook: (() -> Void)?
+    var onClose: (() -> Void)?
+
+    /// Where the list on screen was looked for — the folder column shows paths from here,
+    /// and "to panel" opens the list in it. "/" for Spotlight asked about the whole Mac.
+    @Published var resultsRoot: String = ""
 
     /// Asynchronously calculate folder sizes for directory results.
     ///
@@ -234,41 +353,126 @@ final class AdvancedSearchViewModel: ObservableObject {
         }
     }
 
+    /// Finds made so far, while the search is still walking: the list fills as it goes instead
+    /// of standing empty until the end. The final answer replaces all of this when it comes.
+    func appendFound(_ hits: [SearchHit], limit: Int = AdvancedSearchViewModel.maxShownResults) {
+        let room = limit - results.count
+        guard room > 0, !hits.isEmpty else { return }
+        results.append(contentsOf: hits.prefix(room))
+        // A short list is kept in order as it grows; a long one waits for the final answer,
+        // which arrives ordered — sorting a hundred thousand rows per batch would be felt.
+        if results.count <= Self.sortInlineLimit {
+            results = SearchSort.sorted(results, by: sortKey, ascending: sortAscending)
+        }
+        resultsRevision += 1
+    }
+
+    // MARK: Duplicates: the spare copies
+
+    /// Select every copy but one in each group — what a duplicates run is for.
+    func selectDuplicateExtras(keep: DuplicateKeep) {
+        guard resultsMode == .duplicates else { return }
+        selectedResults = DuplicateSelection.extras(in: duplicateResults, keep: keep,
+                                                    modified: DuplicateSelection.modifiedOnDisk)
+    }
+
+    /// What deleting the selection would free, and in how many groups it would leave no copy
+    /// at all. Nil outside duplicates, and when nothing is selected.
+    var duplicateSummary: (bytes: UInt64, emptiedGroups: Int)? {
+        guard resultsMode == .duplicates, !selectedResults.isEmpty else { return nil }
+        return DuplicateSelection.summary(groups: duplicateResults, selected: selectedResults)
+    }
+
     /// Add what the pictures answered to what the text search already found.
     func appendPictureHits(_ hits: [SearchHit], reachedLimit: Bool) {
         pictureLimitReached = reachedLimit
         guard !hits.isEmpty else { return }
         let known = Set(results.map(\.id))
-        results.append(contentsOf: hits.filter { !known.contains($0.id) })
+        results = SearchSort.sorted(results + hits.filter { !known.contains($0.id) },
+                                    by: sortKey, ascending: sortAscending)
         resultsRevision += 1
     }
 
     var resultCount: Int {
-        searchMode == .duplicates
+        resultsMode == .duplicates
             ? duplicateResults.reduce(0) { $0 + $1.files.count }
             : results.count
     }
 
-    func search() {
+    /// What the block "Filters" holds, as it applies in the current mode: a condition the
+    /// mode does not have arrives here already empty.
+    var filterState: SearchFilterState {
+        let maskIsFilter = searchMode == .byContent || searchMode == .duplicates
+        let hasFolders = searchMode == .byName || searchMode == .spotlight
+        return SearchFilterState(
+            nameMask: maskIsFilter ? pattern : "",
+            exclude: excludeSpec,
+            minSize: minSizeValue, maxSize: maxSizeValue, unit: sizeUnit,
+            type: hasFolders ? fileType : .all,
+            datePreset: datePreset, dateFrom: dateFrom, dateTo: dateTo)
+    }
+
+    /// Clear the conditions of THIS search. "Skip" stays: it is a standing habit, typed once.
+    /// The mask is cleared only where it is a filter — by name it is the question itself.
+    func resetFilters() {
+        if searchMode == .byContent || searchMode == .duplicates { pattern = "*" }
+        minSizeValue = ""
+        maxSizeValue = ""
+        fileType = .all
+        datePreset = .any
+    }
+
+    /// The date limits the engines get — whole days, or none.
+    private var dateLimits: (from: Date?, to: Date?) {
+        SearchDateRange.range(for: datePreset, customFrom: dateFrom, customTo: dateTo)
+    }
+
+    /// Why "Find" cannot start, in words — or nil when it can. The button used to do nothing
+    /// at all in these cases, which read as a broken button.
+    var problemBeforeSearch: String? {
         let contentText = contentQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        // "By content" requires the content text; other modes require the name mask.
-        if searchMode == .byContent {
-            guard !contentText.isEmpty else { return }
-        } else if searchMode == .spotlight {
+        switch searchMode {
+        case .byContent:
+            return contentText.isEmpty ? L("search.error.needText") : nil
+        case .spotlight:
             // An unbounded index query answers with the whole disk, which is nobody's question.
             // Size and date alone are not enough of a question either — a name or some text is.
-            let mask = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard (!mask.isEmpty && mask != "*") || !contentText.isEmpty else {
-                errorMessage = L("search.spot.needQuery")
-                return
-            }
-        } else {
-            guard !pattern.isEmpty || searchMode == .duplicates else { return }
+            return SearchNameMask.matchesEverything(pattern) && contentText.isEmpty
+                ? L("search.spot.needQuery") : nil
+        case .byName, .duplicates:
+            // An empty mask means "everything", the same as "*".
+            return nil
+        }
+    }
+
+    func search() {
+        let contentText = contentQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let problem = problemBeforeSearch {
+            errorMessage = problem
+            return
+        }
+        hasSearched = true
+        resultsMode = searchMode
+        resultsRoot = searchMode == .spotlight && spotlightWholeDisk
+            ? "/" : (rootPath as NSString).standardizingPath
+        if !(searchMode == .spotlight && spotlightWholeDisk) {
+            SearchRecentPlaces.remember(rootPath, in: placesDefaults)
+        }
+        // What was asked — for the list next to the field. The mask is remembered where it
+        // is the question, not where it is one of the filters.
+        if searchMode == .byName || searchMode == .spotlight {
+            SearchHistory.remember(pattern, kind: .name, in: placesDefaults)
+        }
+        if searchMode == .byContent || searchMode == .spotlight {
+            SearchHistory.remember(contentQuery, kind: .text, in: placesDefaults)
         }
         isSearching = true
         errorMessage = nil
         results = []
         duplicateResults = []
+        // The selection belonged to the list that is being thrown away: "Selected: 1" over
+        // an empty list, with "Delete" still lit, pointed at a row nobody could see.
+        selectedResults = []
         pictureLimitReached = false
         resultsRevision += 1
         currentScanPath = ""
@@ -290,13 +494,16 @@ final class AdvancedSearchViewModel: ObservableObject {
         let mode = searchMode
         let dupMode = duplicateMode
         let fType = fileType
-        let unit = sizeUnit.rawValue
-        let minS = UInt64(minSizeValue) ?? 0
-        let maxS = UInt64(maxSizeValue) ?? 0
-        let dFrom = useDateFilter ? dateFrom : nil
-        let dTo = useDateFilter ? dateTo : nil
+        let minBytes = SearchSize.bytes(minSizeValue, unit: sizeUnit)
+        let maxBytes = SearchSize.bytes(maxSizeValue, unit: sizeUnit)
+        let dates = dateLimits
+        let dFrom = dates.from
+        let dTo = dates.to
         let excludes = Self.excludeList(excludeSpec)
         let alsoPictures = readPictures
+        let matchCase = caseSensitive
+        let orderKey = sortKey
+        let orderAscending = sortAscending
 
         // Create a fresh bridge instance for background thread
         let bgService = CoreBridgeService()
@@ -317,6 +524,14 @@ final class AdvancedSearchViewModel: ObservableObject {
                     self?.currentScanPath = dir
                 }
             }
+            // Finds as they are made. Only the search that is still the current one may add
+            // to the list: a cancelled walk can go on answering for a moment.
+            let onFound: ([SearchHit]) -> Void = { batch in
+                DispatchQueue.main.async {
+                    guard self?.activeSearchService === bgService else { return }
+                    self?.appendFound(batch)
+                }
+            }
             do {
                 switch mode {
                 case .spotlight:
@@ -326,31 +541,39 @@ final class AdvancedSearchViewModel: ObservableObject {
                     let hits = try bgService.advancedSearch(
                         rootPath: root, pattern: pat, useRegex: regex,
                         recursive: rec, includeHidden: hidden,
-                        minSize: minS * UInt64(unit), maxSize: maxS > 0 ? maxS * UInt64(unit) : 0,
+                        minSize: minBytes, maxSize: maxBytes,
                         dateFrom: dFrom, dateTo: dTo,
                         typeFilter: fType.rawValue,
                         excludePatterns: excludes,
-                        onScanDir: onScanDir
+                        onScanDir: onScanDir,
+                        onFound: onFound
                     )
                     let capped = Self.capped(hits)
+                    // Put in order here, off the main thread, before the list is shown.
+                    let ordered = SearchSort.sorted(capped.hits, by: orderKey, ascending: orderAscending)
                     DispatchQueue.main.async {
-                        self?.publish(results: capped.hits, total: capped.total)
+                        self?.publish(results: ordered, total: capped.total)
                         self?.isSearching = false
                         self?.currentScanPath = ""
                         self?.calculateFolderSizes()
                     }
 
                 case .byContent:
-                    // Find the content text inside files, then keep only those whose NAME
-                    // matches the top mask ("*" / empty = every file).
+                    // Find the content text inside the files whose NAME matches the top mask
+                    // ("*" / empty = every file). The mask goes down to the engine, which
+                    // then does not open the other files at all.
                     let hits = try bgService.searchContent(
                         rootPath: root, pattern: contentText, useRegex: regex, recursive: rec,
+                        caseSensitive: matchCase, includeHidden: hidden, nameMask: pat,
+                        minSize: minBytes, maxSize: maxBytes, dateFrom: dFrom, dateTo: dTo,
                         excludePatterns: excludes,
-                        onScanDir: onScanDir
+                        onScanDir: onScanDir,
+                        onFound: onFound
                     )
-                    let capped = Self.capped(Self.filterHitsByName(hits, namePattern: pat))
+                    let capped = Self.capped(hits)
+                    let ordered = SearchSort.sorted(capped.hits, by: orderKey, ascending: orderAscending)
                     DispatchQueue.main.async {
-                        self?.publish(results: capped.hits, total: capped.total)
+                        self?.publish(results: ordered, total: capped.total)
                         // Text files answer at once; pictures take a moment each, so they are
                         // added afterwards rather than making the whole search wait for them.
                         if alsoPictures {
@@ -379,7 +602,12 @@ final class AdvancedSearchViewModel: ObservableObject {
                                   lineContent: $0.text, dateModified: nil, size: nil,
                                   isDirectory: false)
                     }
+                    // What the picture reader found passes the same sieve the engine applied
+                    // to the text files: the name mask and the size and date limits.
+                    let limits = SearchFileLimits(minBytes: minBytes, maxBytes: maxBytes,
+                                                  from: dFrom, to: dTo)
                     let keptByName = Self.filterHitsByName(pictureHits, namePattern: pat)
+                        .filter { limits.allows(path: $0.path) }
                     DispatchQueue.main.async {
                         self?.appendPictureHits(keptByName, reachedLimit: found.reachedLimit)
                         self?.isSearching = false
@@ -389,6 +617,8 @@ final class AdvancedSearchViewModel: ObservableObject {
                 case .duplicates:
                     let groups = try bgService.findDuplicates(
                         rootPath: root, mode: dupMode.rawValue, recursive: rec,
+                        includeHidden: hidden,
+                        minSize: minBytes, maxSize: maxBytes, dateFrom: dFrom, dateTo: dTo,
                         excludePatterns: excludes,
                         onScanDir: onScanDir
                     )
@@ -403,7 +633,7 @@ final class AdvancedSearchViewModel: ObservableObject {
                 }
             } catch {
                 DispatchQueue.main.async {
-                    self?.errorMessage = error.localizedDescription
+                    self?.errorMessage = SearchErrorText.text(for: error)
                     self?.isSearching = false
                     self?.currentScanPath = ""
                 }
@@ -415,13 +645,14 @@ final class AdvancedSearchViewModel: ObservableObject {
     /// a run loop, and the only heavy part — asking mdutil whether the volume is indexed at
     /// all — is a short hop to a background queue first.
     private func startSpotlight() {
+        let spotlightDates = dateLimits
         let (predicate, postFilter) = SpotlightQueryBuilder.predicate(
             mask: pattern,
             contentQuery: contentQuery,
-            minBytes: (UInt64(minSizeValue) ?? 0) * UInt64(sizeUnit.rawValue),
-            maxBytes: (UInt64(maxSizeValue) ?? 0) * UInt64(sizeUnit.rawValue),
-            dateFrom: useDateFilter ? dateFrom : nil,
-            dateTo: useDateFilter ? dateTo : nil)
+            minBytes: SearchSize.bytes(minSizeValue, unit: sizeUnit),
+            maxBytes: SearchSize.bytes(maxSizeValue, unit: sizeUnit),
+            dateFrom: spotlightDates.from,
+            dateTo: spotlightDates.to)
 
         guard let predicate else {
             errorMessage = L("search.spot.needQuery")
@@ -467,7 +698,9 @@ final class AdvancedSearchViewModel: ObservableObject {
                             !Self.pathIsExcluded($0.path, patterns: excludes)
                         }
                         let capped = Self.capped(kept)
-                        self.publish(results: capped.hits, total: capped.total)
+                        self.publish(results: SearchSort.sorted(capped.hits, by: self.sortKey,
+                                                                ascending: self.sortAscending),
+                                     total: capped.total)
                         self.spotlightTruncated = outcome.truncated
                         self.calculateFolderSizes()
                     case .failure(let error):
@@ -480,28 +713,22 @@ final class AdvancedSearchViewModel: ObservableObject {
 
     /// Keep only duplicate groups where at least one copy's NAME matches the query.
     /// The whole group is kept (all copies — hash-duplicates can differ in name).
-    /// "*", "" → no filtering. Without wildcards the query is a substring match.
+    /// The query follows the mask rules of the whole dialog — see `SearchNameMask`.
     nonisolated static func filterDuplicateGroups(_ groups: [DuplicateGroup],
                                                   namePattern raw: String) -> [DuplicateGroup] {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != "*" else { return groups }
-        let wildcard = (trimmed.contains("*") || trimmed.contains("?"))
-            ? trimmed
-            : "*\(trimmed)*"
-        let predicate = NSPredicate(format: "SELF LIKE[cd] %@", wildcard)
+        guard !SearchNameMask.matchesEverything(raw) else { return groups }
+        let matches = SearchNameMask.matcher(raw)
         return groups.filter { group in
-            group.files.contains { predicate.evaluate(with: ($0 as NSString).lastPathComponent) }
+            group.files.contains { matches(($0 as NSString).lastPathComponent) }
         }
     }
 
-    /// Keep only content-search hits whose file NAME matches the top mask ("*"/empty = all).
-    /// Substring match unless the mask already has wildcards.
+    /// Keep only the hits whose file NAME matches the top mask — for the hits the engine did
+    /// not sieve itself (what the picture reader found).
     nonisolated static func filterHitsByName(_ hits: [SearchHit], namePattern raw: String) -> [SearchHit] {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != "*" else { return hits }
-        let wildcard = (trimmed.contains("*") || trimmed.contains("?")) ? trimmed : "*\(trimmed)*"
-        let predicate = NSPredicate(format: "SELF LIKE[cd] %@", wildcard)
-        return hits.filter { predicate.evaluate(with: ($0.path as NSString).lastPathComponent) }
+        guard !SearchNameMask.matchesEverything(raw) else { return hits }
+        let matches = SearchNameMask.matcher(raw)
+        return hits.filter { matches(($0.path as NSString).lastPathComponent) }
     }
 
     func cancelSearch() {
@@ -518,7 +745,96 @@ final class AdvancedSearchViewModel: ObservableObject {
         // places the cursor on the item. (Stripping to the directory here used to
         // combine with a second strip in the handler — the panel opened the parent
         // of the right folder and the cursor never landed on the file.)
+        visitedFromResults = (path as NSString).deletingLastPathComponent
         onNavigateToFile?(path)
+    }
+
+    /// Where "Go to" leads when several results are selected: the first of them in list
+    /// order. It used to be whichever one a Set happened to hand out first.
+    var primarySelection: String? {
+        guard !selectedResults.isEmpty else { return nil }
+        if resultsMode == .duplicates {
+            for group in duplicateResults {
+                if let path = group.files.first(where: selectedResults.contains) { return path }
+            }
+            return nil
+        }
+        return results.first { selectedResults.contains($0.path) }?.path
+    }
+
+    /// The selected finds in the order the list shows them.
+    var orderedSelectedPaths: [String] {
+        guard !selectedResults.isEmpty else { return [] }
+        if resultsMode == .duplicates {
+            return duplicateResults.flatMap { $0.files }.filter(selectedResults.contains)
+        }
+        return results.filter { selectedResults.contains($0.path) }.map(\.path)
+    }
+
+    /// Every find, in list order.
+    var allResultPaths: [String] {
+        resultsMode == .duplicates ? duplicateResults.flatMap { $0.files } : results.map(\.path)
+    }
+
+    /// One road for the buttons, the keys and the right-click menu.
+    func perform(_ action: SearchResultAction) {
+        let paths = orderedSelectedPaths
+        switch action {
+        case .goTo:
+            guard let first = primarySelection else { return }
+            navigateToResult(first)
+            // Closed so the panel, with the cursor on the find, is in sight.
+            onClose?()
+        case .quickLook:
+            guard !paths.isEmpty else { return }
+            onQuickLook?()
+        case .edit:
+            guard let first = primarySelection else { return }
+            onEdit?(first)
+        case .copy:
+            guard !paths.isEmpty else { return }
+            onTransfer?(paths, true)
+        case .move:
+            guard !paths.isEmpty else { return }
+            onTransfer?(paths, false)
+        case .delete:
+            guard !paths.isEmpty else { return }
+            onDeleteFiles?(paths)
+        case .toPanel:
+            // The whole list, not the selection: in the panel it can be selected any way.
+            let all = allResultPaths
+            guard !all.isEmpty else { return }
+            onShowInPanel?(all, resultsRoot)
+            onClose?()
+        case .copyPath:
+            guard !paths.isEmpty else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
+        }
+    }
+
+    /// The right-click menu of the list — the same actions the buttons and keys perform.
+    func resultsMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        func add(_ key: String, _ symbol: String, _ action: SearchResultAction,
+                 destructive: Bool = false) {
+            menu.addStyledItem(title: L(key), symbolName: symbol, isDestructive: destructive) {
+                [weak self] in self?.perform(action)
+            }
+        }
+        add("search.menu.goto", "arrow.right.circle", .goTo)
+        add("search.menu.quickLook", "eye", .quickLook)
+        add("search.menu.edit", "pencil", .edit)
+        menu.addItem(.separator())
+        add("search.menu.toPanel", "list.bullet.rectangle", .toPanel)
+        menu.addItem(.separator())
+        add("search.menu.copy", "doc.on.doc", .copy)
+        add("search.menu.move", "arrow.right.doc.on.clipboard", .move)
+        add("search.menu.copyPath", "link", .copyPath)
+        menu.addItem(.separator())
+        add("search.menu.delete", "trash", .delete, destructive: true)
+        return menu
     }
 
     /// Drop items that no longer exist (e.g. after "Удалить") from the results.
@@ -534,7 +850,7 @@ final class AdvancedSearchViewModel: ObservableObject {
     }
 
     var selectedPaths: [String] {
-        if searchMode == .duplicates {
+        if resultsMode == .duplicates {
             return Array(selectedResults)
         }
         return results.filter { selectedResults.contains($0.path) }.map(\.path)
@@ -596,7 +912,7 @@ struct AdvancedSearchContentView: View {
                     .font(.system(size: 11))
                     .foregroundColor(.orange)
             } else if vm.spotlightTruncated {
-                Text(L("search.spot.truncated"))
+                Text(String(format: L("search.spot.truncated"), SpotlightSearchService.defaultCap))
                     .font(.system(size: 11))
                     .foregroundColor(.orange)
             } else if vm.pictureLimitReached {
@@ -609,54 +925,72 @@ struct AdvancedSearchContentView: View {
                 Text(err).foregroundColor(.red).font(.system(size: 11)).lineLimit(1)
             }
             Spacer()
+            if vm.resultsMode == .duplicates, vm.resultCount > 0 {
+                // What a duplicates run is for: the spare copies, picked in one move.
+                ProgramMenuButton(chipStyle: FCXLChipButtonStyle(compact: true),
+                                  makeMenu: duplicatesMenu) {
+                    HStack(spacing: 4) {
+                        Text(L("search.dup.select"))
+                        MenuChevron()
+                    }
+                }
+            }
+            if let summary = vm.duplicateSummary {
+                if summary.emptiedGroups > 0 {
+                    // Selecting every copy in a group is how the last one gets deleted too.
+                    Text(String(format: L("search.dup.allSelected"), summary.emptiedGroups))
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                }
+                if summary.bytes > 0 {
+                    Text(String(format: L("search.dup.frees"), ByteText.file(Int64(summary.bytes))))
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+            }
             Text("\(L("search.selected")): \(vm.selectedResults.count)")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 6)
+        .frame(minHeight: 32)
+    }
+
+    private func duplicatesMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.addNote(L("search.dup.select.note"))
+        for keep in DuplicateKeep.allCases {
+            menu.addChoiceItem(title: keep.title) { vm.selectDuplicateExtras(keep: keep) }
+        }
+        menu.addItem(.separator())
+        menu.addChoiceItem(title: L("search.dup.select.none")) { vm.selectedResults = [] }
+        return menu
     }
 
     private var buttonBar: some View {
         VStack(spacing: 0) {
             Divider()
             HStack(spacing: 0) {
+                // "Close", not "Cancel": there is nothing here to cancel — the window keeps
+                // its results for the next time it opens.
                 Button(action: { AdvancedSearchPanelController.shared.close() }) {
-                    barLabel(L("button.cancel"))
+                    barLabel(L("button.close"))
                 }
                 .buttonStyle(FCXLDialogSecondaryButtonStyle(fontSize: 13))
 
-                Divider().frame(height: 48)
-                Button(action: {
-                    if let first = vm.selectedResults.first {
-                        vm.navigateToResult(first)
-                        // Close so the panel (with the cursor on the item) is visible.
-                        AdvancedSearchPanelController.shared.close()
-                    }
-                }) { barLabel(L("search.action.goto")) }
-                .buttonStyle(FCXLDialogSecondaryButtonStyle(fontSize: 13))
-                .disabled(vm.selectedResults.isEmpty)
-
-                Divider().frame(height: 48)
-                Button(action: {
-                    let paths = vm.selectedPaths
-                    fcxlPresentModal { [weak vm] in
-                        if let dest = DialogService.shared.showFolderPicker(
-                            title: L("search.action.copy"), defaultPath: nil
-                        ) {
-                            vm?.onCopyFiles?(paths, dest)
-                        }
-                    }
-                }) { barLabel(L("search.action.copy")) }
-                .buttonStyle(FCXLDialogSecondaryButtonStyle(fontSize: 13))
-                .disabled(vm.selectedResults.isEmpty)
-
-                Divider().frame(height: 48)
-                Button(action: { vm.onDeleteFiles?(vm.selectedPaths) }) {
-                    barLabel(L("search.action.delete"))
-                }
-                .buttonStyle(FCXLDialogSecondaryButtonStyle(fontSize: 13))
-                .disabled(vm.selectedResults.isEmpty)
+                barAction(L("search.action.goto"), .goTo, enabled: !vm.selectedResults.isEmpty,
+                          tip: L("search.action.goto.tip"))
+                // The whole list goes to the panel, so the button needs a list, not a selection.
+                barAction(L("search.action.toPanel"), .toPanel, enabled: vm.resultCount > 0,
+                          tip: L("search.action.toPanel.tip"))
+                barAction(L("search.action.copy"), .copy, enabled: !vm.selectedResults.isEmpty,
+                          tip: L("search.action.copy.tip"))
+                barAction(L("search.action.move"), .move, enabled: !vm.selectedResults.isEmpty,
+                          tip: L("search.action.move.tip"))
+                barAction(L("search.action.delete"), .delete, enabled: !vm.selectedResults.isEmpty,
+                          tip: L("search.action.delete.tip"))
 
                 Divider().frame(height: 48)
                 // Primary: start search; turns into "cancel search" while running.
@@ -670,6 +1004,17 @@ struct AdvancedSearchContentView: View {
                 .keyboardShortcut(.defaultAction)
             }
         }
+    }
+
+    /// One button of the bar: all of one kind and one width, each behind its divider.
+    @ViewBuilder
+    private func barAction(_ title: String, _ action: SearchResultAction, enabled: Bool,
+                           tip: String) -> some View {
+        Divider().frame(height: 48)
+        Button(action: { vm.perform(action) }) { barLabel(title) }
+            .buttonStyle(FCXLDialogSecondaryButtonStyle(fontSize: 13))
+            .disabled(!enabled)
+            .help(tip)
     }
 
     private func barLabel(_ title: String) -> some View {
@@ -688,153 +1033,334 @@ struct AdvancedSearchContentView: View {
 
     // MARK: - Search Form
 
+    /// Is the block "Filters" open. Remembered: someone who always filters keeps it open,
+    /// someone who never does keeps the room for the results.
+    @AppStorage("fcxl.search.filtersExpanded") private var filtersExpanded: Bool = false
+
+    /// The form reads top to bottom as a sentence: HOW to search (the tabs), WHAT to look for
+    /// (the one field the mode is about), WHERE, and — folded away until wanted — which of
+    /// the finds to keep. The mode used to sit in the middle of the form while changing the
+    /// rows both above and below itself.
     private var searchForm: some View {
-        FCXLFormCard {
-            FCXLFormRow(label: L("search.pattern")) {
-                FCXLDialogTextField(
-                    text: $vm.pattern,
-                    placeholder: "*.txt",
-                    focusOnAppear: true,
-                    initialSelection: .all,
-                    onSubmit: { vm.search() },
-                    onCancel: { AdvancedSearchPanelController.shared.close() },
-                    onMoveDown: { focusResults() }
-                )
-                // Spotlight has no regular expressions at any level — the switch is hidden
-                // rather than greyed, because a control that is there but does nothing is
-                // worse than one that is honestly absent.
-                if vm.searchMode != .spotlight {
-                    Text(L("search.regex"))
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                    FCXLSwitch(isOn: $vm.useRegex)
-                }
+        VStack(spacing: 10) {
+            FCXLSegmented(items: SearchMode.allCases, selection: $vm.searchMode,
+                          title: { $0.title }, symbol: { $0.symbol },
+                          height: 30, prominent: true)
+            FCXLFormCard {
+                questionRows
+                whereRow
+                scopeRow
             }
-
-            FCXLFormRow(label: L("search.path")) {
-                FCXLDialogTextField(
-                    text: $vm.rootPath,
-                    placeholder: "/",
-                    onSubmit: { vm.search() },
-                    onCancel: { AdvancedSearchPanelController.shared.close() }
-                )
-                Button(L("search.browse")) {
-                    fcxlPresentModal {
-                        if let path = DialogService.shared.showFolderPicker(
-                            title: L("search.browse"),
-                            defaultPath: vm.rootPath
-                        ) {
-                            vm.rootPath = path
-                        }
-                    }
-                }
-                .buttonStyle(FCXLChipButtonStyle(compact: true))
-            }
-
-            FCXLFormRow(label: L("search.exclude")) {
-                FCXLDialogTextField(
-                    text: $vm.excludeSpec,
-                    placeholder: "node_modules; .cache; *.tmp",
-                    onSubmit: { vm.search() },
-                    onCancel: { AdvancedSearchPanelController.shared.close() }
-                )
-            }
-
-            // An index scope always covers everything below it, and the index has no
-            // dot-files: both switches would be lies in Spotlight mode. In their place, the
-            // one choice that IS Spotlight's own — this folder or the whole Mac.
-            if vm.searchMode == .spotlight {
-                FCXLToggleRow(label: L("search.spot.wholeDisk"), isOn: $vm.spotlightWholeDisk)
-            } else {
-                FCXLToggleRow(label: L("search.recursive"), isOn: $vm.recursive)
-                FCXLToggleRow(label: L("search.hidden"), isOn: $vm.includeHidden)
-            }
-
-            FCXLFormRow(label: L("search.modeLabel"), showDivider: true) {
-                Picker("", selection: $vm.searchMode) {
-                    ForEach(SearchMode.allCases, id: \.self) { mode in
-                        Text(L(mode.rawValue)).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
-
-            if vm.searchMode == .spotlight {
-                FCXLFormRow(showDivider: false) {
-                    Text(L("search.spot.hint"))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                }
-            }
-
-            // "By content" mode: a separate field for the text to find INSIDE the files that
-            // match the name mask above.
-            // Spotlight gets the same field: full text inside PDFs, Pages and Word documents
-            // is the reason the mode exists — the walking engine can never match those.
-            if vm.searchMode == .byContent || vm.searchMode == .spotlight {
-                FCXLFormRow(label: L("search.contentQuery"), showDivider: false) {
-                    FCXLDialogTextField(
-                        text: $vm.contentQuery,
-                        placeholder: L("search.contentQuery.placeholder"),
-                        focusOnAppear: true,
-                        onSubmit: { vm.search() },
-                        onCancel: { AdvancedSearchPanelController.shared.close() }
-                    )
-                }
-            }
-
-            // Reading the pictures as well. Only in the walking mode: Spotlight answers from an
-            // index that was built without ever looking inside a photograph.
-            if vm.searchMode == .byContent {
-                FCXLToggleRow(label: L("search.readPictures"), isOn: $vm.readPictures,
-                              showDivider: false)
-                if vm.readPictures {
-                    FCXLFormRow(showDivider: false) {
-                        Text(String(format: L("search.readPictures.hint"),
-                                    TextRecognitionService.searchFileLimit))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer()
-                    }
-                }
-            }
-
-            if vm.searchMode == .duplicates {
-                FCXLFormRow(showDivider: false) {
-                    Picker("", selection: $vm.duplicateMode) {
-                        ForEach(DuplicateMode.allCases, id: \.self) { m in
-                            Text(m.label).tag(m)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                }
-            }
-
-            // Size, type and dates work in Spotlight too — as predicates, so a whole-disk
-            // query is narrowed inside the index rather than after it.
-            if vm.searchMode == .byName || vm.searchMode == .spotlight {
-                filtersSection
+            FCXLFormCard {
+                filtersHeader
+                if filtersExpanded { filterRows }
             }
         }
     }
 
+    // MARK: What to look for
+
     @ViewBuilder
-    private var filtersSection: some View {
+    private var questionRows: some View {
+        switch vm.searchMode {
+        case .byName:
+            FCXLFormRow(label: L("search.name")) {
+                queryField($vm.pattern, placeholder: L("search.name.placeholder"), focus: true)
+                historyButton(.name, into: $vm.pattern)
+                option(L("search.regex"), symbol: "asterisk", tip: L("search.regex.tip"),
+                       isOn: $vm.useRegex)
+            }
+            .id(SearchMode.byName)
+
+        case .byContent:
+            FCXLFormRow(label: L("search.text")) {
+                queryField($vm.contentQuery, placeholder: L("search.contentQuery.placeholder"),
+                           focus: true)
+                historyButton(.text, into: $vm.contentQuery)
+                option(L("search.caseShort"), symbol: "textformat.alt",
+                       tip: L("search.caseSensitive"), isOn: $vm.caseSensitive)
+                option(L("search.regex"), symbol: "asterisk", tip: L("search.regex.tip"),
+                       isOn: $vm.useRegex)
+            }
+            .id(SearchMode.byContent)
+            // Reading the pictures as well. Only in the walking mode: Spotlight answers from an
+            // index that was built without ever looking inside a photograph.
+            FCXLToggleRow(label: L("search.readPictures"), isOn: $vm.readPictures)
+            if vm.readPictures {
+                hintRow(String(format: L("search.readPictures.hint"),
+                               TextRecognitionService.searchFileLimit))
+            }
+
+        case .spotlight:
+            // Either field is a question on its own, and both narrow each other: full text
+            // inside PDFs, Pages and Word documents is the reason the mode exists.
+            FCXLFormRow(label: L("search.name")) {
+                queryField($vm.pattern, placeholder: L("search.name.placeholder"), focus: true)
+                historyButton(.name, into: $vm.pattern)
+            }
+            .id(SearchMode.spotlight)
+            FCXLFormRow(label: L("search.text")) {
+                queryField($vm.contentQuery, placeholder: L("search.contentQuery.placeholder"))
+                historyButton(.text, into: $vm.contentQuery)
+            }
+            hintRow(L("search.spot.hint"))
+
+        case .duplicates:
+            FCXLFormRow(label: L("search.dup.what")) {
+                FCXLSegmented(items: DuplicateMode.shown, selection: $vm.duplicateMode,
+                              title: { $0.label })
+            }
+        }
+    }
+
+    private func queryField(_ text: Binding<String>, placeholder: String,
+                            focus: Bool = false) -> some View {
+        FCXLDialogTextField(
+            text: text,
+            placeholder: placeholder,
+            focusOnAppear: focus,
+            initialSelection: focus ? .all : .none,
+            onSubmit: { vm.search() },
+            onCancel: { AdvancedSearchPanelController.shared.close() },
+            onMoveDown: { focusResults() }
+        )
+    }
+
+    /// What was asked before, one click away from the field it was asked in. The same small
+    /// clock as the places next to "Where" — the two lists are the same kind of help.
+    private func historyButton(_ kind: SearchHistory.Kind, into text: Binding<String>) -> some View {
+        ProgramMenuButton(chipStyle: FCXLChipButtonStyle(compact: true), makeMenu: {
+            let menu = NSMenu()
+            menu.autoenablesItems = false
+            let queries = SearchHistory.load(kind, from: vm.placesDefaults)
+            if queries.isEmpty {
+                menu.addNote(L("search.history.empty"))
+            } else {
+                for query in queries {
+                    menu.addChoiceItem(title: query, checked: query == text.wrappedValue) {
+                        text.wrappedValue = query
+                    }
+                }
+                menu.addItem(.separator())
+                menu.addChoiceItem(title: L("search.history.clear")) {
+                    SearchHistory.clear(kind, in: vm.placesDefaults)
+                }
+            }
+            return menu
+        }) {
+            HStack(spacing: 4) {
+                Image(systemName: "clock.arrow.circlepath")
+                MenuChevron()
+            }
+            .frame(height: 14)
+        }
+        .help(L("search.history.tip"))
+    }
+
+    /// A switch that belongs to the field next to it — the same control the editor's find bar
+    /// uses for "Match case" and "Regex", so the two searches of the program look alike.
+    private func option(_ title: String, symbol: String, tip: String,
+                        isOn: Binding<Bool>) -> some View {
+        Button { isOn.wrappedValue.toggle() } label: {
+            FCXLBarLabel(title: title, symbol: symbol)
+        }
+        .buttonStyle(FCXLBarButtonStyle(isOn: isOn.wrappedValue))
+        .help(tip)
+    }
+
+    private func hintRow(_ text: String) -> some View {
+        FCXLFormRow {
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 6)
+            Spacer()
+        }
+    }
+
+    // MARK: Where
+
+    /// Spotlight asked about the whole Mac does not look at the folder at all.
+    private var searchesWholeDisk: Bool {
+        vm.searchMode == .spotlight && vm.spotlightWholeDisk
+    }
+
+    private var whereRow: some View {
+        FCXLFormRow(label: L("search.path")) {
+            FCXLDialogTextField(
+                text: $vm.rootPath,
+                placeholder: "/",
+                onSubmit: { vm.search() },
+                onCancel: { AdvancedSearchPanelController.shared.close() }
+            )
+            .opacity(searchesWholeDisk ? 0.35 : 1)
+            ProgramMenuButton(chipStyle: FCXLChipButtonStyle(compact: true),
+                              makeMenu: placesMenu) {
+                HStack(spacing: 4) {
+                    Image(systemName: "clock.arrow.circlepath")
+                    MenuChevron()
+                }
+                .frame(height: 14)
+            }
+            .help(L("search.places.tip"))
+            Button(L("search.browse")) {
+                fcxlPresentModal {
+                    if let path = DialogService.shared.showFolderPicker(
+                        title: L("search.browse"),
+                        defaultPath: vm.rootPath
+                    ) {
+                        vm.rootPath = path
+                    }
+                }
+            }
+            .buttonStyle(FCXLChipButtonStyle(compact: true))
+        }
+        .disabled(searchesWholeDisk)
+    }
+
+    /// The places one click away: where the panels stand, home, and where it was searched
+    /// before. Retyping a long path is how a search ends up in the wrong folder.
+    private func placesMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        var offered = Set<String>()
+        func add(_ title: String, _ path: String, symbol: String) {
+            let standard = (path as NSString).standardizingPath
+            guard !path.isEmpty, offered.insert(standard).inserted else { return }
+            menu.addStyledItem(title: "\(title) — \(Self.shortPath(standard))", symbolName: symbol) {
+                vm.rootPath = standard
+            }
+        }
+        add(L("search.places.panel"), vm.panelPath, symbol: "rectangle.lefthalf.inset.filled")
+        add(L("search.places.otherPanel"), vm.otherPanelPath,
+            symbol: "rectangle.righthalf.inset.filled")
+        add(L("search.places.home"), NSHomeDirectory(), symbol: "house")
+
+        let recent = SearchRecentPlaces.load(from: vm.placesDefaults)
+            .filter { !offered.contains($0) }
+        if !recent.isEmpty {
+            menu.addItem(.separator())
+            menu.addNote(L("search.places.recent"))
+            for path in recent {
+                menu.addStyledItem(title: Self.shortPath(path), symbolName: "clock") {
+                    vm.rootPath = path
+                }
+            }
+        }
+        return menu
+    }
+
+    /// A path as a person reads it: "~" for home, the middle folded when it is long.
+    static func shortPath(_ path: String, limit: Int = 60) -> String {
+        let tilde = (path as NSString).abbreviatingWithTildeInPath
+        guard tilde.count > limit else { return tilde }
+        let head = tilde.prefix(limit / 2 - 1)
+        let tail = tilde.suffix(limit / 2 - 1)
+        return "\(head)…\(tail)"
+    }
+
+    /// How far the search reaches from "Where". An index scope always covers everything below
+    /// it, and the index has no dot-files: both switches would be lies in Spotlight mode. In
+    /// their place, the one choice that IS Spotlight's own — this folder or the whole Mac.
+    private var scopeRow: some View {
+        FCXLFormRow(showDivider: false) {
+            if vm.searchMode == .spotlight {
+                inlineSwitch(L("search.spot.wholeDisk"), isOn: $vm.spotlightWholeDisk)
+            } else {
+                inlineSwitch(L("search.recursive"), isOn: $vm.recursive)
+                inlineSwitch(L("search.hidden"), isOn: $vm.includeHidden)
+                    .padding(.leading, 18)
+            }
+            Spacer()
+        }
+    }
+
+    /// A switch with its label right beside it — for a row that holds two of them. A switch
+    /// at the far edge of a wide row is a long way from the words that say what it does.
+    private func inlineSwitch(_ label: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 8) {
+            FCXLSwitch(isOn: isOn)
+            Text(label).font(.system(size: 13))
+        }
+    }
+
+    // MARK: Which finds to keep
+
+    /// The header of the folded block. Folded, it SAYS what is set inside: a condition out of
+    /// sight that silently changes the answer is the worst thing a form can do.
+    private var filtersHeader: some View {
+        let state = vm.filterState
+        let parts = SearchFilterSummary.parts(state)
+        return HStack(spacing: 8) {
+            Button { filtersExpanded.toggle() } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(filtersExpanded ? 90 : 0))
+                        .frame(width: 10)
+                    Text(L("search.filters"))
+                        .font(.system(size: 13))
+                    if !filtersExpanded {
+                        Text(parts.isEmpty ? L("search.filters.none") : parts.joined(separator: "  ·  "))
+                            .font(.system(size: 12))
+                            .foregroundStyle(state.isNarrowing ? accent : .secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(minHeight: 38)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if state.isNarrowing {
+                Button(L("search.filters.reset")) { vm.resetFilters() }
+                    .buttonStyle(FCXLChipButtonStyle(compact: true))
+            }
+        }
+        .padding(.horizontal, 14)
+    }
+
+    /// The same conditions in every mode, as far as the mode has them: size and date apply
+    /// everywhere; the type only where folders can be an answer; the name mask is a filter
+    /// where it is not already the question.
+    @ViewBuilder
+    private var filterRows: some View {
+        Divider().padding(.leading, 14)
+        if vm.searchMode == .byContent || vm.searchMode == .duplicates {
+            FCXLFormRow(label: L("search.filters.mask")) {
+                FCXLDialogTextField(
+                    text: $vm.pattern,
+                    placeholder: L("search.name.placeholder"),
+                    onSubmit: { vm.search() },
+                    onCancel: { AdvancedSearchPanelController.shared.close() }
+                )
+            }
+        }
+
+        FCXLFormRow(label: L("search.exclude")) {
+            FCXLDialogTextField(
+                text: $vm.excludeSpec,
+                placeholder: "node_modules; .cache; *.tmp",
+                onSubmit: { vm.search() },
+                onCancel: { AdvancedSearchPanelController.shared.close() }
+            )
+        }
+
         FCXLFormRow(label: L("search.size")) {
             Text(L("search.from"))
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
-            FCXLDialogTextField(text: $vm.minSizeValue)
+            FCXLDialogTextField(text: $vm.minSizeValue, placeholder: "0",
+                                onSubmit: { vm.search() })
                 .frame(width: 70)
             Text(L("search.to"))
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
-            FCXLDialogTextField(text: $vm.maxSizeValue)
+            FCXLDialogTextField(text: $vm.maxSizeValue, placeholder: "∞",
+                                onSubmit: { vm.search() })
                 .frame(width: 70)
             FCXLDialogMenuPicker(items: Array(SizeUnit.allCases),
                                  selection: $vm.sizeUnit,
@@ -842,21 +1368,22 @@ struct AdvancedSearchContentView: View {
             Spacer()
         }
 
-        FCXLFormRow(label: L("search.type")) {
-            Picker("", selection: $vm.fileType) {
-                ForEach(FileTypeOption.allCases, id: \.self) { t in
-                    Text(t.label).tag(t)
-                }
+        if vm.searchMode == .byName || vm.searchMode == .spotlight {
+            FCXLFormRow(label: L("search.type")) {
+                FCXLSegmented(items: Array(FileTypeOption.allCases), selection: $vm.fileType,
+                              title: { $0.label })
+                    .frame(width: 300)
+                Spacer()
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
         }
 
         FCXLFormRow(label: L("search.date"), showDivider: false) {
-            FCXLSwitch(isOn: $vm.useDateFilter)
-            if vm.useDateFilter {
+            FCXLDialogMenuPicker(items: Array(SearchDatePreset.allCases),
+                                 selection: $vm.datePreset,
+                                 title: \.title)
+            if vm.datePreset == .custom {
                 DatePicker("", selection: Binding(
-                    get: { vm.dateFrom ?? Date.distantPast },
+                    get: { vm.dateFrom ?? Date() },
                     set: { vm.dateFrom = $0 }
                 ), displayedComponents: .date).labelsHidden().frame(width: 120)
                 Text("\u{2014}").foregroundStyle(.secondary)
@@ -873,19 +1400,39 @@ struct AdvancedSearchContentView: View {
 
     private var resultsList: some View {
         SearchResultsTable(
-            rows: SearchResultRows.build(mode: vm.searchMode,
-                                         results: vm.results,
-                                         duplicates: vm.duplicateResults),
+            makeRows: { [vm] in
+                SearchResultRows.build(mode: vm.resultsMode,
+                                       results: vm.results,
+                                       duplicates: vm.duplicateResults)
+            },
             revision: vm.resultsRevision,
             selection: $vm.selectedResults,
             folderSizes: vm.folderSizes,
             accent: PanelAppearanceSettings.nsColor(from: accentColorHex, fallback: .systemPurple),
             focusRequest: vm.focusRequest,
+            // Duplicate groups keep the order the finder gave them: the most wasteful first.
+            sort: vm.resultsMode == .duplicates ? nil : (vm.sortKey, vm.sortAscending),
+            root: vm.resultsRoot,
+            onSort: { key, ascending in vm.setSort(key: key, ascending: ascending) },
             onActivate: { path in
                 vm.navigateToResult(path)
                 AdvancedSearchPanelController.shared.close()
-            })
+            },
+            onAction: { vm.perform($0) },
+            makeMenu: { vm.resultsMenu() })
         .frame(maxHeight: .infinity)
+        .overlay {
+            // An empty box said nothing: not asked yet, still looking, or nothing there.
+            if vm.resultCount == 0, !vm.isSearching {
+                Text(vm.hasSearched && vm.errorMessage == nil
+                     ? L("search.empty.none") : L("search.empty.start"))
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(24)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
 }
@@ -918,7 +1465,7 @@ struct SearchKeyHandler: NSViewRepresentable {
             // Cmd+A — select all results
             if cmd && event.charactersIgnoringModifiers == "a" {
                 guard let vm else { return }
-                if vm.searchMode == .duplicates {
+                if vm.resultsMode == .duplicates {
                     for group in vm.duplicateResults {
                         for file in group.files {
                             vm.selectedResults.insert(file)
@@ -946,10 +1493,7 @@ struct SearchKeyHandler: NSViewRepresentable {
 
             // Enter — navigate to selected result (and close so the panel is visible)
             if event.keyCode == 36 {
-                if let first = vm?.selectedResults.first {
-                    vm?.navigateToResult(first)
-                    AdvancedSearchPanelController.shared.close()
-                }
+                vm?.perform(.goTo)
                 return
             }
 
@@ -966,7 +1510,13 @@ struct SearchKeyHandler: NSViewRepresentable {
 
 // MARK: - Search Window (proper key window)
 
-private class SearchWindow: NSWindow {
+private class SearchWindow: NSWindow, QLPreviewPanelDataSource, QLPreviewPanelDelegate,
+                             SearchResultsHosting {
+    weak var vm: AdvancedSearchViewModel?
+    /// The list of finds — so the arrow keys keep moving through it while the preview is up.
+    weak var resultsTable: NSTableView?
+    private var selectionWatch: AnyCancellable?
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
@@ -984,6 +1534,72 @@ private class SearchWindow: NSWindow {
         }
         super.keyDown(with: event)
     }
+
+    /// While this window is in front, the F-keys are about the finds. They are also key
+    /// equivalents of the main menu ("Delete F8"), and AppKit offers a key to the key window
+    /// before the menu — so it is taken here. Left alone, F8 pressed over the list of finds
+    /// reached the menu and deleted whatever was selected in the panel BEHIND this window.
+    /// The key is swallowed even when no find is selected, for the same reason.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.type == .keyDown,
+           let action = SearchKeys.action(
+               keyCode: event.keyCode,
+               modifiers: event.modifierFlags.intersection(.deviceIndependentFlagsMask)) {
+            vm?.perform(action)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    // MARK: Quick look of the selected finds
+
+    /// The system preview, floating over this window: the selected finds, in list order.
+    /// The viewers of the main window follow the panel's cursor, and the finds are not in
+    /// the panel — so the search window shows its own.
+    func toggleQuickLook() {
+        guard let panel = QLPreviewPanel.shared() else { return }
+        if QLPreviewPanel.sharedPreviewPanelExists(), panel.isVisible {
+            panel.orderOut(nil)
+        } else {
+            panel.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    private var previewPaths: [String] { vm?.orderedSelectedPaths ?? [] }
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = self
+        panel.delegate = self
+        // The preview follows the selection. On the next turn of the run loop: the
+        // publisher fires BEFORE the value changes.
+        selectionWatch = vm?.$selectedResults
+            .receive(on: RunLoop.main)
+            .sink { [weak panel] _ in panel?.reloadData() }
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        selectionWatch = nil
+        panel.dataSource = nil
+        panel.delegate = nil
+    }
+
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { previewPaths.count }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        let paths = previewPaths
+        guard paths.indices.contains(index) else { return nil }
+        return NSURL(fileURLWithPath: paths[index])
+    }
+
+    /// Up and down move through the list of finds while the preview has the keyboard.
+    func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
+        guard event.type == .keyDown, event.keyCode == 125 || event.keyCode == 126,
+              let table = resultsTable else { return false }
+        table.keyDown(with: event)
+        return true
+    }
 }
 
 // MARK: - NSPanel Controller
@@ -1000,14 +1616,35 @@ final class AdvancedSearchPanelController {
         return NSSize(width: preferredSize.width, height: height)
     }
 
+    /// Where the window will search when it opens: the folder the active panel shows.
+    ///
+    /// The field used to keep the previous search's folder, so F9 in a new place searched the
+    /// old one. One case keeps the old root on purpose: the panel stands exactly where
+    /// "Go to" took it. The window is then being reopened to walk the same results or to
+    /// refine the same search, and pointing it at the subfolder of one find would quietly
+    /// narrow that search.
+    nonisolated static func rootOnOpen(panelPath: String,
+                                       previousRoot: String?,
+                                       visitedFromResults: String?) -> String {
+        guard let previousRoot, !previousRoot.isEmpty else { return panelPath }
+        if let visited = visitedFromResults,
+           (visited as NSString).standardizingPath == (panelPath as NSString).standardizingPath {
+            return previousRoot
+        }
+        return panelPath
+    }
+
     private var window: NSWindow?
     private var vm: AdvancedSearchViewModel?
 
     static let shared = AdvancedSearchPanelController()
 
     func show(rootPath: String,
+              otherPanelPath: String = "",
               onNavigate: @escaping (String) -> Void,
-              onCopy: @escaping ([String], String) -> Void,
+              onTransfer: @escaping ([String], Bool) -> Void,
+              onEdit: @escaping (String) -> Void,
+              onShowInPanel: @escaping ([String], String) -> Void,
               onDelete: @escaping ([String]) -> Void) {
         if let window, window.isVisible {
             window.makeKeyAndOrderFront(nil)
@@ -1015,20 +1652,25 @@ final class AdvancedSearchPanelController {
         }
 
         // Reuse the previous session's model: the search "history" (pattern, filters,
-        // mode, results, selection — and the search root) survives close/reopen and
-        // lives until the next search replaces it. A fresh model is seeded with the
-        // active panel's path only on the very first open.
-        let viewModel: AdvancedSearchViewModel
-        if let existing = vm {
-            viewModel = existing
-        } else {
-            viewModel = AdvancedSearchViewModel()
-            viewModel.rootPath = rootPath
+        // mode, results, selection) survives close/reopen and lives until the next search
+        // replaces it. WHERE to search does not: it follows the panel — see rootOnOpen.
+        let viewModel = vm ?? AdvancedSearchViewModel()
+        let root = Self.rootOnOpen(panelPath: rootPath,
+                                   previousRoot: vm == nil ? nil : viewModel.rootPath,
+                                   visitedFromResults: viewModel.visitedFromResults)
+        if root != viewModel.rootPath {
+            viewModel.rootPath = root
+            viewModel.visitedFromResults = nil
         }
+        viewModel.panelPath = rootPath
+        viewModel.otherPanelPath = otherPanelPath
         // Callbacks always point at the CURRENT panels, so refresh them every open.
         viewModel.onNavigateToFile = onNavigate
-        viewModel.onCopyFiles = onCopy
+        viewModel.onTransfer = onTransfer
+        viewModel.onEdit = onEdit
+        viewModel.onShowInPanel = onShowInPanel
         viewModel.onDeleteFiles = onDelete
+        viewModel.onClose = { [weak self] in self?.close() }
         self.vm = viewModel
 
         let content = AdvancedSearchContentView(vm: viewModel)
@@ -1052,6 +1694,8 @@ final class AdvancedSearchPanelController {
         w.standardWindowButton(.miniaturizeButton)?.isHidden = true
         w.standardWindowButton(.zoomButton)?.isHidden = true
         w.isMovableByWindowBackground = true
+        w.vm = viewModel
+        viewModel.onQuickLook = { [weak w] in w?.toggleQuickLook() }
         w.contentView = hostingView
         // Warm-up layout only when the kept history is small: with thousands of
         // results a synchronous full layout stalls the open for seconds.
@@ -1068,6 +1712,11 @@ final class AdvancedSearchPanelController {
 
     func close() {
         vm?.cancelSearch()
+        // The preview belonged to this window's finds.
+        if QLPreviewPanel.sharedPreviewPanelExists(), let preview = QLPreviewPanel.shared(),
+           preview.isVisible, preview.dataSource === window {
+            preview.orderOut(nil)
+        }
         if let window {
             // Same shrink-and-fade as the dialogs (stopModal inside is a no-op here).
             SettingsWindowAnimator.closeWithShrink(window)

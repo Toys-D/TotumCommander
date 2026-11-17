@@ -1720,9 +1720,56 @@ final class PanelViewModel: ObservableObject {
     /// Root of the flattened subtree; nil while the panel shows an ordinary folder.
     var branchViewRoot: String? {
         get { data.branchViewRoot }
-        set { data.branchViewRoot = newValue }
+        set {
+            data.branchViewRoot = newValue
+            // Список находок — частный случай ветви и кончается вместе с ней.
+            if newValue == nil { data.foundListPaths = nil }
+        }
     }
     var isBranchView: Bool { branchViewRoot != nil }
+
+    // MARK: - Found files (search results in the panel)
+
+    /// The panel shows the finds of a search rather than a folder or a whole branch.
+    var isFoundList: Bool { data.foundListPaths != nil }
+
+    /// "Results to panel": the finds of a search as one flat list in this panel, the way
+    /// branch view shows a subtree — so that everything a panel can do (copy, move, rename,
+    /// view, pack, select by mask) works on them, instead of the handful of buttons a search
+    /// window can hold. ".." leads back to the plain folder, as it does out of branch view.
+    ///
+    /// The panel must already stand in `root`; refreshes re-read the same finds and drop the
+    /// ones that are gone.
+    func showFoundFiles(_ paths: [String], root: String) {
+        guard !paths.isEmpty,
+              !insideArchive, !insideRemote, !state.insideNetworkBrowser, !state.insideTrash
+        else { return }
+        // A folder load still on its way must not come home over this list.
+        directoryLoadRequestID = UUID()
+        data.branchViewRoot = root
+        data.foundListPaths = paths
+        rebuildBranchView(resetCursor: true)
+    }
+
+    /// The finds as panel rows, each carrying its path from the search root for display.
+    /// A find that is no longer on disk is left out.
+    nonisolated static func buildFoundItems(paths: [String], root: String,
+                                            shouldCancel: (() -> Bool)? = nil) -> [FileItem] {
+        let base = (root as NSString).standardizingPath
+        let prefix = base.hasSuffix("/") ? base : base + "/"
+        var result: [FileItem] = []
+        result.reserveCapacity(paths.count)
+        for path in paths {
+            if shouldCancel?() == true { break }
+            guard var item = FileItem.fromPath(path) else { continue }
+            let standard = (path as NSString).standardizingPath
+            item.branchPath = standard.hasPrefix(prefix)
+                ? String(standard.dropFirst(prefix.count))
+                : (standard as NSString).abbreviatingWithTildeInPath
+            result.append(item)
+        }
+        return result
+    }
 
     /// Ctrl+B: the whole subtree as ONE flat list — TC's branch view. Toggling off returns
     /// to the plain folder. Local filesystem only: archives, remote listings, the network
@@ -1775,10 +1822,15 @@ final class PanelViewModel: ObservableObject {
         branchScanCancelFlag = cancelFlag
         branchScanCount = 0
         data.branchScanDidChange.send()
+        let found = data.foundListPaths
 
         Task { @MainActor [weak self] in
             let built = await Task.detached(priority: .userInitiated) {
-                Self.buildBranchItems(
+                if let found {
+                    return Self.buildFoundItems(paths: found, root: root,
+                                                shouldCancel: { cancelFlag.withLock { $0 } })
+                }
+                return Self.buildBranchItems(
                     root: root, showHidden: showHidden,
                     progress: { count in
                         Task { @MainActor [weak self] in

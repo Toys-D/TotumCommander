@@ -372,6 +372,87 @@ struct FCXLDialogMenuPicker<Item: Hashable>: View {
     }
 }
 
+/// Выбор одного из нескольких, когда все варианты на виду: вкладки режима в окне поиска,
+/// «Все / Файлы / Папки». Системный сегментный `Picker` красит выбранное системным синим,
+/// каким бы ни был цвет акцента программы, — в окне с зелёной главной кнопкой это было видно
+/// сразу. Здесь выбранное стоит на акценте.
+///
+/// `prominent` — вкладки окна: выбранная залита акцентом, как главная кнопка. Без него —
+/// выбор в строке формы: подложка акцента с обводкой, как у включённой кнопки полосы
+/// (`FCXLBarItem`), чтобы несколько таких в одном окне не спорили с вкладками.
+struct FCXLSegmented<Item: Hashable>: View {
+    let items: [Item]
+    @Binding var selection: Item
+    let title: (Item) -> String
+    var symbol: ((Item) -> String)? = nil
+    var height: CGFloat = 24
+    var prominent: Bool = false
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(items, id: \.self) { item in
+                FCXLSegment(title: title(item), symbol: symbol?(item), height: height,
+                            prominent: prominent, isSelected: item == selection) {
+                    selection = item
+                }
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.10)))
+    }
+}
+
+private struct FCXLSegment: View {
+    let title: String
+    let symbol: String?
+    let height: CGFloat
+    let prominent: Bool
+    let isSelected: Bool
+    let action: () -> Void
+
+    @AppStorage(PanelAppearanceSettings.accentColorHexKey) private var accentColorHex: String = ""
+    @State private var isHovered = false
+
+    private var accent: Color {
+        PanelAppearanceSettings.swiftUIColor(from: accentColorHex, fallback: .purple)
+    }
+
+    private var fill: Color {
+        if isSelected { return prominent ? accent : accent.opacity(0.24) }
+        return isHovered ? accent.opacity(0.14) : .clear
+    }
+
+    private var ink: Color {
+        isSelected && prominent
+            ? PanelAppearanceSettings.contrastingTextColor(on: accent)
+            : Color.primary.opacity(isSelected ? 1 : 0.82)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if let symbol {
+                    Image(systemName: symbol).font(.system(size: prominent ? 12 : 11))
+                }
+                Text(title)
+                    .font(.system(size: prominent ? 13 : 12, weight: isSelected ? .medium : .regular))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(ink)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .background(RoundedRectangle(cornerRadius: 6).fill(fill))
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(isSelected && !prominent ? accent.opacity(0.75) : .clear, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
 /// The chip look of FCXLDialogMenuPicker as a button style, so "Choose…" next to a picker is
 /// visibly the same family of control — one style, not a coincidence of similar values.
 struct FCXLChipButtonStyle: ButtonStyle {

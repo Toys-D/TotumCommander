@@ -3,13 +3,18 @@
 #include "fcxl/search/exclusions.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <system_error>
+#include <set>
 #include <unordered_map>
+#include <utility>
 #include <vector>
+
+#include <sys/stat.h>
 
 #include <CommonCrypto/CommonDigest.h>
 #include <dispatch/dispatch.h>
@@ -81,51 +86,88 @@ auto hash_files_parallel(const std::vector<std::filesystem::path>& paths,
     return result;
 }
 
-auto collect_files(const std::filesystem::path& root, bool recursive,
-                   const std::vector<std::string>& exclude_patterns,
+auto collect_files(const std::filesystem::path& root, const DuplicateOptions& options,
                    const ScanProgressCallback& on_scan_dir, bool& cancelled)
     -> std::vector<std::pair<std::filesystem::path, uint64_t>> {
     std::vector<std::pair<std::filesystem::path, uint64_t>> files;
     std::error_code ec;
-
     auto opts = std::filesystem::directory_options::skip_permission_denied;
     std::filesystem::recursive_directory_iterator it(root, opts, ec);
     if (ec) return files;
-
+    // A file that has several names (hard links) is taken once: (device, inode) of those seen.
+    std::set<std::pair<dev_t, ino_t>> seen_files;
     for (; it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
         if (cancelled) break;
         if (ec) { ec.clear(); continue; }
 
-        // Say where we are, exactly as the other two searches do — a duplicates run over a
-        // big tree spends minutes here and used to show an empty status line.
+        const std::filesystem::path& path = it->path();
+        const std::string name = path.filename().string();
         std::error_code dir_ec;
-        if (on_scan_dir && it->is_directory(dir_ec) && !dir_ec) {
-            on_scan_dir(it->path().string());
-        }
+        const bool is_dir = it->is_directory(dir_ec) && !dir_ec;
 
-        if (!recursive && it.depth() > 0) {
+        if (!options.recursive && is_dir) {
             it.disable_recursion_pending();
-            continue;
         }
-
         // This is where the excluded tree actually costs nothing: a duplicates run over a home
         // folder used to hash its way through every build cache in it.
-        if (is_excluded(it->path().filename().string(), exclude_patterns)) {
-            std::error_code dir_ec;
-            if (it->is_directory(dir_ec) && !dir_ec) {
-                it.disable_recursion_pending();
-            }
+        if (is_excluded(name, options.exclude_patterns)) {
+            if (is_dir) it.disable_recursion_pending();
+            continue;
+        }
+        // Hidden places the same way: not entered, not compared.
+        if (!options.include_hidden &&
+            (is_hidden_name(name) || (is_dir && has_hidden_flag(path)))) {
+            if (is_dir) it.disable_recursion_pending();
+            continue;
+        }
+        if (is_dir) {
+            // Say where we are, exactly as the other two searches do — a duplicates run over a
+            // big tree spends minutes here and used to show an empty status line.
+            if (on_scan_dir) on_scan_dir(path.string());
             continue;
         }
 
-        if (it->is_regular_file(ec) && !ec) {
-            auto size = it->file_size(ec);
-            if (!ec && size > 0) {
-                files.emplace_back(it->path(), static_cast<uint64_t>(size));
-            }
+        // lstat: the entry itself, never what a link points at. A symbolic link is not a
+        // regular file here, so it never becomes a "copy" of its own target.
+        struct stat info {};
+        if (::lstat(path.c_str(), &info) != 0 || !S_ISREG(info.st_mode) || info.st_size <= 0) {
+            continue;
         }
+        if (!options.include_hidden && (info.st_flags & UF_HIDDEN) != 0) {
+            continue;
+        }
+        if (!options.limits.allows(
+                static_cast<uint64_t>(info.st_size),
+                std::chrono::system_clock::from_time_t(info.st_mtimespec.tv_sec))) {
+            continue;
+        }
+        if (info.st_nlink > 1 && !seen_files.emplace(info.st_dev, info.st_ino).second) {
+            continue;   // another name of a file already taken
+        }
+        files.emplace_back(path, static_cast<uint64_t>(info.st_size));
     }
+    // The walk hands entries over in whatever order the disk keeps them. Sorted here, every
+    // group below comes out with its copies in path order, and which name of a hard-linked
+    // file was kept does not depend on the disk either.
+    std::sort(files.begin(), files.end());
     return files;
+}
+
+/// Most wasted space first, then more copies, then by path — a fixed order, so the same
+/// folder gives the same list every time.
+void sort_groups(std::vector<common::DuplicateGroup>& groups) {
+    for (auto& group : groups) {
+        std::sort(group.files.begin(), group.files.end());
+    }
+    const auto waste = [](const common::DuplicateGroup& group) {
+        return group.size * static_cast<uint64_t>(group.files.size() - 1);
+    };
+    std::sort(groups.begin(), groups.end(),
+              [&waste](const common::DuplicateGroup& a, const common::DuplicateGroup& b) {
+                  if (waste(a) != waste(b)) return waste(a) > waste(b);
+                  if (a.files.size() != b.files.size()) return a.files.size() > b.files.size();
+                  return a.files.front() < b.files.front();
+              });
 }
 
 }  // namespace
@@ -137,6 +179,19 @@ auto DuplicateFinder::find(std::string_view root_path,
                             DuplicateCallback on_found,
                             ScanProgressCallback on_scan_dir)
     -> common::Result<std::vector<common::DuplicateGroup>> {
+    DuplicateOptions options;
+    options.strategy = strategy;
+    options.recursive = recursive;
+    options.exclude_patterns = exclude_patterns;
+    return find(root_path, options, std::move(on_found), std::move(on_scan_dir));
+}
+
+auto DuplicateFinder::find(std::string_view root_path,
+                            const DuplicateOptions& options,
+                            DuplicateCallback on_found,
+                            ScanProgressCallback on_scan_dir)
+    -> common::Result<std::vector<common::DuplicateGroup>> {
+    const DuplicateStrategy strategy = options.strategy;
 
     if (root_path.empty()) {
         return common::Error::make(common::ErrorCode::InvalidArgument, "Root path empty");
@@ -149,7 +204,7 @@ auto DuplicateFinder::find(std::string_view root_path,
     }
 
     cancelled_ = false;
-    auto files = collect_files(root, recursive, exclude_patterns, on_scan_dir, cancelled_);
+    auto files = collect_files(root, options, on_scan_dir, cancelled_);
     if (cancelled_) return std::vector<common::DuplicateGroup>{};
 
     std::vector<common::DuplicateGroup> results;
@@ -244,6 +299,7 @@ auto DuplicateFinder::find(std::string_view root_path,
         }
     }
 
+    sort_groups(results);
     return results;
 }
 

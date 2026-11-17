@@ -294,11 +294,37 @@ With the setting "Editor (F4) in the opposite panel" the editor is embedded in t
 
 The "Advanced Search" window.
 
-**Modes**: **By name**, **By content** (text inside files), **Spotlight** (from the macOS index, instant, looks inside PDF, Pages, Word; no regular expressions and no hidden files; can search the whole Mac), **Duplicates** (by name, by size, by SHA-256 hash).
+The form reads top to bottom: **how** to search (the tabs), **what** to look for (the tab's main field), **where** — and the folded **Filters** block that narrows the answer.
 
-**Conditions**: file mask, regex, where (browse folders), in subfolders, hidden files, skip (exclusion masks), size from–to, type (all, files, folders), date, **search in pictures too** (text recognition in pictures, scans and PDFs — with a cap on the number of files per search).
+**Tabs**: **By name**, **By content** (text inside files), **Spotlight** (from the macOS index, instant, looks inside PDF, Pages, Word; no regular expressions and no hidden files; can search the whole Mac), **Duplicates** (exact copies, same name, same size). The list keeps the finds of the last search until a new one starts — the tab can be switched while preparing the next query.
 
-**Results**: name, path, size, line (for content search). Actions: **Go to** (the panel lands on the file), **Copy to…**, **Copy here**, **Delete**. A big result list is capped with a hint to refine the query.
+**What to look for**: by name — a mask, one or several separated by ";" (`*.jpg;*.png`), a word with no wildcards is looked for as a piece of a name; by content — the text, with the **Match case** and **Regex** buttons beside it and **search in pictures too** below (text recognition in pictures, scans and PDFs, with a cap on the number of files per search).
+
+**Where**: the active panel's folder when the window opens. The clock button next to the field offers quick places: the active panel, the other panel, the home folder and the places searched recently. Below — **In subfolders** and **Hidden files** (Spotlight has **Whole Mac** instead).
+
+**Filters** — the same for every tab: **mask** (where it is not the main field: in "By content" it decides which files are opened, in "Duplicates" which groups are shown), **skip** (exclusion masks, remembered), **size** from–to (units as in the panel, by the thousand; "1.5" is fine), **type** (all, files, folders — where folders can be an answer), **date** (today, past week, past month, past year or a custom range; whole days). The folded block shows what is set inside; **Reset** clears this search's conditions and keeps "skip".
+
+**Hidden files** off means neither dot-files nor the ones the system hides (like `~/Library`) are shown, and hidden folders are not entered at all — in every mode.
+
+**By content**: letter case is ignored unless **Match case** is on. Files in UTF-8, Windows-1251 and UTF-16 are read. A file is listed once: under its name — the first matching line with its number, and how many more lines matched.
+
+**Duplicates**: only separate files count as copies — a link to a file and a second name of the same file (a hard link) are left out. The groups wasting the most space come first. **Select spares** under the list marks every copy but one in each group — the newest, the oldest or the first by path; next to it stands how much space would be freed, and a warning when every copy of some group is selected.
+
+**The list of finds** is a table: name, folder (counted from where the search started), size, date modified. A click on a column header sets the order, another click reverses it; the order is remembered. Finds appear while the search is still running.
+
+**What to do with finds** — by button, key or right click:
+
+| Action | Key |
+|---|---|
+| **Go to** — the panel lands on the file (with several selected — on the first in the list) | ↩, double click |
+| **Quick Look** of the selection, arrows move through the list | Space, F3 |
+| **Edit** | F4 |
+| **Copy**, **Move** — with the same dialog as in a panel; to the other panel by default | F5, F6 |
+| **Delete** to the Trash, with the same question as in a panel | F8 |
+| **To panel** — all finds as a flat list in the active panel: everything a panel can do then works on them; ".." leads back to the plain folder | button |
+| Copy path | right click |
+
+While the search window is in front, the F-keys are about the finds, not about the panel behind it. The clock button next to the main field holds what was searched before. A big result list is capped with a hint to refine the query.
 
 ---
 

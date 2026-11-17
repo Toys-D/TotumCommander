@@ -220,4 +220,69 @@ auto NameMask::matches(std::string_view name) const -> bool {
     return matches_folded(folded_mask_, folded_name);
 }
 
+NameMaskSet::NameMaskSet(std::string_view spec) {
+    std::size_t start = 0;
+    while (start <= spec.size()) {
+        const std::size_t hit = spec.find(';', start);
+        const std::size_t end = hit == std::string_view::npos ? spec.size() : hit;
+        std::string_view piece = spec.substr(start, end - start);
+        while (!piece.empty() && (piece.front() == ' ' || piece.front() == '\t')) {
+            piece.remove_prefix(1);
+        }
+        while (!piece.empty() && (piece.back() == ' ' || piece.back() == '\t')) {
+            piece.remove_suffix(1);
+        }
+        if (piece == "*") {
+            everything_ = true;
+        } else if (!piece.empty()) {
+            const bool has_wildcard = piece.find('*') != std::string_view::npos ||
+                                      piece.find('?') != std::string_view::npos;
+            masks_.emplace_back(has_wildcard ? std::string(piece)
+                                             : "*" + std::string(piece) + "*");
+        }
+        if (hit == std::string_view::npos) {
+            break;
+        }
+        start = hit + 1;
+    }
+    if (masks_.empty()) {
+        everything_ = true;
+    }
+}
+
+auto NameMaskSet::matches(std::string_view name) const -> bool {
+    if (everything_) {
+        return true;
+    }
+    return std::any_of(masks_.begin(), masks_.end(),
+                       [name](const NameMask& mask) { return mask.matches(name); });
+}
+
+auto to_folded_text(std::string_view text) -> std::string {
+    if (is_ascii(text)) {
+        std::string folded(text);
+        for (char& byte : folded) {
+            if (byte >= 'A' && byte <= 'Z') {
+                byte = static_cast<char>(byte + ('a' - 'A'));
+            }
+        }
+        return folded;
+    }
+    CFMutableStringRef prepared = make_mutable_string(text);
+    if (prepared == nullptr) {
+        std::string folded(text);
+        for (char& byte : folded) {
+            if (byte >= 'A' && byte <= 'Z') {
+                byte = static_cast<char>(byte + ('a' - 'A'));
+            }
+        }
+        return folded;
+    }
+    CFStringFold(prepared, kCFCompareCaseInsensitive, nullptr);
+    CFStringNormalize(prepared, kCFStringNormalizationFormC);
+    std::string folded = copy_utf8(prepared);
+    CFRelease(prepared);
+    return folded;
+}
+
 }  // namespace fcxl::search

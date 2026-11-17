@@ -3,6 +3,8 @@
 #include <chrono>
 #include <memory>
 
+#include <sys/stat.h>
+
 #include "fcxl/search/content_search.h"
 #include "fcxl/search/duplicate_finder.h"
 #include "fcxl/search/file_search.h"
@@ -64,6 +66,65 @@ auto time_point_from_interval(NSTimeInterval interval) -> std::chrono::system_cl
         std::chrono::seconds(static_cast<int64_t>(interval)));
 }
 
+/// Limits as the UI hands them over: 0 means "no limit" on that side.
+auto make_limits(uint64_t minSize, uint64_t maxSize, NSTimeInterval dateFrom,
+                 NSTimeInterval dateTo) -> fcxl::search::FileLimits {
+    fcxl::search::FileLimits limits;
+    limits.min_size = minSize;
+    limits.max_size = maxSize > 0 ? maxSize : UINT64_MAX;
+    limits.date_from = time_point_from_interval(dateFrom);
+    limits.date_to = time_point_from_interval(dateTo);
+    return limits;
+}
+
+/// A content find as the list wants it — with the file's size and date for its columns: one
+/// look at the disk per found file, not per line.
+auto match_to_dict(const fcxl::search::ContentMatch& match) -> NSDictionary<NSString*, id>* {
+    struct stat info {};
+    const bool known = ::stat(match.file.c_str(), &info) == 0;
+    return @{
+        @"path" : safe_nsstring(match.file.string()),
+        @"name" : safe_nsstring(match.file.filename().string()),
+        @"lineNumber" : @(match.line_number),
+        @"column" : @(match.column),
+        @"lineContent" : safe_nsstring(match.line_content),
+        @"matchCount" : @(match.match_count),
+        @"size" : @(known ? static_cast<uint64_t>(info.st_size) : 0),
+        @"dateModified" : [NSDate dateWithTimeIntervalSince1970:
+                                      known ? static_cast<NSTimeInterval>(info.st_mtimespec.tv_sec) : 0]
+    };
+}
+
+/// Hands finds over in batches while a search is still running: a batch goes out when it is
+/// full or when enough time has passed, so a slow search shows its first finds at once and a
+/// fast one does not cross the bridge for every single file.
+class FoundBatcher {
+public:
+    explicit FoundBatcher(FCXLFoundBlock block)
+        : block_(block), pending_([NSMutableArray array]),
+          last_(std::chrono::steady_clock::now()) {}
+
+    void add(NSDictionary<NSString*, id>* item) {
+        [pending_ addObject:item];
+        const auto now = std::chrono::steady_clock::now();
+        if (pending_.count >= 256 || now - last_ > std::chrono::milliseconds(150)) {
+            flush();
+            last_ = now;
+        }
+    }
+
+    void flush() {
+        if (pending_.count == 0) return;
+        block_([pending_ copy]);
+        [pending_ removeAllObjects];
+    }
+
+private:
+    FCXLFoundBlock block_;
+    NSMutableArray<NSDictionary<NSString*, id>*>* pending_;
+    std::chrono::steady_clock::time_point last_;
+};
+
 auto entry_to_dict(const fcxl::common::FileEntry& entry) -> NSDictionary<NSString*, id>* {
     return @{
         @"path" : safe_nsstring(entry.path.string()),
@@ -124,6 +185,7 @@ auto entry_to_dict(const fcxl::common::FileEntry& entry) -> NSDictionary<NSStrin
                                                              typeFilter:(int)typeFilter
                                                         excludePatterns:(NSArray<NSString*>*)excludePatterns
                                                               onScanDir:(nullable FCXLScanProgressBlock)onScanDir
+                                                                onFound:(nullable FCXLFoundBlock)onFound
                                                                   error:(NSError**)error {
     fcxl::common::SearchFilter filter;
     filter.name_pattern = pattern.UTF8String;
@@ -147,7 +209,17 @@ auto entry_to_dict(const fcxl::common::FileEntry& entry) -> NSDictionary<NSStrin
     }
 
     filter.exclude_patterns = excludeList(excludePatterns);
-    const auto result = _fileSearch->search(rootPath.UTF8String, filter, nullptr, scanCb);
+    std::unique_ptr<FoundBatcher> batcher;
+    fcxl::search::SearchResultCallback foundCb = nullptr;
+    if (onFound) {
+        batcher = std::make_unique<FoundBatcher>(onFound);
+        FoundBatcher* batches = batcher.get();
+        foundCb = [batches](const fcxl::common::FileEntry& entry) {
+            batches->add(entry_to_dict(entry));
+        };
+    }
+    const auto result = _fileSearch->search(rootPath.UTF8String, filter, foundCb, scanCb);
+    if (batcher) batcher->flush();
     if (!result.has_value()) {
         if (error) *error = make_nserror(result.error());
         return nil;
@@ -164,16 +236,44 @@ auto entry_to_dict(const fcxl::common::FileEntry& entry) -> NSDictionary<NSStrin
                                                               pattern:(NSString *)pattern
                                                              useRegex:(BOOL)useRegex
                                                             recursive:(BOOL)recursive
+                                                        caseSensitive:(BOOL)caseSensitive
+                                                        includeHidden:(BOOL)includeHidden
+                                                             nameMask:(NSString *)nameMask
+                                                              minSize:(uint64_t)minSize
+                                                              maxSize:(uint64_t)maxSize
+                                                             dateFrom:(NSTimeInterval)dateFrom
+                                                               dateTo:(NSTimeInterval)dateTo
                                                       excludePatterns:(NSArray<NSString*>*)excludePatterns
                                                             onScanDir:(nullable FCXLScanProgressBlock)onScanDir
+                                                              onFound:(nullable FCXLFoundBlock)onFound
                                                                 error:(NSError**)error {
     fcxl::search::ScanProgressCallback scanCb = nullptr;
     if (onScanDir) {
         scanCb = [onScanDir](std::string_view dir) { onScanDir(safe_nsstring(std::string(dir))); };
     }
+    fcxl::search::ContentOptions options;
+    options.use_regex = useRegex;
+    options.recursive = recursive;
+    options.case_sensitive = caseSensitive;
+    options.include_hidden = includeHidden;
+    options.name_mask = nameMask.UTF8String;
+    options.exclude_patterns = excludeList(excludePatterns);
+    options.limits = make_limits(minSize, maxSize, dateFrom, dateTo);
+    // The window lists FILES: one row per file, with the first matching line and the number
+    // of lines that matched.
+    options.one_per_file = true;
+    std::unique_ptr<FoundBatcher> batcher;
+    fcxl::search::ContentResultCallback foundCb = nullptr;
+    if (onFound) {
+        batcher = std::make_unique<FoundBatcher>(onFound);
+        FoundBatcher* batches = batcher.get();
+        foundCb = [batches](const fcxl::search::ContentMatch& match) {
+            batches->add(match_to_dict(match));
+        };
+    }
     const auto result =
-        _contentSearch->search(rootPath.UTF8String, pattern.UTF8String, useRegex, recursive,
-                               excludeList(excludePatterns), nullptr, scanCb);
+        _contentSearch->search(rootPath.UTF8String, pattern.UTF8String, options, foundCb, scanCb);
+    if (batcher) batcher->flush();
     if (!result.has_value()) {
         if (error) *error = make_nserror(result.error());
         return nil;
@@ -181,13 +281,7 @@ auto entry_to_dict(const fcxl::common::FileEntry& entry) -> NSDictionary<NSStrin
 
     NSMutableArray* converted = [NSMutableArray arrayWithCapacity:result.value().size()];
     for (const auto& match : result.value()) {
-        [converted addObject:@{
-            @"path" : safe_nsstring(match.file.string()),
-            @"name" : safe_nsstring(match.file.filename().string()),
-            @"lineNumber" : @(match.line_number),
-            @"column" : @(match.column),
-            @"lineContent" : safe_nsstring(match.line_content)
-        }];
+        [converted addObject:match_to_dict(match)];
     }
     return converted;
 }
@@ -195,6 +289,11 @@ auto entry_to_dict(const fcxl::common::FileEntry& entry) -> NSDictionary<NSStrin
 - (nullable NSArray<NSDictionary<NSString*, id>*>*)findDuplicatesAtPath:(NSString *)rootPath
                                                                    mode:(int)mode
                                                               recursive:(BOOL)recursive
+                                                          includeHidden:(BOOL)includeHidden
+                                                                minSize:(uint64_t)minSize
+                                                                maxSize:(uint64_t)maxSize
+                                                               dateFrom:(NSTimeInterval)dateFrom
+                                                                 dateTo:(NSTimeInterval)dateTo
                                                         excludePatterns:(NSArray<NSString*>*)excludePatterns
                                                               onScanDir:(nullable FCXLScanProgressBlock)onScanDir
                                                                   error:(NSError**)error {
@@ -209,8 +308,13 @@ auto entry_to_dict(const fcxl::common::FileEntry& entry) -> NSDictionary<NSStrin
     if (onScanDir) {
         dupScanCb = [onScanDir](std::string_view dir) { onScanDir(safe_nsstring(std::string(dir))); };
     }
-    const auto result = _duplicateFinder->find(rootPath.UTF8String, strategy, recursive,
-                                              excludeList(excludePatterns), nullptr, dupScanCb);
+    fcxl::search::DuplicateOptions options;
+    options.strategy = strategy;
+    options.recursive = recursive;
+    options.include_hidden = includeHidden;
+    options.exclude_patterns = excludeList(excludePatterns);
+    options.limits = make_limits(minSize, maxSize, dateFrom, dateTo);
+    const auto result = _duplicateFinder->find(rootPath.UTF8String, options, nullptr, dupScanCb);
     if (!result.has_value()) {
         if (error) *error = make_nserror(result.error());
         return nil;

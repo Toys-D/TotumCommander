@@ -141,10 +141,12 @@ final class SpotlightSearchService {
                                  typeFilter: FileTypeOption) -> [SearchHit] {
         var out: [SearchHit] = []
         out.reserveCapacity(paths.count)
+        // The mask is taken apart once, not once per name.
+        let nameMatches = SearchNameMask.matcher(mask)
         for path in paths {
             let name = (path as NSString).lastPathComponent
             if SpotlightQueryBuilder.isHidden(path: path) { continue }
-            if postFilter, !SpotlightQueryBuilder.nameMatches(mask: mask, name: name) { continue }
+            if postFilter, !nameMatches(name) { continue }
 
             var info = stat()
             guard lstat(path, &info) == 0 else { continue }   // indexed but since deleted
