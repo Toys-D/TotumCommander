@@ -205,6 +205,10 @@ final class PanelViewModel: ObservableObject {
         let items: [FileItem]
         let cachedAt: Date
         let mtime: Date?
+        /// Когда список читался с диска: по этому судится, показывать ли его сразу.
+        let readAt: Date
+        /// Том медленный (сеть, внешний диск) — там запомненное показывается всегда.
+        let slowVolume: Bool
     }
 
     private static let fastPrewarmWorkerCount = 5
@@ -749,6 +753,28 @@ final class PanelViewModel: ObservableObject {
     private var folderSizeRequestID: UUID?
     private var directoryLoadRequestID: UUID?
     private var directoryCaches: [String: DirectoryCache] = [:]
+    /// Дата папки и время, снятые ПЕРЕД чтением того списка, что сейчас на экране.
+    ///
+    /// Запомненный список годен, пока дата папки та же, что была при его чтении. Раньше дата
+    /// бралась в момент ухода из папки: в фоне слежка спит, и если уйти в подпапку раньше, чем
+    /// дошла перечитка после возврата в программу, устаревший перечень помечался годным — при
+    /// выходе наверх на миг показывались стёртые файлы. Нет отметки (список не с диска:
+    /// «Ветвь», находки, корзина) — список не запоминается вовсе.
+    private var listingStamp: (path: String, mtime: Date?, readAt: Date)?
+    /// Отметка чтения, которое ещё идёт: становится отметкой списка, когда его результат применён.
+    private var pendingListingStamp: (request: UUID, path: String, mtime: Date?, readAt: Date)?
+    /// Часы запомненных списков — подменяются в проверках.
+    var listingClock: () -> Date = { Date() }
+    /// Дольше этого запомненный список на быстром диске сразу не показывается — папка читается
+    /// заново, как при первом входе: чтение там занимает миллисекунды, а за минуту в папке
+    /// успевают смениться размеры, даты и порядок, которых дата самой папки не выдаёт.
+    nonisolated static let listingMemory: TimeInterval = 60
+
+    /// Показывать ли запомненный список сразу, до чтения с диска. На медленном томе — всегда:
+    /// там чтение идёт сотни миллисекунд, и запомненное выручает; оно всё равно сверяется.
+    nonisolated static func showsRemembered(readAt: Date, now: Date, slowVolume: Bool) -> Bool {
+        slowVolume || now.timeIntervalSince(readAt) < listingMemory
+    }
     private var directoryCacheLRU: [String] = []
     private(set) var currentPathIsSlowVolume: Bool = false
     /// Папка на сетевом томе (SMB, AFP, NFS): за ней следит NetworkFolderWatcher.
@@ -1847,6 +1873,8 @@ final class PanelViewModel: ObservableObject {
             self.data.branchScanDidChange.send()
             var rows = built
             rows.insert(Self.branchParentRow(root: root), at: 0)
+            // На экране теперь не список папки: запомнить его под её именем нельзя.
+            self.listingStamp = nil
             self.allItems = self.sortItemsForDisplay(rows)
             if let keepCursorPath,
                let idx = self.items.firstIndex(where: { $0.path == keepCursorPath }) {
@@ -2709,6 +2737,10 @@ final class PanelViewModel: ObservableObject {
 
         let requestID = UUID()
         directoryLoadRequestID = requestID
+        // Дата папки — ДО чтения: изменится папка позже — отметка устареет, и запомненный
+        // список сам станет негодным.
+        pendingListingStamp = (requestID, destination, directoryModificationDate(for: destination),
+                               listingClock())
 
         if let cachedItems = resolveCachedDirectoryItems(for: destination) {
             let isNavigation = destination != currentPath
@@ -2719,6 +2751,10 @@ final class PanelViewModel: ObservableObject {
                 preferredCursorPath: preferredCursorPath,
                 clearSelection: isNavigation
             )
+            // На экране — запомненное: его отметка прежняя, свежая придёт с перечиткой.
+            if let cache = directoryCaches[destination] {
+                listingStamp = (destination, cache.mtime, cache.readAt)
+            }
             // Запрошенный файл, которого в кэше ещё нет (только что созданный), ждёт свежего
             // списка; найденный уже под курсором.
             let pending = preferredCursorPath.flatMap { $0 == cursorItem?.path ? nil : $0 }
@@ -2752,8 +2788,32 @@ final class PanelViewModel: ObservableObject {
            let preferredIndex = items.firstIndex(where: { $0.path == preferredCursorPath }) {
             setCursor(index: preferredIndex)
         }
+        // На быстром диске папка встаёт сразу готовой — с размерами, датами и в выбранном
+        // порядке. Одни имена вперёд нужны медленному тому, где сведения идут долго; на быстром
+        // они приходят за те же миллисекунды, а список из одних имён стоит по алфавиту — при
+        // сортировке по дате перечень на глазах сменялся другим («старый, потом обычный»).
+        let showsReadyListing = !isSameDirectoryReload && !Self.isSlowVolume(destination)
         directoryDetailsTask = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
+            if showsReadyListing,
+               let ready = try? await self.loadDirectoryFastAsync(destination: destination, showHidden: showHidden) {
+                guard self.directoryLoadRequestID == requestID else { return }
+                await MainActor.run {
+                    guard !self.insideArchive, !self.insideRemote else { return }
+                    let isNavigation = destination != self.currentPath
+                    self.applyLoadedFileSystemItems(
+                        ready,
+                        destination: destination,
+                        resetCursor: resetCursor,
+                        preferredCursorPath: preferredCursorPath,
+                        clearSelection: isNavigation
+                    )
+                    self.adoptListingStamp(for: requestID)
+                    self.storeDirectoryCache(path: destination, items: ready)
+                }
+                return
+            }
+            // Быстрое чтение не далось или том медленный — имена, затем сведения.
             do {
                 if !isSameDirectoryReload {
                     // Phase 1: show names instantly via readdir (zero stat calls).
@@ -2776,6 +2836,7 @@ final class PanelViewModel: ObservableObject {
                             preferredCursorPath: preferredCursorPath,
                             clearSelection: isNavigation
                         )
+                        self.adoptListingStamp(for: requestID)
                     }
                 }
 
@@ -2815,6 +2876,13 @@ final class PanelViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Медленный ли том у папки (сеть, внешний диск). У места без тома (корзина, полка, сеть
+    /// в обзоре) ответа нет — оно ни быстрое, ни медленное.
+    private static func isSlowVolume(_ path: String) -> Bool {
+        let volume = isVirtualLocation(path) ? nil : VolumeInterfaceDetector.detect(forPath: path)
+        return volume.map { !$0.isFast } ?? false
     }
 
     private func applyLoadedFileSystemItems(_ loaded: [FileItem],
@@ -3137,6 +3205,7 @@ final class PanelViewModel: ObservableObject {
     /// Pause FSEvents watching (call when app goes to background).
     func pauseFSWatcher() {
         stopFSWatcher()
+        forgetRememberedListingsOnFastVolumes()
     }
 
     /// Resume FSEvents watching and reload directory (call when app returns to foreground).
@@ -3355,7 +3424,8 @@ final class PanelViewModel: ObservableObject {
 
     private func resolveCachedDirectoryItems(for path: String) -> [FileItem]? {
         guard let cache = directoryCaches[path] else { return nil }
-        guard isDirectoryCacheValid(path: path, cache: cache) else {
+        guard Self.showsRemembered(readAt: cache.readAt, now: listingClock(), slowVolume: cache.slowVolume),
+              isDirectoryCacheValid(path: path, cache: cache) else {
             removeDirectoryCache(for: path)
             return nil
         }
@@ -3383,20 +3453,42 @@ final class PanelViewModel: ObservableObject {
     }
 
     private func storeDirectoryCache(path: String, items: [FileItem]) {
+        // Годность — по дате папки на момент ЧТЕНИЯ списка, а не записи в память.
+        guard let stamp = listingStamp, stamp.path == path else {
+            removeDirectoryCache(for: path)
+            return
+        }
         directoryCaches[path] = DirectoryCache(
             items: items,
             cachedAt: Date(),
-            mtime: directoryModificationDate(for: path)
+            mtime: stamp.mtime,
+            readAt: stamp.readAt,
+            slowVolume: currentPathIsSlowVolume
         )
         touchDirectoryCache(path)
         trimDirectoryCacheIfNeeded()
+    }
+
+    /// Результат чтения применён — его отметка становится отметкой списка на экране.
+    private func adoptListingStamp(for requestID: UUID) {
+        guard let pending = pendingListingStamp, pending.request == requestID else { return }
+        listingStamp = (pending.path, pending.mtime, pending.readAt)
+    }
+
+    /// Программа ушла в фон: слежка за папками спит, и запомненным спискам на быстрых дисках
+    /// верить больше нельзя — по возвращении папки читаются заново.
+    private func forgetRememberedListingsOnFastVolumes() {
+        for (path, cache) in directoryCaches where !cache.slowVolume {
+            removeDirectoryCache(for: path)
+        }
     }
 
     private func touchDirectoryCache(_ path: String) {
         directoryCacheLRU.removeAll { $0 == path }
         directoryCacheLRU.append(path)
         if var cache = directoryCaches[path] {
-            cache = DirectoryCache(items: cache.items, cachedAt: Date(), mtime: cache.mtime)
+            cache = DirectoryCache(items: cache.items, cachedAt: Date(), mtime: cache.mtime,
+                                   readAt: cache.readAt, slowVolume: cache.slowVolume)
             directoryCaches[path] = cache
         }
     }
@@ -3419,7 +3511,7 @@ final class PanelViewModel: ObservableObject {
         let includeHidden = showHiddenFiles
         // Где курсор сейчас — чтобы по приходу списка знать, двигал ли его человек.
         let cursorAtStart = cursorItem?.path
-        directoryDetailsTask = Task(priority: .utility) { [weak self] in
+        directoryDetailsTask = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
 
             let refreshedItems: [FileItem]
@@ -3445,11 +3537,14 @@ final class PanelViewModel: ObservableObject {
         }
     }
 
+    /// Список с размерами и датами — то, чего человек ждёт на экране, поэтому с приоритетом
+    /// его действий. С низким приоритетом после простоя он приходил заметно позже, и на экране
+    /// всё это время стояло запомненное или одни имена.
     private func loadDirectoryFastAsync(destination: String,
                                         showHidden: Bool) async throws -> [FileItem] {
         let bridgeService = service
         return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
+            DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     let loaded = try bridgeService.listDirectoryFast(
                         path: destination,
@@ -3478,6 +3573,7 @@ final class PanelViewModel: ObservableObject {
         guard directoryLoadRequestID == requestID else { return }
         guard !insideArchive, !insideRemote, currentPath == destination else { return }
 
+        adoptListingStamp(for: requestID)
         storeDirectoryCache(path: destination, items: refreshedItems)
         // Та же папка, что на экране, — список не перекладывается вовсе: ни курсор, ни
         // выделение, ни прокрутка не трогаются.
@@ -3549,7 +3645,7 @@ final class PanelViewModel: ObservableObject {
     private func startDirectoryFullMetadataPhase(destination: String,
                                                   requestID: UUID,
                                                   showHidden: Bool) {
-        directoryDetailsTask = Task(priority: .utility) { [weak self] in
+        directoryDetailsTask = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
 
             let detailedItems: [FileItem]
@@ -3582,6 +3678,7 @@ final class PanelViewModel: ObservableObject {
                     preferredCursorPath: self.cursorItem?.path,
                     clearSelection: false
                 )
+                self.adoptListingStamp(for: requestID)
                 self.storeDirectoryCache(path: destination, items: detailedItems)
             }
         }
@@ -3712,7 +3809,7 @@ final class PanelViewModel: ObservableObject {
                                            showHidden: Bool) async throws -> [FileItem] {
         let bridgeService = service
         return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
+            DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     let loaded = try bridgeService.listDirectory(
                         path: destination,
@@ -3759,6 +3856,7 @@ final class PanelViewModel: ObservableObject {
             preferredCursorPath: cursorItem?.path,
             clearSelection: false
         )
+        adoptListingStamp(for: requestID)
         storeDirectoryCache(path: destination, items: detailedItems)
     }
 

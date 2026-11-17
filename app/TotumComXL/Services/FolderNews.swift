@@ -30,10 +30,41 @@ enum FileNewness {
         excludedOverride?(path) ?? isExcludedByDefault(path)
     }
 
+    /// Байтами за один проход: правило спрашивают о каждом событии журнала диска и о каждой
+    /// строке списка, а разбор через строки (корень + «/», части пути массивом) стоил ~8 мкс.
     static func isExcludedByDefault(_ path: String) -> Bool {
-        if excludedRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) { return true }
-        return path.split(separator: "/").contains { $0.hasPrefix(".") || cacheFolderNames.contains(String($0)) }
+        var path = path
+        return path.withUTF8 { bytes in
+            let count = bytes.count
+            for root in excludedRootBytes where root.count <= count {
+                let matches = root.withUnsafeBufferPointer { memcmp(bytes.baseAddress, $0.baseAddress, root.count) == 0 }
+                if matches, count == root.count || bytes[root.count] == slash { return true }
+            }
+            var start = 0
+            var index = 0
+            while index <= count {
+                if index == count || bytes[index] == slash {
+                    if index > start {
+                        if bytes[start] == dot { return true }
+                        let length = index - start
+                        if length == 5 || length == 6, cacheNameBytes.contains(where: { name in
+                            name.count == length && name.withUnsafeBufferPointer {
+                                memcmp(bytes.baseAddress! + start, $0.baseAddress, length) == 0
+                            }
+                        }) { return true }
+                    }
+                    start = index + 1
+                }
+                index += 1
+            }
+            return false
+        }
     }
+
+    private static let slash = UInt8(ascii: "/")
+    private static let dot = UInt8(ascii: ".")
+    private static let excludedRootBytes: [[UInt8]] = excludedRoots.map { Array($0.utf8) }
+    private static let cacheNameBytes: [[UInt8]] = cacheFolderNames.map { Array($0.utf8) }
 
     /// Самая поздняя из дат: появления в папке и — у файла, не у папки, — перезаписи. Нет даты
     /// появления (том её не хранит) — остаётся дата изменения, как и было.

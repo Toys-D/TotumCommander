@@ -634,9 +634,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
     func pauseFSWatchers() {
         splitVC.leftPanelVM.pauseFSWatcher()
         splitVC.rightPanelVM.pauseFSWatcher()
+        // Журнал новых файлов («+N») в фоне только копит события: счётчиков никто не видит,
+        // а проверять на диске каждый файл чужой сборки — это процессор свёрнутой программы.
+        FolderNewsArrivals.shared.hold()
     }
 
     func resumeFSWatchers() {
+        // Накопленное за время в фоне разбирается одним разом, не на главном потоке.
+        FolderNewsArrivals.shared.release()
         splitVC.leftPanelVM.resumeFSWatcher()
         splitVC.rightPanelVM.resumeFSWatcher()
     }
