@@ -1924,6 +1924,7 @@ Example: find «IMG», replace with «Photo» → «IMG_1.jpg» becomes «Photo_
 
 /* Permanent delete (Shift+Del) */
 "delete.permanent.title" = "Delete permanently";
+"delete.noTrash.warning" = "This disk has no Trash: the items will be erased at once. There will be no way to get them back.";
 "delete.permanent.warning" = "These items will be erased without going to the Trash. There will be no way to get them back.";
 "delete.permanent.confirm" = "Erase forever";
 

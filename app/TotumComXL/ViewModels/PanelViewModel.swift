@@ -2792,7 +2792,13 @@ final class PanelViewModel: ObservableObject {
         // порядке. Одни имена вперёд нужны медленному тому, где сведения идут долго; на быстром
         // они приходят за те же миллисекунды, а список из одних имён стоит по алфавиту — при
         // сортировке по дате перечень на глазах сменялся другим («старый, потом обычный»).
-        let showsReadyListing = !isSameDirectoryReload && !Self.isSlowVolume(destination)
+        let slowVolume = Self.isSlowVolume(destination)
+        let showsReadyListing = !isSameDirectoryReload && !slowVolume
+        // На медленном томе в подробном виде второй этап списка не перечитывает — он только
+        // дочитывает сведения о строках, что уже на экране. Перечитка той же папки без первого
+        // этапа оставляла прежний перечень: скопированное в сетевую папку не появлялось, а
+        // удалённое не исчезало, пока человек не переключал вкладку.
+        let secondPhaseOnlyRefines = slowVolume && viewMode == .detailed
         directoryDetailsTask = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             if showsReadyListing,
@@ -2815,7 +2821,7 @@ final class PanelViewModel: ObservableObject {
             }
             // Быстрое чтение не далось или том медленный — имена, затем сведения.
             do {
-                if !isSameDirectoryReload {
+                if !isSameDirectoryReload || secondPhaseOnlyRefines {
                     // Phase 1: show names instantly via readdir (zero stat calls).
                     // On APFS/SSD this takes <1ms, on NTFS/USB ~10ms — always instant.
                     // getattrlistbulk is NOT used here because on NTFS it's 3.5x SLOWER
@@ -2829,6 +2835,12 @@ final class PanelViewModel: ObservableObject {
 
                     await MainActor.run {
                         let isNavigation = destination != self.currentPath
+                        // Та же папка и тот же перечень — список не перекладывается: ни курсор,
+                        // ни прокрутка не трогаются, сведения дочитает второй этап.
+                        if isSameDirectoryReload, Self.sameNames(namesOnly, shown: self.allItems) {
+                            self.adoptListingStamp(for: requestID)
+                            return
+                        }
                         self.applyLoadedFileSystemItems(
                             namesOnly,
                             destination: destination,
@@ -2931,7 +2943,12 @@ final class PanelViewModel: ObservableObject {
                         path: item.path,
                         name: item.name,
                         fileExtension: item.fileExtension,
-                        size: max(item.size, prev.size),
+                        // Папке — больший из двух: её размер посчитан обходом, а список отдаёт
+                        // ноль. Файлу — свежий, если этот проход его мерил (есть дата): раньше и
+                        // тут брался больший, и файл, ставший меньше, показывал прежний размер,
+                        // пока из папки не выйдешь. Чтение одних имён размера не знает.
+                        size: item.isDirectory ? max(item.size, prev.size)
+                            : (item.dateModified > Date.distantPast ? item.size : prev.size),
                         isDirectory: item.isDirectory,
                         isHidden: item.isHidden,
                         isSymlink: item.isSymlink,
@@ -3103,7 +3120,8 @@ final class PanelViewModel: ObservableObject {
 
     private func restartFSWatcherIfNeeded(for directory: String) {
         switch FolderWatchMode.mode(insideArchive: insideArchive, slowVolume: currentPathIsSlowVolume,
-                                    networkVolume: currentPathIsNetworkVolume) {
+                                    networkVolume: currentPathIsNetworkVolume,
+                                    virtualLocation: Self.isVirtualLocation(directory)) {
         case .none:
             // Архив и медленный внешний диск не наблюдаются — экономия.
             stopFSWatcher()
@@ -3597,6 +3615,17 @@ final class PanelViewModel: ObservableObject {
         return current
     }
 
+    /// Тот же ли перечень имён пришёл с диска, что показан («..» не в счёт): ничего не появилось
+    /// и не пропало, папка не стала файлом. Сведений у чтения одних имён нет — их не сравнить.
+    nonisolated static func sameNames(_ fresh: [FileItem], shown: [FileItem]) -> Bool {
+        let shownReal = shown.filter { $0.name != ".." }
+        guard fresh.count == shownReal.count else { return false }
+        var kinds: [String: Bool] = [:]
+        kinds.reserveCapacity(shownReal.count)
+        for item in shownReal { kinds[item.path] = item.isDirectory }
+        return fresh.allSatisfy { kinds[$0.path] == $0.isDirectory }
+    }
+
     /// Пришёл ли с диска тот же список, что показан: те же файлы с теми же размерами, датами и
     /// правами («..» не в счёт — его добавляет сама панель).
     nonisolated static func sameListing(_ fresh: [FileItem], shown: [FileItem]) -> Bool {
@@ -3763,8 +3792,7 @@ final class PanelViewModel: ObservableObject {
                     var changed = false
                     self.allItems = self.allItems.map { item in
                         guard let meta = metadataResults[item.path] else { return item }
-                        changed = true
-                        return FileItem(
+                        let fresh = FileItem(
                             path: item.path,
                             name: item.name,
                             fileExtension: item.fileExtension,
@@ -3787,6 +3815,11 @@ final class PanelViewModel: ObservableObject {
                             owner: meta.owner,
                             entryCount: item.entryCount
                         )
+                        // Те же сведения — строка та же: иначе каждая перечитка сетевой папки
+                        // перестраивала весь список, даже когда в нём ничего не поменялось.
+                        guard fresh != item else { return item }
+                        changed = true
+                        return fresh
                     }
                     if changed {
                         self.sortToken &+= 1

@@ -45,7 +45,8 @@ enum TextTheme: String, CaseIterable {
     /// чуть позже, чем приходит весть о смене темы.
     @MainActor
     static var appIsDark: Bool {
-        NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        // .shared, а не NSApp: до первого обращения NSApp пуст (так падали проверки, запущенные отдельно).
+        NSApplication.shared.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 
     static func stored(forKey key: String, in defaults: UserDefaults = .standard) -> TextTheme {

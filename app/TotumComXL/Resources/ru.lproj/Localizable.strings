@@ -1930,6 +1930,7 @@
 
 /* Permanent delete (Shift+Del) */
 "delete.permanent.title" = "Удалить безвозвратно";
+"delete.noTrash.warning" = "На этом диске нет корзины: объекты будут стёрты сразу. Восстановить их будет невозможно.";
 "delete.permanent.warning" = "Эти объекты будут стёрты мимо корзины. Восстановить их будет невозможно.";
 "delete.permanent.confirm" = "Стереть навсегда";
 

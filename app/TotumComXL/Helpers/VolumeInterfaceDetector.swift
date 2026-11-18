@@ -49,7 +49,12 @@ enum VolumeInterfaceDetector {
         cache.removeAll()
     }
 
+    /// Подмена для проверок: объявить временную папку на внутреннем диске медленным или
+    /// сетевым томом. nil в ответе — определять как обычно.
+    nonisolated(unsafe) static var override: ((String) -> VolumeInterfaceInfo?)?
+
     static func detect(forPath path: String) -> VolumeInterfaceInfo {
+        if let info = override?(path) { return info }
         let url = URL(fileURLWithPath: path)
         let keys: Set<URLResourceKey> = [.volumeIsInternalKey, .volumeIsLocalKey, .volumeURLKey]
         guard let values = try? url.resourceValues(forKeys: keys) else {

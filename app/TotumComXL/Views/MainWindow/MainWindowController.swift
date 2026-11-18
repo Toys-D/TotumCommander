@@ -670,6 +670,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         leaveEjectedVolume(volumePath)
     }
 
+    /// Папки, открытые во вкладках обеих панелей, кроме одной вкладки (той, что закрывается):
+    /// по ним решается, можно ли отключать сетевой том вместе с ней.
+    func fileTabPaths(excluding tabID: UUID) -> [String] {
+        [splitVC.leftPanelVC, splitVC.rightPanelVC].flatMap { panel in
+            panel?.fileTabPaths(excluding: tabID) ?? []
+        }
+    }
+
     /// Обе панели уходят с пропавшего тома туда, откуда на него пришли (см. PanelViewController).
     /// Одна дорога и для извлечения кнопкой, и для извлечения из Finder или diskutil.
     private func leaveEjectedVolume(_ volumePath: String) {
@@ -2907,7 +2915,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
     private func performDeleteNow(items: [FileItem], vm: PanelViewModel, permanently requested: Bool) {
         // Deleting from the Trash IS erasing — there is no second trash to move things to, so the
         // red dialog appears whether or not Shift was held.
-        let permanently = requested || vm.state.insideTrash
+        // И с тома без корзины (сетевая папка) — тоже: «в корзину» там невозможно, и система
+        // показывала бы собственное окно «удалить сразу?» уже после вопроса программы.
+        let noTrash = !requested && !vm.state.insideTrash && !vm.insideRemote && !vm.insideArchive
+            && !TrashAvailability.split(items).toErase.isEmpty
+        let permanently = requested || vm.state.insideTrash || noTrash
         if uninstallInsteadOfDelete(items: items, vm: vm, permanently: permanently) { return }
         // Deleting a file that is waiting to be pasted makes the pending cut meaningless.
         FileClipboard.invalidate(paths: items.map(\.path))
@@ -2939,7 +2951,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         // local disk. A remote delete is permanent either way and keeps its usual question.
         if permanently && !vm.insideRemote {
             guard DialogService.shared.showPermanentDeleteConfirmation(
-                items: items, totalBytes: totalBytes) else { return }
+                items: items, totalBytes: totalBytes, noTrash: noTrash) else { return }
         } else {
             guard DialogService.shared.showDeleteConfirmation(
                 items: items, totalBytes: totalBytes) else { return }
@@ -5322,7 +5334,8 @@ extension MainWindowController: QLPreviewPanelDataSource, QLPreviewPanelDelegate
     }
 
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
-        return quickLookCurrentURL as NSURL?
+        // Сжатый SVG — распакованной копией (CompressedSVG): сам файл система не рисует.
+        return quickLookCurrentURL.map { CompressedSVG.previewURL(for: $0) as NSURL }
     }
 
     /// Forward most key events back to the active file-manager panel so the

@@ -20,7 +20,7 @@ private final class QLPreviewContainer: NSView {
 
         let pv = QLPreviewView(frame: bounds, style: .compact)!
         pv.autoresizingMask = [.width, .height]
-        pv.previewItem = URL(fileURLWithPath: path) as QLPreviewItem
+        pv.previewItem = CompressedSVG.previewURL(for: URL(fileURLWithPath: path)) as QLPreviewItem
         addSubview(pv)
         previewView = pv
     }

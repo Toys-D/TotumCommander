@@ -10,8 +10,12 @@ enum FolderWatchMode: Equatable {
     /// возвращение в программу и собственные операции.
     case none
 
-    static func mode(insideArchive: Bool, slowVolume: Bool, networkVolume: Bool) -> FolderWatchMode {
-        if insideArchive { return .none }
+    /// `virtualLocation` — список компьютеров и папок, корзина, полка: на диске такого пути
+    /// нет, следить не за чем. Раньше слежка всё равно запускалась и каждый раз писала в
+    /// журнал отказ.
+    static func mode(insideArchive: Bool, slowVolume: Bool, networkVolume: Bool,
+                     virtualLocation: Bool = false) -> FolderWatchMode {
+        if insideArchive || virtualLocation { return .none }
         if networkVolume { return .network }
         return slowVolume ? .none : .journal
     }

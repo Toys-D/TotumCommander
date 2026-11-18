@@ -2479,6 +2479,11 @@ final class PanelViewController: NSViewController,
     /// него, возвращаются туда, откуда пришли, курсором на тот же файл; открытые под него
     /// закрываются, и панель показывает вкладку, из которой их открыли. Раньше панель с тома
     /// уходила в домашнюю папку, а его вкладки просто закрывались.
+    /// Папки вкладок этой панели (не терминалы и не удалённые подключения), кроме одной.
+    func fileTabPaths(excluding tabID: UUID) -> [String] {
+        tabsVM.tabs.filter { $0.id != tabID && !$0.isTerminal && !$0.isRemote }.map(\.path)
+    }
+
     func leaveEjectedVolume(_ volumeRoot: String) {
         let exit = tabsVM.leaveVolume(volumeRoot)
         if let target = exit.activate, let index = tabsVM.tabs.firstIndex(where: { $0.id == target }) {
@@ -2720,11 +2725,20 @@ final class PanelViewController: NSViewController,
             if tabPath.hasPrefix("/Volumes/"),
                let volumeName = tabPath.dropFirst("/Volumes/".count).split(separator: "/").first {
                 let volumePath = "/Volumes/" + String(volumeName)
-                DispatchQueue.global(qos: .userInitiated).async {
-                    let started = Date()
-                    let outcome = VolumeUnmount.unmount(path: volumePath)
-                    MountTrace.log("Закрытие вкладки «\(volumeName)»: диспетчер ответил \(outcome)",
-                                   since: started)
+                let controller = NSApp.windows.compactMap({ $0.windowController as? MainWindowController }).first
+                let remaining = controller?.fileTabPaths(excluding: closingTab.id) ?? []
+                if NetworkTabClose.unmountsVolume(volumePath, remainingPaths: remaining) {
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let started = Date()
+                        // Вкладка ещё закрывается, и панель отпускает папку не мгновенно: на
+                        // «занят» — короткие повторы, той же дорогой, что у кнопки извлечения.
+                        _ = VolumeUnmount.unmountPatiently(path: volumePath) { answer, attempt in
+                            MountTrace.log("Закрытие вкладки «\(volumeName)»: диспетчер ответил \(answer) (попытка \(attempt))",
+                                           since: started)
+                        }
+                    }
+                } else {
+                    MountTrace.log("Закрытие вкладки «\(volumeName)»: том остаётся — на нём стоит другая вкладка")
                 }
             }
             if isClosingActiveTab {

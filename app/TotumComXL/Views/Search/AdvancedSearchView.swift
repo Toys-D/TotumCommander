@@ -1590,7 +1590,7 @@ private class SearchWindow: NSWindow, QLPreviewPanelDataSource, QLPreviewPanelDe
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
         let paths = previewPaths
         guard paths.indices.contains(index) else { return nil }
-        return NSURL(fileURLWithPath: paths[index])
+        return NSURL(fileURLWithPath: CompressedSVG.previewPath(for: paths[index]))
     }
 
     /// Up and down move through the list of finds while the preview has the keyboard.

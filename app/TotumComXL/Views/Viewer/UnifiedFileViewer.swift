@@ -780,7 +780,8 @@ struct UnifiedFileViewer: View {
             switch effectiveMode {
             case .quickLook:
                 if let item = targetItem {
-                    QuickLookPreviewView(url: URL(fileURLWithPath: item.path))
+                    // Сжатый SVG — распакованной копией: сам файл система рисует страницей с ошибкой.
+                    QuickLookPreviewView(url: CompressedSVG.previewURL(for: URL(fileURLWithPath: item.path)))
                 } else {
                     Text(L("viewer.noFile")).foregroundStyle(.secondary)
                 }
@@ -2403,8 +2404,11 @@ struct UnifiedFileViewer: View {
             return
         }
 
-        let filePath = item.path
+        let diskPath = item.path
         let selectedMode = effectiveMode
+        // Сжатый SVG читается распакованным — и картинкой, и текстом. HEX показывает сам файл,
+        // каким он лежит на диске.
+        let filePath = selectedMode == .hex ? diskPath : CompressedSVG.previewPath(for: diskPath)
 
         switch selectedMode {
         case .quickLook, .document:

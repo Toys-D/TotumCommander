@@ -469,7 +469,7 @@ func autoMode(for category: FileCategory) -> PreviewMode {
     case .image:
         return .image
     case .vectorImage:
-        return .quickLook    // WebKit-backed QL renders SVG cleanly
+        return .quickLook    // WebKit-backed QL renders SVG cleanly (.svgz — through CompressedSVG)
     case .officeDocument:
         return .quickLook    // QL renders docx/xlsx/pptx with full fidelity
     case .text, .markdown:
@@ -559,7 +559,8 @@ func loadFolderPreviewSnapshotAsync(path: String) async throws -> ([FolderPrevie
 
 func quickLookThumbnailAsync(path: String, targetSize: CGSize) async -> NSImage? {
     let request = QLThumbnailGenerator.Request(
-        fileAt: URL(fileURLWithPath: path),
+        // Сжатый SVG система не распаковывает — ей отдаётся распакованная копия.
+        fileAt: CompressedSVG.previewURL(for: URL(fileURLWithPath: path)),
         size: targetSize,
         scale: NSScreen.main?.backingScaleFactor ?? 2.0,
         representationTypes: .thumbnail
@@ -575,7 +576,7 @@ func loadPreviewImageAsync(path: String, targetSize: CGSize) async -> NSImage? {
     if let thumbnail = await quickLookThumbnailAsync(path: path, targetSize: targetSize) {
         return thumbnail
     }
-    guard let data = try? await readFileDataAsync(path: path) else {
+    guard let data = try? await readFileDataAsync(path: CompressedSVG.previewPath(for: path)) else {
         return nil
     }
     return NSImage(data: data)

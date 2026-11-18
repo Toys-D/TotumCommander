@@ -237,11 +237,16 @@ final class DialogService {
 
     /// Shift+Del confirmation. Unlike the ordinary delete dialog there is NO "don't ask again":
     /// this is the one action the app cannot undo, so the question is never skippable.
-    func showPermanentDeleteConfirmation(items: [FileItem], totalBytes: Int64 = 0) -> Bool {
+    ///
+    /// `noTrash` — вопрос задан не из-за Shift, а потому что у тома нет корзины (сетевая папка):
+    /// об этом сказано первой строкой, иначе красное окно на обычный F8 было бы загадкой.
+    func showPermanentDeleteConfirmation(items: [FileItem], totalBytes: Int64 = 0,
+                                         noTrash: Bool = false) -> Bool {
         let body = deleteConfirmationText(items: items, totalBytes: totalBytes)
+        let warning = noTrash ? L("delete.noTrash.warning") : L("delete.permanent.warning")
         let result = FCXLMessageDialog.run(FCXLMessageConfig(
             title: L("delete.permanent.title"),
-            message: L("delete.permanent.warning") + "\n\n" + body,
+            message: warning + "\n\n" + body,
             icon: "flame.fill",
             iconColor: .red,
             // macOS order: negative on the LEFT, the destructive default on the RIGHT.

@@ -94,6 +94,16 @@ final class SameListingRereadTests: XCTestCase {
         try await settle(vm) { vm.items.first { $0.name == "один.txt" }?.size == 5000 }
     }
 
+    /// Файл стал МЕНЬШЕ — строка показывает новый размер, а не больший из двух.
+    func test_уменьшившийсяФайл_показываетНовыйРазмер() async throws {
+        try Data(repeating: 7, count: 5000).write(to: URL(fileURLWithPath: folder + "/один.txt"))
+        let vm = try await panel()
+        XCTAssertEqual(vm.items.first { $0.name == "один.txt" }?.size, 5000)
+        try Data(repeating: 7, count: 12).write(to: URL(fileURLWithPath: folder + "/один.txt"))
+        vm.reloadKeepingCursor()
+        try await settle(vm) { vm.items.first { $0.name == "один.txt" }?.size == 12 }
+    }
+
     /// Какие события диска вообще ведут к перечитке.
     func test_событияГлубжеВнукаСписокНеМеняют() {
         let home = "/Users/кто"

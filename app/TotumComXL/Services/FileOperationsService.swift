@@ -1368,6 +1368,24 @@ final class FileOperationsService {
         // NTFS has no Trash at all, so both delete flavours land on the same libntfs path.
         if try await deleteViaNTFSIfNeeded(items) { return }
 
+        // Том без корзины (сетевая папка). Система на «в корзину» показала бы здесь своё окно
+        // «удалить сразу?»; вопрос задаёт программа, своим окном, и стирает сама. Основная
+        // дорога (F8 в панели) спрашивает заранее и сюда с такими файлами не приходит — это
+        // для остальных: удаление из поиска, исходники после упаковки и переноса, отмена.
+        let split = TrashAvailability.split(items)
+        if !split.toErase.isEmpty {
+            let erase = split.toErase
+            let bytes = erase.reduce(Int64(0)) { $0 + Int64($1.size) }
+            let agreed = await fcxlPresentModalAsync {
+                DialogService.shared.showPermanentDeleteConfirmation(items: erase, totalBytes: bytes, noTrash: true)
+            }
+            guard agreed else { throw CancellationError() }
+            try await deleteItemsPermanently(erase)
+            guard !split.toTrash.isEmpty else { return }
+            try await trashItems(split.toTrash)
+            return
+        }
+
         // Standard macOS trash
         _ = try preflightCheck(items: items, destinationPath: nil, requireWriteAccess: true)
 

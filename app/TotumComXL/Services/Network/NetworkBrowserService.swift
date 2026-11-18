@@ -597,6 +597,14 @@ final class NetworkBrowserService {
                                        account as CFString?, password as CFString?,
                                        openOptions as CFMutableDictionary, nil, &mountPoints)
         MountTrace.log("Подключение \(url.host ?? "")\(url.path): NetFS ответил \(status)", since: started)
+        // «Уже есть»: папка подключена раньше, а точки система при этом не называет. Раньше это
+        // шло как отказ — щелчок по подключённой папке не делал ничего, сколько ни нажимай.
+        if status == EEXIST, let host = url.host,
+           let share = url.pathComponents.first(where: { $0 != "/" }),
+           let existing = MountTable.existingMount(host: host, share: share) {
+            MountTrace.log("Подключение \(host)\(url.path): уже подключена, том \(existing)", since: started)
+            return (existing, 0)
+        }
         guard status == 0 else { return (nil, status) }
         if let pts = mountPoints?.takeRetainedValue() as? [String], let mp = pts.first {
             waitUntilReadable(mp)
@@ -625,7 +633,9 @@ final class NetworkBrowserService {
         }.value
         if result.status == 0 { return result }
         guard isAuthFailure(result.status), !server.isEmpty else { return result }
-        if rememberedGuest { NetworkGuestMemory.forget(server) }
+        // Гостя не пустили в ЭТУ папку — память о сервере остаётся: в остальные его папки гость
+        // по-прежнему входит. Раньше она стиралась, и после одной закрытой папки каждая
+        // следующая снова шла через связку ключей (секунды впустую) и окно входа.
 
         let saved = NetworkCredentialStore.lookup(server: server, scheme: scheme)
         var suggested = saved?.account ?? NetworkAuthDialog.defaultAccount
@@ -647,9 +657,13 @@ final class NetworkBrowserService {
             if result.status == 0 {
                 if answer.asGuest {
                     NetworkGuestMemory.remember(server)
-                } else if answer.remember {
-                    NetworkCredentialStore.save(server: server, scheme: scheme,
-                                                account: answer.account, password: answer.password)
+                } else {
+                    // Вошли под логином — дальше первым пробуется он, а не гость.
+                    NetworkGuestMemory.forget(server)
+                    if answer.remember {
+                        NetworkCredentialStore.save(server: server, scheme: scheme,
+                                                    account: answer.account, password: answer.password)
+                    }
                 }
                 return result
             }

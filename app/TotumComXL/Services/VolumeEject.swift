@@ -228,13 +228,9 @@ enum VolumeEject {
         DispatchQueue.global(qos: .userInitiated).async {
             // Занят — значит, панель ещё не отпустила папку: две короткие повторные попытки
             // укладываются в то время, что раньше стояло паузой, а обычно не нужны вовсе.
-            var outcome = VolumeUnmount.Outcome.busy
-            for attempt in 0..<3 {
-                if attempt > 0 { Thread.sleep(forTimeInterval: 0.4) }
-                outcome = VolumeUnmount.unmount(path: path)
-                MountTrace.log("Отключение «\(label)»: диспетчер ответил \(outcome) (попытка \(attempt + 1))",
+            let outcome = VolumeUnmount.unmountPatiently(path: path) { answer, attempt in
+                MountTrace.log("Отключение «\(label)»: диспетчер ответил \(answer) (попытка \(attempt))",
                                since: clicked)
-                if outcome != .busy { break }
             }
             if outcome == .done {
                 DispatchQueue.main.async {

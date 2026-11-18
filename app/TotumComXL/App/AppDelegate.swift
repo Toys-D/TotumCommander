@@ -173,6 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         source.setEventHandler {
             RcloneDaemon.terminateHelper()
             RemoteFileCache.cleanupAll()
+            CompressedSVG.removeCopies()
             exit(0)
         }
         source.resume()
@@ -187,6 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Без этого закладка, поставленная прямо перед выходом, пропадала вместе с окном.
         ReaderMarksStore.shared.flush()
         FileOperationsService.cleanupSendDirectories()
+        CompressedSVG.removeCopies()
         FKeyModeManager.shared.restoreSystemStateOnExit()
         mainWindowController?.pauseFSWatchers()
         TerminalProcessRegistry.shared.terminateAll()
