@@ -93,11 +93,7 @@ final class PanelTabsViewModel: ObservableObject {
             isNetworkBrowser: NetworkBrowserService.isNetworkPath(path))
         if kind != tabs[activeIndex].kind {
             tabs[activeIndex].kind = kind
-            // Оранжевый ставили мы сами вместе с видом вкладки — вместе с ним и снимаем.
-            // Свой цвет, выбранный человеком, не трогаем.
-            if kind == .directory, tabs[activeIndex].colorHex == PanelTab.remoteDefaultColorHex {
-                tabs[activeIndex].colorHex = nil
-            }
+            tabs[activeIndex].colorHex = Self.colorAfterKindChange(tabs[activeIndex].colorHex, to: kind)
         }
         if let net = mount {
             // Inside a mounted SMB share → "COMPUTER: folder" (e.g. "SERVER_SO: Доки").
@@ -106,20 +102,38 @@ final class PanelTabsViewModel: ObservableObject {
         } else if !tabs[activeIndex].isNetworkMount {
             // Normal local tab → current folder name. (A network-mount tab still at the
             // virtual browser root keeps its "Локальная сеть" title.)
-            let lastComponent = (path as NSString).lastPathComponent
-            tabs[activeIndex].title = lastComponent.isEmpty ? path : lastComponent
+            tabs[activeIndex].title = Self.folderTitle(path)
         }
         persist()
     }
 
-    /// Корень внешнего или сетевого тома, на котором лежит путь, или корень обзора сети; nil —
-    /// свой диск. По таблице томов из памяти ядра, без обращения к дискам.
+    /// Имя вкладки по папке. Корень облака называется как облако: «com~apple~CloudDocs» —
+    /// служебная папка, а человек открывал iCloud Drive.
+    nonisolated static func folderTitle(_ path: String,
+                                        cloudStorageRoot: String = CloudStorageVolumes.root,
+                                        iCloudRoot: String = CloudStatusService.cloudDriveRoot) -> String {
+        let std = URL(fileURLWithPath: path).standardizedFileURL.path
+        let lastComponent = (std as NSString).lastPathComponent
+        if std == URL(fileURLWithPath: iCloudRoot).standardizedFileURL.path { return L("volume.icloud") }
+        if CloudStorageVolumes.isRoot(std, root: cloudStorageRoot),
+           let cloud = CloudStorageVolumes.label(forFolder: lastComponent) {
+            return cloud
+        }
+        return lastComponent.isEmpty ? path : lastComponent
+    }
+
+    /// Корень внешнего или сетевого тома, на котором лежит путь, корень обзора сети или корень
+    /// облака; nil — свой диск. По таблице томов из памяти ядра, без обращения к дискам.
+    ///
+    /// Облако — тоже место, с которого возвращаются: его убирают с полосы дисков, и вкладка,
+    /// ушедшая в него, должна вернуться туда, откуда пришла, а не остаться в убранном.
     static func awayRoot(of path: String, mounts: [OperationDisks.Mount]) -> String? {
         if NetworkBrowserService.isNetworkPath(path) { return NetworkBrowserService.networkRoot }
         return mounts
             .filter { $0.point.hasPrefix("/Volumes/") && (path == $0.point || path.hasPrefix($0.point + "/")) }
             .max { $0.point.count < $1.point.count }?
             .point
+            ?? CloudPlaces.root(containing: path)
     }
 
     /// Ушла со своего диска на внешний, сетевой или в обзор сети — запомнить, откуда и с какого
@@ -131,7 +145,9 @@ final class PanelTabsViewModel: ObservableObject {
         guard Self.awayRoot(of: newPath, mounts: mounts) != nil else {
             tabs[index].returnPath = nil
             tabs[index].returnCursorPath = nil
-            tabs[index].openedFromTabID = nil
+            // Вкладка, открытая под место, остаётся его вкладкой и на своём диске — и помнит,
+            // из какой её открыли: вернётся на диск, диск извлекут — закроется, как положено.
+            if tabs[index].placeRoot == nil { tabs[index].openedFromTabID = nil }
             return
         }
         guard Self.awayRoot(of: oldPath, mounts: mounts) == nil, tabs[index].openedFromTabID == nil else { return }
@@ -154,6 +170,17 @@ final class PanelTabsViewModel: ObservableObject {
         if isMount { return .networkMount }
         if current == .networkMount, !isNetworkBrowser { return .directory }
         return current
+    }
+
+    /// Цвет вкладки, сменившей вид. Оранжевый ставим мы сами вместе с видом сетевой вкладки —
+    /// вместе с ним и снимаем, и возвращаем, когда вкладка снова встаёт на сетевой том. Свой
+    /// цвет, выбранный человеком, не трогаем.
+    nonisolated static func colorAfterKindChange(_ colorHex: String?, to kind: TabKind) -> String? {
+        switch kind {
+        case .directory: return colorHex == PanelTab.remoteDefaultColorHex ? nil : colorHex
+        case .networkMount: return colorHex ?? PanelTab.remoteDefaultColorHex
+        case .terminal, .remote: return colorHex
+        }
     }
 
     /// Щелчок по местному диску из этой вкладки: открыть диск в соседней местной, а эту
@@ -229,9 +256,11 @@ final class PanelTabsViewModel: ObservableObject {
         return nil
     }
 
-    func newTab(path: String, openedFrom origin: UUID? = nil) {
-        var tab = PanelTab(path: path)
+    func newTab(path: String, title: String? = nil, openedFrom origin: UUID? = nil,
+                placeRoot: String? = nil) {
+        var tab = PanelTab(path: path, title: title ?? Self.folderTitle(path))
         tab.openedFromTabID = origin
+        tab.placeRoot = placeRoot
         tabs.insert(tab, at: activeIndex + 1)
         activeIndex += 1
         persist()
@@ -250,12 +279,96 @@ final class PanelTabsViewModel: ObservableObject {
         tabs.firstIndex { $0.isNetworkMount && ($0.path == root || $0.path.hasPrefix(root + "/")) }
     }
 
-    func newNetworkMountTab(path: String, title: String, openedFrom origin: UUID? = nil) {
+    func newNetworkMountTab(path: String, title: String, openedFrom origin: UUID? = nil,
+                            placeRoot: String? = nil) {
         var tab = PanelTab(path: path, title: title, kind: .networkMount)
         tab.openedFromTabID = origin
+        tab.placeRoot = placeRoot
         tabs.insert(tab, at: activeIndex + 1)
         activeIndex += 1
         persist()
+    }
+
+    // MARK: - Подключаемые места
+
+    /// Что сделать панели, чтобы открыть подключаемое место.
+    enum PlaceOpening: Equatable {
+        /// Показать там, где человек стоит.
+        case inCurrentTab
+        /// Показать там, где человек стоит, и эта вкладка становится вкладкой места.
+        case adoptCurrentTab
+        /// Вкладка этого места уже есть — перейти на неё.
+        case switchTo(Int)
+        /// Завести месту свою вкладку.
+        case newTab
+    }
+
+    /// Вкладка, которую открыли под это место, — где бы она сейчас ни стояла: во вкладке
+    /// iCloud ушли на свой диск, щёлкнули по iCloud — это всё ещё его вкладка. Закреплённая не
+    /// в счёт: она принадлежит своей папке.
+    private func indexOfTab(openedFor root: String) -> Int? {
+        let place = normalizePath(root)
+        return tabs.firstIndex {
+            !$0.isTerminal && !$0.isRemote && !$0.pinned && $0.placeRoot.map(normalizePath) == place
+        }
+    }
+
+    /// Вкладка места — одна на место: та, где человек стоит, если она на этом месте или открыта
+    /// под него; иначе стоящая на нём (она его уже показывает); иначе открытая под него и
+    /// ушедшая в другую папку.
+    ///
+    /// Стоящая на диске или облаке — обычная вкладка в его корне либо незакреплённая в глубине.
+    /// Закреплённая в глубине не в счёт: у неё своя папка, и щелчок по диску не должен уводить
+    /// её в корень; закреплённая в самом корне — это и есть вкладка места.
+    private func indexOfPlaceTab(_ place: MountedPlace, root: String) -> Int? {
+        let standing: [Int]
+        switch place {
+        case .networkShare:
+            standing = tabs.indices.filter {
+                tabs[$0].isNetworkMount && (tabs[$0].path == root || tabs[$0].path.hasPrefix(root + "/"))
+            }
+        case .networkBrowser:
+            standing = tabs.indices.filter {
+                !tabs[$0].isTerminal && !tabs[$0].isRemote && NetworkBrowserService.isNetworkPath(tabs[$0].path)
+            }
+        case .externalDisk, .diskImage, .cloud:
+            let target = normalizePath(root)
+            let paths = tabs.map { normalizePath($0.path) }
+            standing = tabs.indices.filter { tabs[$0].kind == .directory && paths[$0] == target }
+                + tabs.indices.filter {
+                    tabs[$0].kind == .directory && !tabs[$0].pinned && paths[$0].hasPrefix(target + "/")
+                }
+        }
+        let opened = indexOfTab(openedFor: root)
+        if standing.contains(activeIndex) || opened == activeIndex { return activeIndex }
+        return standing.first ?? opened
+    }
+
+    /// Текущая вкладка становится вкладкой этого места.
+    func adoptPlace(_ root: String) {
+        tabs[activeIndex].placeRoot = root
+        persist()
+    }
+
+    /// Как открыть место `place` с корнем `root`. `wantsOwnTab` — ответ настройки
+    /// (`PlaceTabs.opensNewTab`); остальное решают сами вкладки:
+    /// - вкладка места уже есть — второй не заводим, переходим на неё; своей она остаётся и
+    ///   тогда, когда в ней ушли в другую папку;
+    /// - вкладка обзора сети, открытая под сеть, сама становится вкладкой общей папки — иначе
+    ///   каждая папка оставляла бы за собой ещё и вкладку со списком компьютеров;
+    /// - терминал и сервер папку показать не могут — сеть из них всегда уходит в свою вкладку.
+    func opening(of place: MountedPlace, root: String, wantsOwnTab: Bool) -> PlaceOpening {
+        let active = activeTab
+        let existing = indexOfPlaceTab(place, root: root)
+        let holdsFiles = !active.isTerminal && !active.isRemote
+        let isNetwork = place == .networkShare || place == .networkBrowser
+        if place == .networkShare, existing == nil, active.isNetworkMount,
+           NetworkBrowserService.isNetworkPath(active.path) {
+            return .adoptCurrentTab
+        }
+        guard wantsOwnTab || (isNetwork && !holdsFiles) else { return .inCurrentTab }
+        guard let existing else { return .newTab }
+        return existing == activeIndex ? .inCurrentTab : .switchTo(existing)
     }
 
     func newRemoteTab(title: String, connectionID: UUID) {
@@ -290,7 +403,8 @@ final class PanelTabsViewModel: ObservableObject {
         var close: [UUID] = []
     }
 
-    /// Том пропал (извлекли кнопкой, из Finder, отключили компьютер в сети). Вкладка, ушедшая на
+    /// Том пропал (извлекли кнопкой, из Finder, отключили компьютер в сети) или облако убрали
+    /// с полосы дисков. Вкладка, ушедшая на
     /// него, возвращается туда, откуда пришла, курсором на тот же файл; открытая под него — в
     /// списке на закрытие, а активной станет та, из которой её открыли. Вкладки без памяти —
     /// как раньше: незакреплённые закрываются. Пути вернувшихся вкладок меняются здесь же;
@@ -303,7 +417,16 @@ final class PanelTabsViewModel: ObservableObject {
         }
         let activeID = activeTab.id
         var exit = VolumeExit()
-        for index in tabs.indices where !tabs[index].isRemote && !tabs[index].isTerminal && isOn(tabs[index].path) {
+        for index in tabs.indices where !tabs[index].isRemote && !tabs[index].isTerminal {
+            guard isOn(tabs[index].path) else {
+                // Открытая под это место, но стоящая сейчас в другой папке: места она не
+                // показывает — не закрываем, она становится обычной вкладкой.
+                if tabs[index].placeRoot.map(normalizePath) == root {
+                    tabs[index].placeRoot = nil
+                    tabs[index].openedFromTabID = nil
+                }
+                continue
+            }
             let tab = tabs[index]
             if let origin = tab.openedFromTabID,
                let originTab = tabs.first(where: { $0.id == origin }), !isOn(originTab.path) {

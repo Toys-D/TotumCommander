@@ -218,6 +218,8 @@ final class PanelViewController: NSViewController,
 
     let viewModel: PanelViewModel
     let tabsVM: PanelTabsViewModel
+    /// Откуда читается настройка вкладок подключаемых мест; подменяется в проверках.
+    var placeTabDefaults: UserDefaults = .standard
     let side: MainSplitViewController.PanelSide
 
     weak var actionDelegate: PanelActionDelegate?
@@ -391,7 +393,7 @@ final class PanelViewController: NSViewController,
                 self.viewModel.loadDirectory(at: newTab.path)
             },
             onOpenNetworkVolume: { [weak self] in self?.openNetworkMount(at: $0) },
-            onOpenLocalVolume: { [weak self] in self?.openLocalVolume(at: $0) },
+            onOpenLocalVolume: { [weak self] in self?.openLocalVolume(at: $0, place: $1) },
             onOpenForeignRemote: { [weak self] connection in
                 guard let self else { return }
                 self.actionDelegate?.panelDidRequestOpenRemote(self, connection: connection)
@@ -990,6 +992,10 @@ final class PanelViewController: NSViewController,
         super.viewDidLoad()
         viewModel.onNetworkShareMounted = { [weak self] mountPoint in
             self?.openNetworkMount(at: mountPoint)
+        }
+        viewModel.openMountedImage = { [weak self] mountPoint in
+            self?.openInOwnTabIfAsked(.diskImage, at: mountPoint, root: mountPoint,
+                                      title: PanelTabsViewModel.folderTitle(mountPoint)) ?? false
         }
         reloadAppearanceSettings()
         bindViewModel()
@@ -2460,7 +2466,18 @@ final class PanelViewController: NSViewController,
     /// Щелчок по местному диску. Из вкладки хранилища или сетевого тома он их не отключает (для
     /// этого есть извлечение): вкладка остаётся жить, как при переходе на другую вкладку, а
     /// диск открывается в ближайшей местной вкладке — или в новой, если местных нет.
-    func openLocalVolume(at path: String) {
+    ///
+    /// `place` — что это за диск, если его подключают (внешний, образ, облако): тогда настройка
+    /// вкладок может велеть открыть его в своей вкладке. У системного диска и домашней папки
+    /// его нет — они открываются на месте.
+    func openLocalVolume(at path: String, place: MountedPlace? = nil) {
+        if let place {
+            let kind = place == .externalDisk
+                ? PlaceTabs.refined(place, busType: VolumeInterfaceDetector.detect(forPath: path).busType)
+                : place
+            if openInOwnTabIfAsked(kind, at: path, root: path,
+                                   title: PanelTabsViewModel.folderTitle(path)) { return }
+        }
         guard PanelTabsViewModel.localVolumeOpensElsewhere(from: tabsVM.activeTab,
                                                            insideRemote: viewModel.insideRemote) else {
             viewModel.navigateToLocal(path)
@@ -2485,6 +2502,20 @@ final class PanelViewController: NSViewController,
     }
 
     func leaveEjectedVolume(_ volumeRoot: String) {
+        leavePlace(volumeRoot)
+        // Что осталось на томе (закреплённая вкладка без памяти) — уводится, как и прежде: держать
+        // открытой папку на извлекаемом томе значит не дать его извлечь.
+        _ = viewModel.prepareForVolumeEject(volumeRoot)
+    }
+
+    /// Облако убрали с полосы дисков. Для вкладок это то же, что извлечь диск: открытая под
+    /// облако закрывается, ушедшая в него возвращается. Сама папка облака на месте, поэтому
+    /// закреплённую вкладку, стоящую в ней, силой никуда не уводим.
+    func leaveHiddenCloud(_ cloudRoot: String) {
+        leavePlace(cloudRoot)
+    }
+
+    private func leavePlace(_ volumeRoot: String) {
         let exit = tabsVM.leaveVolume(volumeRoot)
         if let target = exit.activate, let index = tabsVM.tabs.firstIndex(where: { $0.id == target }) {
             handleSelectTab(index, preferredCursorPath: exit.cursorPath)
@@ -2495,9 +2526,6 @@ final class PanelViewController: NSViewController,
         if tabsVM.closeTabs(exit.close) {
             viewModel.loadDirectory(at: tabsVM.activeTab.path)
         }
-        // Что осталось на томе (закреплённая вкладка без памяти) — уводится, как и прежде: держать
-        // открытой папку на извлекаемом томе значит не дать его извлечь.
-        _ = viewModel.prepareForVolumeEject(volumeRoot)
     }
 
     /// Called from MainWindowController when a terminal tab is created externally.
@@ -3008,10 +3036,13 @@ final class PanelViewController: NSViewController,
     /// network" item AND the centre divider's Network button both come here, so the two can
     /// never drift apart.
     func openLocalNetwork() {
-        // In the CURRENT tab, like every other place you can navigate to. Opening a tab of its
-        // own made browsing the network a thing to clean up afterwards, and ".." leads back out
-        // of /NETWORK by itself — the tab bought nothing.
-        viewModel.loadDirectory(at: NetworkBrowserService.networkRoot)
+        // In the CURRENT tab by default, like every other place you can navigate to: a tab of
+        // its own made browsing the network a thing to clean up afterwards, and ".." leads back
+        // out of /NETWORK by itself. Кому своя вкладка удобнее — тот ставит её в настройках.
+        let root = NetworkBrowserService.networkRoot
+        if !openInOwnTabIfAsked(.networkBrowser, at: root, root: root, title: L("network.localNetwork")) {
+            viewModel.loadDirectory(at: root)
+        }
 
         // Bonjour and the remembered hosts are already on screen by now; the subnet sweep only
         // ADDS to them, so the spinner marks "still looking", not "nothing yet". Per-tab state,
@@ -3092,22 +3123,61 @@ final class PanelViewController: NSViewController,
         }
     }
 
-    /// Сетевой том — в своей вкладке, одной на том: уже открыта — переключаемся, нет —
-    /// открываем. Папка, из которой пришли, остаётся на своей вкладке, а закрытие вкладки
-    /// тома — это и есть «отключиться». Сюда сходятся все входы: обзор сети, «Подключиться
-    /// к серверу» и чип тома на полосе дисков — иначе в одной панели том жил во вкладке,
-    /// а в другой съедал текущую.
+    /// Сетевой том — в своей вкладке, одной на том (уже открыта — переключаемся, нет —
+    /// открываем), либо в текущей: как велит настройка вкладок. В своей вкладке папка, из
+    /// которой пришли, остаётся на месте, а закрытие вкладки тома — это и есть «отключиться».
+    /// Сюда сходятся все входы: обзор сети, «Подключиться к серверу» и чип тома на полосе
+    /// дисков — иначе в одной панели том жил во вкладке, а в другой съедал текущую.
     func openNetworkMount(at mountPoint: String) {
+        // Чип обзора сети стоит на полосе, только пока панель там и находится: это не том, а
+        // место, где она уже есть, — вкладку под него не заводим.
+        guard !NetworkBrowserService.isNetworkPath(mountPoint) else {
+            viewModel.loadDirectory(at: mountPoint)
+            return
+        }
         let info = NetworkMountInfo.info(forPath: mountPoint)
         let root = info?.mountRoot ?? mountPoint
-        if let index = tabsVM.indexOfNetworkMountTab(onVolume: root) {
-            handleSelectTab(index)
-        } else {
-            let title = info.map { "\($0.computer): \($0.share)" }
-                ?? (mountPoint as NSString).lastPathComponent
-            tabsVM.newNetworkMountTab(path: mountPoint, title: title, openedFrom: tabsVM.activeTab.id)
-        }
+        let title = info.map { "\($0.computer): \($0.share)" }
+            ?? (mountPoint as NSString).lastPathComponent
+        if openInOwnTabIfAsked(.networkShare, at: mountPoint, root: root, title: title) { return }
         viewModel.loadDirectory(at: mountPoint)
+    }
+
+    /// Открыть подключаемое место — сетевую папку, обзор сети, внешний диск, образ, облако —
+    /// в своей вкладке, если так велит настройка вкладок. true — место показано; false —
+    /// настройка велит открыть его на месте, и это делает вызвавший своей прежней дорогой.
+    ///
+    /// Одна дорога на все виды мест: вкладка места уже есть — переходим на неё и встаём в
+    /// корень, нет — заводим рядом с текущей и помним, откуда пришли: извлекут диск — вкладка
+    /// закроется, а панель вернётся на ту, из которой её открыли. Вкладка помнит и своё место:
+    /// ушли в ней на другой диск и снова щёлкнули по этому — возвращается она же.
+    private func openInOwnTabIfAsked(_ place: MountedPlace, at path: String, root: String,
+                                     title: String) -> Bool {
+        let wantsOwnTab = PlaceTabs.opensNewTab(place, from: tabsVM.activeTab, defaults: placeTabDefaults)
+        switch tabsVM.opening(of: place, root: root, wantsOwnTab: wantsOwnTab) {
+        case .inCurrentTab:
+            return false
+        case .adoptCurrentTab:
+            tabsVM.adoptPlace(root)
+            return false
+        case .switchTo(let index):
+            // Вкладка места могла уйти в другую папку — в корень места она возвращается ещё до
+            // переключения, чтобы прежняя папка не мелькнула. Закреплённая помнит свою.
+            if !tabsVM.tabs[index].pinned { tabsVM.updateTabPath(at: index, to: path) }
+            handleSelectTab(index)
+            if tabsVM.activeTab.path != path { viewModel.loadDirectory(at: path) }
+        case .newTab:
+            let origin = tabsVM.activeTab.id
+            if place == .networkShare || place == .networkBrowser {
+                tabsVM.newNetworkMountTab(path: path, title: title, openedFrom: origin, placeRoot: root)
+            } else {
+                tabsVM.newTab(path: path, title: title, openedFrom: origin, placeRoot: root)
+            }
+            // Полное переключение, а не только новая запись в полосе: из вкладки сервера или
+            // терминала панель должна выйти, иначе путь места прочитался бы как путь сервера.
+            handleSelectTab(tabsVM.activeIndex)
+        }
+        return true
     }
 
     private func launchApplication(at path: String) {

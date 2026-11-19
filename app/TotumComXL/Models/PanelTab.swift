@@ -64,6 +64,10 @@ struct PanelTab: Identifiable, Codable {
     /// Вкладку открыли под диск из этой вкладки: диск извлечён — она закрывается, а активной
     /// становится та.
     var openedFromTabID: UUID?
+    /// Место, под которое вкладку открыли (корень диска, облака, сетевой папки, обзор сети).
+    /// Вкладка остаётся вкладкой этого места, куда бы в ней потом ни ушли: щелчок по диску
+    /// возвращает в неё же, а не заводит рядом ещё одну.
+    var placeRoot: String?
 
     init(id: UUID = UUID(), path: String, title: String? = nil, pinned: Bool = false,
          colorHex: String? = nil, kind: TabKind = .directory, remoteConnectionID: UUID? = nil) {

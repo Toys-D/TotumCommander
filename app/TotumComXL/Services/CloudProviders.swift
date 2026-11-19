@@ -178,6 +178,29 @@ enum CloudPlaces {
     }
 
     static func hide(_ provider: CloudProvider) { hidden.insert(provider) }
+
+    /// Корень облака, в котором лежит путь: iCloud Drive, папка поставщика в CloudStorage или
+    /// его папка в домашней (Яндекс Диск). nil — путь не в облаке. Только сравнение строк, без
+    /// обращения к диску. Том в /Volumes (pCloud Drive) — не сюда: это обычный диск.
+    static func root(containing path: String,
+                     iCloudRoot: String = CloudStatusService.cloudDriveRoot,
+                     cloudStorageRoot: String = CloudStorageVolumes.root,
+                     home: String = NSHomeDirectory()) -> String? {
+        let std = URL(fileURLWithPath: path).standardizedFileURL.path
+        func holds(_ root: String) -> Bool { std == root || std.hasPrefix(root + "/") }
+        let icloud = URL(fileURLWithPath: iCloudRoot).standardizedFileURL.path
+        if holds(icloud) { return icloud }
+        let storage = URL(fileURLWithPath: cloudStorageRoot).standardizedFileURL.path
+        if std.hasPrefix(storage + "/"),
+           let folder = std.dropFirst(storage.count + 1).split(separator: "/").first {
+            return storage + "/" + folder
+        }
+        return CloudProvider.allCases.lazy
+            .flatMap(\.extraPaths)
+            .filter { $0.hasPrefix("~") }
+            .map { URL(fileURLWithPath: $0.replacingOccurrences(of: "~", with: home)).standardizedFileURL.path }
+            .first(where: holds)
+    }
     static func show(_ provider: CloudProvider) { hidden.remove(provider) }
 
     /// Чистое решение: куда класть облако при таких обстоятельствах.

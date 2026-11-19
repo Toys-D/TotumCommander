@@ -38,7 +38,7 @@ struct PanelVolumeBar: View {
     var onOpenNetworkVolume: ((String) -> Void)?
     /// Местный диск: контроллер знает про вкладки и из вкладки хранилища уводит на соседнюю
     /// местную, не отключая хранилище. Без него — прямой переход панели.
-    var onOpenLocalVolume: ((String) -> Void)?
+    var onOpenLocalVolume: ((String, MountedPlace?) -> Void)?
     /// Чип сессии другой панели: открыть то же подключение здесь / закрыть его там.
     var onOpenForeignRemote: ((RemoteConnection) -> Void)?
     var onDisconnectForeignRemote: ((RemoteSession) -> Void)?
@@ -286,7 +286,7 @@ struct PanelVolumeBar: View {
                 if vol.isNetwork, let onOpenNetworkVolume {
                     onOpenNetworkVolume(vol.path)
                 } else if let onOpenLocalVolume {
-                    onOpenLocalVolume(vol.path)
+                    onOpenLocalVolume(vol.path, vol.place)
                 } else {
                     viewModel.navigateToLocal(vol.path)
                 }
@@ -328,6 +328,9 @@ struct PanelVolumeBar: View {
                     if let cloud = vol.cloud {
                         CloudPlaces.hide(cloud)
                         mountedVolumesRevision &+= 1
+                        // Убранное облако уносит свои вкладки — как извлечённый диск.
+                        NSApp.windows.compactMap { $0.windowController as? MainWindowController }
+                            .first?.leaveHiddenCloud(vol.path)
                     } else {
                         ejectVolume(path: vol.path, label: vol.label)
                     }
@@ -543,7 +546,7 @@ struct PanelVolumeBar: View {
         if icloudAvailable, !hiddenClouds.contains(.icloud) {
             buttons.append(VolumeButtonModel(
                 label: L("volume.icloud"), path: CloudStatusService.cloudDriveRoot,
-                icon: "icloud", isEjectable: true, cloud: .icloud
+                icon: "icloud", isEjectable: true, cloud: .icloud, place: .cloud
             ))
         }
         let cloudFolders = CloudStorageVolumes.volumes()
@@ -551,7 +554,7 @@ struct PanelVolumeBar: View {
             if let known = cloud.provider, hiddenClouds.contains(known) { continue }
             buttons.append(VolumeButtonModel(
                 label: cloud.label, path: cloud.path, icon: cloud.provider?.icon ?? "cloud",
-                isEjectable: cloud.provider != nil, cloud: cloud.provider
+                isEjectable: cloud.provider != nil, cloud: cloud.provider, place: .cloud
             ))
         }
         // Поставщики, которые кладут диск не в CloudStorage (Яндекс — папкой в домашней).
@@ -561,7 +564,8 @@ struct PanelVolumeBar: View {
             && !cloudFolders.contains(where: { $0.provider == provider }) {
             if let path = provider.connectedPath(cloudStorage: []), !path.hasPrefix("/Volumes/") {
                 buttons.append(VolumeButtonModel(label: provider.title, path: path,
-                                                 icon: provider.icon, isEjectable: true, cloud: provider))
+                                                 icon: provider.icon, isEjectable: true, cloud: provider,
+                                                 place: .cloud))
             }
         }
 
@@ -617,7 +621,8 @@ struct PanelVolumeBar: View {
                 let icon = volume.isNetwork ? "externaldrive.connected.to.line.below" : "externaldrive"
                 buttons.append(VolumeButtonModel(
                     label: displayLabel, path: volume.url.path, icon: icon,
-                    isEjectable: true, isReadOnlyNTFS: isNTFS,
+                    isEjectable: true, place: volume.isNetwork ? .networkShare : .externalDisk,
+                    isReadOnlyNTFS: isNTFS,
                     isNetwork: volume.isNetwork, networkHost: networkHost
                 ))
             }
@@ -634,7 +639,7 @@ struct PanelVolumeBar: View {
                 label: computer ?? L("network.localNetwork"),
                 path: computer.map { NetworkBrowserService.networkRoot + "/" + $0 }
                     ?? NetworkBrowserService.networkRoot,
-                icon: "network", isEjectable: false, isNetwork: true))
+                icon: "network", isEjectable: false, place: .networkBrowser, isNetwork: true))
         }
 
         // The Trash used to sit here, last, the way it does in the Dock — it lives in the
@@ -774,6 +779,9 @@ struct VolumeButtonModel {
     let isEjectable: Bool
     /// Облако: «извлечение» его не отключает, а убирает в меню сети.
     var cloud: CloudProvider? = nil
+    /// Подключаемое место, если это оно: у него в настройках вкладок своя строка. У системного
+    /// диска и домашней папки — nil.
+    var place: MountedPlace? = nil
     var isReadOnlyNTFS: Bool = false
     var isNetwork: Bool = false
     var networkHost: String = ""

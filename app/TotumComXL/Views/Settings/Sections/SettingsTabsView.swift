@@ -17,8 +17,38 @@ struct SettingsTabsView: View {
     @AppStorage(PanelAppearanceSettings.tabActiveOpacityKey) private var tabActiveOpacity: Double =
         PanelAppearanceSettings.defaultTabActiveOpacity
 
+    // Где открывается подключаемое место — по строке на каждый вид (PlaceTabs).
+    @AppStorage(MountedPlace.networkShare.defaultsKey)
+    private var networkShareTab: String = MountedPlace.networkShare.fallback.rawValue
+    @AppStorage(MountedPlace.networkBrowser.defaultsKey)
+    private var networkBrowserTab: String = MountedPlace.networkBrowser.fallback.rawValue
+    @AppStorage(MountedPlace.externalDisk.defaultsKey)
+    private var externalDiskTab: String = MountedPlace.externalDisk.fallback.rawValue
+    @AppStorage(MountedPlace.diskImage.defaultsKey)
+    private var diskImageTab: String = MountedPlace.diskImage.fallback.rawValue
+    @AppStorage(MountedPlace.cloud.defaultsKey)
+    private var cloudTab: String = MountedPlace.cloud.fallback.rawValue
+    @AppStorage(PlaceTabs.fromPinnedKey) private var fromPinnedNew: Bool = false
+
     var body: some View {
         Form {
+            Section(L("settings.section.placeTabs")) {
+                placeRow(L("settings.placeTab.networkShare"), $networkShareTab)
+                    .settingAnchor("settings.placeTab.networkShare")
+                placeRow(L("settings.placeTab.lan"), $networkBrowserTab)
+                    .settingAnchor("settings.placeTab.lan")
+                placeRow(L("settings.placeTab.externalDisk"), $externalDiskTab)
+                    .settingAnchor("settings.placeTab.externalDisk")
+                placeRow(L("settings.placeTab.diskImage"), $diskImageTab)
+                    .settingAnchor("settings.placeTab.diskImage")
+                placeRow(L("settings.placeTab.cloud"), $cloudTab)
+                    .settingAnchor("settings.placeTab.cloud")
+                Toggle(L("settings.placeTab.fromPinned"), isOn: $fromPinnedNew)
+                    .settingAnchor("settings.placeTab.fromPinned")
+                Text(L("settings.placeTab.hint"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
             Section(L("design.section.tabs")) {
                 Text(L("design.tabs.accentHint"))
                     .font(.caption)
@@ -76,6 +106,18 @@ struct SettingsTabsView: View {
                 }
             }
         )
+    }
+
+    /// Строка «вид места — где открывать»: тот же выбор из двух у каждого вида. Ширина списка
+    /// одна на все строки — иначе они стоят лесенкой: у вариантов разная длина.
+    private func placeRow(_ title: String, _ selection: Binding<String>) -> some View {
+        LabeledContent(title) {
+            FCXLDialogMenuPicker(
+                items: PlaceTabMode.allCases.map(\.rawValue),
+                selection: selection,
+                title: { L(PlaceTabMode(rawValue: $0)?.titleKey ?? $0) },
+                chipWidth: 132)
+        }
     }
 
     private func slider(_ title: String, value: Binding<Double>, in range: ClosedRange<Double>,

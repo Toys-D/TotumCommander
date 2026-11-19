@@ -166,6 +166,12 @@ enum SettingsSearchIndex {
             ("settings.font.cursorZoomSection", nil),
         ],
         .tabs: [
+            ("settings.placeTab.networkShare", "settings.section.placeTabs"),
+            ("settings.placeTab.lan", "settings.section.placeTabs"),
+            ("settings.placeTab.externalDisk", "settings.section.placeTabs"),
+            ("settings.placeTab.diskImage", "settings.section.placeTabs"),
+            ("settings.placeTab.cloud", "settings.section.placeTabs"),
+            ("settings.placeTab.fromPinned", "settings.section.placeTabs"),
             ("design.tabFontSize", "design.section.tabs"),
             ("design.tabCornerRadius", "design.section.tabs"),
             ("design.tabChipHeight", "design.section.tabs"),

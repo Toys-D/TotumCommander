@@ -678,6 +678,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, PanelAc
         }
     }
 
+    /// Облако убрали с полосы дисков — его вкладки в обеих панелях закрываются или возвращаются,
+    /// как у извлечённого диска.
+    func leaveHiddenCloud(_ cloudRoot: String) {
+        splitVC.leftPanelVC.leaveHiddenCloud(cloudRoot)
+        splitVC.rightPanelVC.leaveHiddenCloud(cloudRoot)
+    }
+
     /// Обе панели уходят с пропавшего тома туда, откуда на него пришли (см. PanelViewController).
     /// Одна дорога и для извлечения кнопкой, и для извлечения из Finder или diskutil.
     private func leaveEjectedVolume(_ volumePath: String) {

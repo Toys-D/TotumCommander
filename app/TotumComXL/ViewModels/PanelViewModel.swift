@@ -473,6 +473,10 @@ final class PanelViewModel: ObservableObject {
     /// вкладке, чтобы папка, из которой пришли, осталась на месте. Без привязки — на месте.
     var onNetworkShareMounted: ((String) -> Void)?
 
+    /// Образ диска или хранилище открыты по Enter — где показать том, решает панель по настройке
+    /// вкладок. true — показала сама, в своей вкладке; false или без привязки — входим на месте.
+    var openMountedImage: ((String) -> Bool)?
+
     /// Архив не открылся — сказать вслух. Окно, а не только errorMessage: тот рисуется
     /// лишь в пустом списке, а список при неудачном входе полон, и человек видел молчание.
     /// Подменяется в тестах: модальному окну там взяться неоткуда.
@@ -2266,6 +2270,7 @@ final class PanelViewModel: ObservableObject {
         guard launchingFilePath == nil else { return }
         let path = item.path
         if let mounted = VaultService.mountPoint(ofVault: path) {
+            if openMountedImage?(mounted) == true { return }
             pushHistory(from: currentPath, to: mounted)
             loadDirectory(at: mounted)
             return
@@ -2307,6 +2312,7 @@ final class PanelViewModel: ObservableObject {
                        !VaultService.touchIDDeclined(for: path) {
                         _ = VaultService.rememberPassword(password, for: path)
                     }
+                    if openMountedImage?(mounted) == true { return }
                     pushHistory(from: currentPath, to: mounted)
                     loadDirectory(at: mounted)
                 }
@@ -2357,6 +2363,7 @@ final class PanelViewModel: ObservableObject {
                 Self.logger.info("dmg.mounted at: \(mountPoint, privacy: .public)")
                 self.launchingFilePath = nil
                 guard enter else { return }
+                if self.openMountedImage?(mountPoint) == true { return }
                 self.pushHistory(from: self.currentPath, to: mountPoint)
                 self.loadFileSystemDirectory(at: mountPoint, resetCursor: true)
             } catch {
@@ -2792,13 +2799,13 @@ final class PanelViewModel: ObservableObject {
         // порядке. Одни имена вперёд нужны медленному тому, где сведения идут долго; на быстром
         // они приходят за те же миллисекунды, а список из одних имён стоит по алфавиту — при
         // сортировке по дате перечень на глазах сменялся другим («старый, потом обычный»).
-        let slowVolume = Self.isSlowVolume(destination)
-        let showsReadyListing = !isSameDirectoryReload && !slowVolume
-        // На медленном томе в подробном виде второй этап списка не перечитывает — он только
-        // дочитывает сведения о строках, что уже на экране. Перечитка той же папки без первого
-        // этапа оставляла прежний перечень: скопированное в сетевую папку не появлялось, а
-        // удалённое не исчезало, пока человек не переключал вкладку.
-        let secondPhaseOnlyRefines = slowVolume && viewMode == .detailed
+        let volume = Self.volume(of: destination)
+        let slowVolume = volume.map { !$0.isFast } ?? false
+        // Сетевая папка тоже встаёт сразу готовой: сервер отдаёт сведения вместе с перечнем,
+        // одни имена приходят не быстрее. А пометку «скрытый» (её ставит Windows: desktop.ini,
+        // папка Default) чтение одних имён не видит — скрытое вставало в список, и одна и та же
+        // папка показывала то один перечень, то другой.
+        let showsReadyListing = !isSameDirectoryReload && (!slowVolume || volume?.busType == .network)
         directoryDetailsTask = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             if showsReadyListing,
@@ -2821,7 +2828,7 @@ final class PanelViewModel: ObservableObject {
             }
             // Быстрое чтение не далось или том медленный — имена, затем сведения.
             do {
-                if !isSameDirectoryReload || secondPhaseOnlyRefines {
+                if !isSameDirectoryReload {
                     // Phase 1: show names instantly via readdir (zero stat calls).
                     // On APFS/SSD this takes <1ms, on NTFS/USB ~10ms — always instant.
                     // getattrlistbulk is NOT used here because on NTFS it's 3.5x SLOWER
@@ -2835,12 +2842,6 @@ final class PanelViewModel: ObservableObject {
 
                     await MainActor.run {
                         let isNavigation = destination != self.currentPath
-                        // Та же папка и тот же перечень — список не перекладывается: ни курсор,
-                        // ни прокрутка не трогаются, сведения дочитает второй этап.
-                        if isSameDirectoryReload, Self.sameNames(namesOnly, shown: self.allItems) {
-                            self.adoptListingStamp(for: requestID)
-                            return
-                        }
                         self.applyLoadedFileSystemItems(
                             namesOnly,
                             destination: destination,
@@ -2858,8 +2859,12 @@ final class PanelViewModel: ObservableObject {
                 }
                 if isSlow {
                     // Slow volume: progressive metadata for visible items in detailed mode,
-                    // full metadata for other modes (needed for sizes/dates)
-                    if isDetailed {
+                    // full metadata for other modes (needed for sizes/dates).
+                    // Дочитка по строкам идёт только следом за именами: она списка не
+                    // перечитывает. Перечитка той же папки читает её целиком — иначе
+                    // скопированное в сетевую папку не появлялось, а удалённое не исчезало,
+                    // пока человек не переключал вкладку.
+                    if isDetailed && !isSameDirectoryReload {
                         await MainActor.run {
                             self.startSlowVolumeVisibleMetadataPhase(
                                 destination: destination,
@@ -2890,11 +2895,10 @@ final class PanelViewModel: ObservableObject {
         }
     }
 
-    /// Медленный ли том у папки (сеть, внешний диск). У места без тома (корзина, полка, сеть
-    /// в обзоре) ответа нет — оно ни быстрое, ни медленное.
-    private static func isSlowVolume(_ path: String) -> Bool {
-        let volume = isVirtualLocation(path) ? nil : VolumeInterfaceDetector.detect(forPath: path)
-        return volume.map { !$0.isFast } ?? false
+    /// Том папки. У места без тома (корзина, полка, сеть в обзоре) его нет — оно ни быстрое,
+    /// ни медленное.
+    private static func volume(of path: String) -> VolumeInterfaceInfo? {
+        isVirtualLocation(path) ? nil : VolumeInterfaceDetector.detect(forPath: path)
     }
 
     private func applyLoadedFileSystemItems(_ loaded: [FileItem],
@@ -3615,17 +3619,6 @@ final class PanelViewModel: ObservableObject {
         return current
     }
 
-    /// Тот же ли перечень имён пришёл с диска, что показан («..» не в счёт): ничего не появилось
-    /// и не пропало, папка не стала файлом. Сведений у чтения одних имён нет — их не сравнить.
-    nonisolated static func sameNames(_ fresh: [FileItem], shown: [FileItem]) -> Bool {
-        let shownReal = shown.filter { $0.name != ".." }
-        guard fresh.count == shownReal.count else { return false }
-        var kinds: [String: Bool] = [:]
-        kinds.reserveCapacity(shownReal.count)
-        for item in shownReal { kinds[item.path] = item.isDirectory }
-        return fresh.allSatisfy { kinds[$0.path] == $0.isDirectory }
-    }
-
     /// Пришёл ли с диска тот же список, что показан: те же файлы с теми же размерами, датами и
     /// правами («..» не в счёт — его добавляет сама панель).
     nonisolated static func sameListing(_ fresh: [FileItem], shown: [FileItem]) -> Bool {
@@ -3753,9 +3746,9 @@ final class PanelViewModel: ObservableObject {
 
                 // Stat files on background thread
                 let metadataResults = await Task.detached(priority: .utility) {
-                    () -> [String: (size: UInt64, dateModified: Date, dateCreated: Date?, permissions: String, owner: String, symlinkTarget: String?, nlink: UInt)] in
+                    () -> [String: (size: UInt64, dateModified: Date, dateCreated: Date?, permissions: String, owner: String, symlinkTarget: String?, nlink: UInt, hidden: Bool)] in
                     let fm = FileManager.default
-                    var results: [String: (size: UInt64, dateModified: Date, dateCreated: Date?, permissions: String, owner: String, symlinkTarget: String?, nlink: UInt)] = [:]
+                    var results: [String: (size: UInt64, dateModified: Date, dateCreated: Date?, permissions: String, owner: String, symlinkTarget: String?, nlink: UInt, hidden: Bool)] = [:]
                     for path in pathsToStat {
                         if Task.isCancelled { return results }
                         guard let attrs = try? fm.attributesOfItem(atPath: path) else { continue }
@@ -3778,7 +3771,11 @@ final class PanelViewModel: ObservableObject {
                                 }
                             }
                         }
-                        results[path] = (size, dateMod, dateCreated, perms, owner, linkTarget, nlink)
+                        // Пометка «скрытый» (UF_HIDDEN): чтение одних имён её не видит, а
+                        // в свойствах файла её нет.
+                        var info = stat()
+                        let hidden = lstat(path, &info) == 0 && info.st_flags & UInt32(UF_HIDDEN) != 0
+                        results[path] = (size, dateMod, dateCreated, perms, owner, linkTarget, nlink, hidden)
                     }
                     return results
                 }.value
@@ -3790,15 +3787,26 @@ final class PanelViewModel: ObservableObject {
                 await MainActor.run {
                     guard self.currentPath == destination else { return }
                     var changed = false
-                    self.allItems = self.allItems.map { item in
+                    // Строка, оказавшаяся скрытой, из списка уходит — как на быстром диске, где
+                    // пометка известна сразу. «..» не в счёт: скрытым бывает сам родитель
+                    // (/Volumes), а это не строка папки.
+                    let showHidden = self.showHiddenFiles
+                    let cursorPath = self.cursorItem?.path
+                    var dropped: Set<String> = []
+                    self.allItems = self.allItems.compactMap { item in
                         guard let meta = metadataResults[item.path] else { return item }
+                        let hidden = item.isHidden || (meta.hidden && item.name != "..")
+                        if hidden, !showHidden {
+                            dropped.insert(item.path)
+                            return nil
+                        }
                         let fresh = FileItem(
                             path: item.path,
                             name: item.name,
                             fileExtension: item.fileExtension,
                             size: item.isDirectory ? item.size : meta.size,
                             isDirectory: item.isDirectory,
-                            isHidden: item.isHidden,
+                            isHidden: hidden,
                             isSymlink: item.isSymlink,
                             // Carried over like dateAdded below: this pass does not re-read it,
                             // and dropping it would un-mark every alias the listing found.
@@ -3820,6 +3828,16 @@ final class PanelViewModel: ObservableObject {
                         guard fresh != item else { return item }
                         changed = true
                         return fresh
+                    }
+                    if !dropped.isEmpty {
+                        changed = true
+                        self.selectedPaths.subtract(dropped)
+                        // Курсор — на своём файле, а не на том, что встал на его место.
+                        if let cursorPath, let index = self.items.firstIndex(where: { $0.path == cursorPath }) {
+                            self.setCursor(index: index)
+                        } else {
+                            self.setCursor(index: self.cursorIndex)
+                        }
                     }
                     if changed {
                         self.sortToken &+= 1
