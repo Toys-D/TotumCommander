@@ -20,6 +20,7 @@ Two panels side by side, and nearly everything is done with keys, as in Total Co
 | Look at a file, edit text | Space — quick view, F3 — viewer, F4 — editor |
 | Find a file in the open folder | Start typing its name — the list narrows to the matches |
 | Find a file anywhere | F9 or ⌘F |
+| Find a word in the open viewer | ⌘F or the "Find" button in the viewer |
 | Undo a mistake | ⌘Z undoes a copy, move, rename or delete |
 | Open another folder alongside | ⌘T — a new tab, ⌘W — close it |
 | Find any command | ⌘P — the command palette: type what you want to do |
@@ -256,11 +257,13 @@ The pack and unpack dialogs can be turned off in the "Confirmation dialogs" sett
 
 **Modes** (switch at the top, "How to show this file"): Auto, Quick Look, Image, Text, HEX, PDF, Document, Video, Info, Font, Drawing, Book, Model.
 
+**Searching the text** — the **Find** button on the mode bar, or ⌘F: a search bar opens under the viewer's header. Every match is highlighted, the current one stronger; the counter reads "3 of 17". **Next** and **Back** — ↩ and ⇧↩ in the field, ⌘G and ⇧⌘G; **Case** and **Whole word** narrow the search; Esc closes the bar (a second Esc closes the viewer). The search starts from what is on screen. It works in text and Markdown, PDF, DjVu, HTML pages, Word documents, Excel spreadsheets (across all sheets), books (FB2, EPUB — across all chapters) and in HEX mode (bytes — "FF D8 FF" — or text). A large text file is shown in portions — "Next" past the last match reads the following one and searches it. For a scan with no text layer (PDF, DjVu) the bar says there is no text: **Read the text** first. While a viewer with text is open, ⌘F searches in it; file search is F9.
+
 | What | Particulars |
 |---|---|
 | Images | Zoom and pan with the trackpad. The **Read the text** button highlights the lines found, "Copy all". The **photo info** panel: size, camera, lens, shutter, aperture, ISO, date, place (open in Maps, copy coordinates), a "Remove metadata…" button. The **Origin** section — for a picture made by a neural network: what made it (Stable Diffusion, ComfyUI, Midjourney, NovelAI, ChatGPT, Firefly…), the prompt, the negative prompt, the model and settings, C2PA content credentials. Such a picture shows itself without that section too: a "Made by a neural network" badge with a "Remove metadata…" button in the viewer's header, and a "Made by a neural network — remove metadata…" item in the context menu. What is shown is what the file says; an invisible watermark in the pixels themselves (Google's SynthID) cannot be seen this way. The **editing bar** under a picture (PNG, JPEG, HEIC, TIFF): turn, mirror, negative, **auto levels** (the magic wand), colour and sharpness sliders, horizon, crop to a proportion, size, **drawing** (the pencil: arrows, frames, captions, a blurred patch in six colours; "Remove last"), "Before" — hold it to compare, "Reset", "Save" over the file, as a copy beside it or in another format. Turning and mirroring many at once — in "Convert images…". |
 | PDF, DjVu | A page strip (show/hide), paging. |
-| Documents | Word, Excel, Pages, Numbers and the rest — through the system engine. |
+| Documents | Word and Excel spreadsheets (XLS, XLSX) — as a page of our own: the text can be selected and searched; a workbook shows all its sheets one under another, with a strip of their names on top (a click jumps to the sheet). Pages, Numbers, presentations and the rest — through the system engine. |
 | Text | Encoding choice, a big file is shown a million characters at a time — the **Show more** link at the bottom adds the next portion, binaries suggest HEX. **Text theme** on the viewer bar: "System" (follows the app's theme and repaints at once), "Light", "Dark", "High contrast"; the choice is remembered. Markdown is shown formatted: headings, lists, quotes, code blocks. |
 | HTML | Shown as a page, as in a browser: styles, pictures and scripts from the same folder work, and the page never goes online — it loads nothing and sends nothing. The **HTML code** button next to the modes shows the markup and back. Links open in the browser on a click, ⌘+ / ⌘− / ⌘0 zoom. |
 | Video and audio | Built-in player. |

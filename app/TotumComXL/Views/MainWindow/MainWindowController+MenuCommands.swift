@@ -33,7 +33,12 @@ extension MainWindowController {
     }
 
     /// F9 панель принимает сама; из меню — та же дверь, что у кнопки футера.
-    @objc func menuSearch(_ sender: Any?) { triggerSearch() }
+    /// Открыт просмотр с текстом — команда ищет в нём (ViewerFind); иначе — поиск файлов.
+    /// F9 панель принимает сама и всегда ищет файлы.
+    @objc func menuSearch(_ sender: Any?) {
+        if ViewerFindModel.openInViewer() { return }
+        triggerSearch()
+    }
     @objc func menuMkdir(_ sender: Any?) { handleMkdir() }
     @objc func menuCreateTextFile(_ sender: Any?) { panelDidRequestCreateTextFile(panel) }
     @objc func menuView(_ sender: Any?) { handleView() }

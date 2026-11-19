@@ -194,6 +194,8 @@ struct NumberedTextPreview: NSViewRepresentable {
     var scrollJump: ScrollJumpController? = nil
     /// Тема текста (TextTheme).
     var theme: TextTheme = .system
+    /// Поиск по тексту просмотра: вид кладёт сюда себя.
+    var findTargets: ViewerFindTargets? = nil
 
     func makeCoordinator() -> ScrollJumpLink { ScrollJumpLink() }
 
@@ -201,6 +203,8 @@ struct NumberedTextPreview: NSViewRepresentable {
         let scroll = NumberedTextView.makeScrollView()
         scroll.applyTextTheme(theme)
         (scroll.documentView as? NumberedTextView)?.show(text)
+        findTargets?.text = scroll.documentView as? NSTextView
+        findTargets?.feeder = nil
         context.coordinator.attach(scrollJump, to: scroll)
         return scroll
     }

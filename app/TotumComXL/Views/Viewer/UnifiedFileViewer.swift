@@ -89,6 +89,12 @@ struct UnifiedFileViewer: View {
     @State private var sniffed: SniffedMode?
     /// Кнопка «в конец» / «в начало» над текстом, Markdown и страницей HTML.
     @StateObject private var scrollJump = ScrollJumpController()
+    /// Поиск по тексту показанного (ViewerFind): полоса под шапкой, движок — по режиму.
+    @StateObject private var find = ViewerFindModel()
+    /// Поиск в режиме HEX: список строк сам читает отсюда, какие байты подсветить.
+    @StateObject private var hexFind = HexFindEngine()
+    /// Текстовые виды, которые сейчас на экране, — для поиска.
+    @State private var findTargets = ViewerFindTargets()
     @State private var encoding: String = "UTF-8"
     /// Текст файла до 256 КБ, уже раскодированный. nil — текста нет (не загружен или файл
     /// большой и показывается прямо с диска).
@@ -392,6 +398,9 @@ struct UnifiedFileViewer: View {
         // widths of 700 and 1400), so most of the panel stays empty. Our own HTML rendering fills
         // the width, reflows and allows text selection; Quick Look stays one click away.
         if isWordProcessingDocument(extension: ext) { return .document }
+        // Таблицы Excel — тоже своей страницей: в окошке Quick Look по ним не поискать
+        // (SpreadsheetPreview).
+        if SpreadsheetPreview.isSpreadsheet(extension: ext) { return .document }
         return naturalMode
     }
 
@@ -439,12 +448,24 @@ struct UnifiedFileViewer: View {
         VStack(spacing: 0) {
             headerSection
             Divider()
+            ViewerFindBarHost(model: find)
             contentSection
             imageEditBar
         }
         .background(Color(nsColor: .controlBackgroundColor))
         .background(HostWindowReader { hostWindow = $0 })
         .onAppear {
+            find.resolveEngine = { currentFindEngine() }
+            find.canSearch = { canFindInContent }
+            find.window = { hostWindow }
+            find.onClose = {
+                if hostWindow?.windowController is MainWindowController {
+                    returnFocusToPanel()
+                } else {
+                    // Плавающее окно просмотра отдаёт клавиатуру обратно главному окну.
+                    NSApp.windows.first { $0.windowController is MainWindowController }?.makeKey()
+                }
+            }
             refreshArchiveTemp()
             refreshRemoteTemp()
             startLoadingPreview()
@@ -465,6 +486,13 @@ struct UnifiedFileViewer: View {
             removeKeyMonitor()
             removeScrollMonitor()
             removeContextMonitor()
+            // Модель поиска живёт в состоянии этого же вида, а её замыкания держат вид: не
+            // разорвать связь здесь — закрытый просмотрщик остался бы в памяти со всем показанным.
+            find.onClose = nil
+            find.close()
+            find.resolveEngine = nil
+            find.canSearch = nil
+            find.window = nil
             psRerenderTask?.cancel()
             cancelLoadTask()
             // Скачивание брошенного просмотра никому не нужно — но копия, если она уже
@@ -506,9 +534,22 @@ struct UnifiedFileViewer: View {
             // then vanishes is worse than one that appears a moment late.
             pdfNeedsRecognition = false
             startLoadingPreview()
+            find.contentChanged()
         }
         .onChange(of: forcedMode) { _ in
             startLoadingPreview()
+            find.contentChanged()
+        }
+        // Другой показ того же файла (режим, страница вместо кода, главу дочитали до
+        // следующей) — найденное относилось к прежнему.
+        .onChange(of: effectiveMode) { _ in find.contentChanged() }
+        .onChange(of: showsHTMLSource) { _ in find.contentChanged() }
+        .onChange(of: bookState.chapterIndex) { chapter in
+            if findTargets.chapterOpenedByFind == chapter {
+                findTargets.chapterOpenedByFind = nil
+            } else {
+                find.contentChanged()
+            }
         }
         .onChange(of: bookState.chapterIndex) { chapter in
             // Дочитали до следующего рассказа — содержание едет следом. Раскрытой остаётся
@@ -596,10 +637,108 @@ struct UnifiedFileViewer: View {
             if showsPlainText {
                 textThemeButton
             }
+            if canFindInContent {
+                findButton
+            }
 
             Spacer()
             editButton
             printButton
+        }
+    }
+
+    /// Есть ли в показанном что искать по тексту: текст, Markdown, страница HTML, документ,
+    /// PDF, книга, DjVu, байты HEX. У картинки, видео, шрифта и модели текста нет.
+    private var canFindInContent: Bool {
+        guard let item = targetItem, !item.isDirectory else { return false }
+        switch effectiveMode {
+        case .text, .hex, .document, .pdf, .book, .djvu: return true
+        default: return false
+        }
+    }
+
+    /// «Найти» — поиск по тексту показанного. Горит, пока полоса поиска открыта.
+    private var findButton: some View {
+        modeChip(L("editor.find.label"), symbol: "magnifyingglass",
+                 selected: find.isVisible, disabled: false,
+                 help: String(format: L("viewer.find.tip"), ViewerFindModel.searchShortcut.text)) {
+            if find.isVisible { find.close() } else { find.open() }
+        }
+    }
+
+    /// Движок поиска для того, что сейчас на экране; nil — искать не в чем или содержимое
+    /// ещё грузится (модель спросит снова).
+    private func currentFindEngine() -> ViewerFindEngine? {
+        guard canFindInContent, !isLoading, loadError == nil else { return nil }
+        switch effectiveMode {
+        case .text:
+            if showsHTMLPage {
+                // Вид страницы один на все файлы: пока в нём прежняя страница, искать рано.
+                guard let web = documentZoom.webView, web.url?.path == targetItem?.path else { return nil }
+                return webFindEngine(web)
+            }
+            if isMarkdownFile, markdownContent != nil {
+                return findTargets.markdown.map { TextViewFindEngine(textView: $0) }
+            }
+            return findTargets.text.map { TextViewFindEngine(textView: $0, feeder: findTargets.feeder) }
+        case .document:
+            return webFindEngine(documentZoom.webView)
+        case .pdf:
+            guard let view = findTargets.pdf ?? pdfView, view.document != nil else { return nil }
+            return PDFFindEngine(pdfView: view)
+        case .book:
+            // Глава на экране — та, что читают: пока грузится другая, искать рано.
+            guard let book, let reader = BookReaderBridge.shared.current,
+                  reader.loadedChapter == bookState.chapterIndex else { return nil }
+            return webFindEngine(reader.web, chapters: bookChapters(of: book))
+        case .djvu:
+            guard let djvuReader, let pages = findTargets.djvu ?? djvuPages else { return nil }
+            return DjVuFindEngine(reader: djvuReader, pages: pages)
+        case .hex:
+            return hexLines.isEmpty ? nil : hexFind
+        default:
+            return nil
+        }
+    }
+
+    /// Страница ещё грузится — движка пока нет: искать в пустой странице значит ответить
+    /// «не найдено» раньше времени.
+    private func webFindEngine(_ web: WKWebView?, chapters: WebFindEngine.Chapters? = nil) -> ViewerFindEngine? {
+        // Без адреса вид ещё ничего не открывал: «не грузится» у него значит «не начинал».
+        guard let web, web.url != nil, !web.isLoading else { return nil }
+        return WebFindEngine(webView: web, chapters: chapters)
+    }
+
+    /// Главы книги для поиска: книга на экране по одной главе, а искать надо по всей.
+    private func bookChapters(of book: BookDocument) -> WebFindEngine.Chapters {
+        let files = book.chapters.map(\.file)
+        return WebFindEngine.Chapters(
+            count: { files.count },
+            current: { bookState.chapterIndex },
+            text: { index in
+                guard files.indices.contains(index),
+                      let data = try? Data(contentsOf: files[index]) else { return "" }
+                return WebFindEngine.plainText(ofHTML: TextFileCodec.decodeForDisplay(data).text)
+            },
+            isSamePage: { first, second in
+                files.indices.contains(first) && files.indices.contains(second) && files[first] == files[second]
+            },
+            open: { index, done in
+                findTargets.chapterOpenedByFind = index
+                bookState.chapterIndex = index
+                waitForChapter(index, attemptsLeft: 60, done: done)
+            })
+    }
+
+    /// Глава открыта и её страница догрузилась — можно искать в ней.
+    private func waitForChapter(_ index: Int, attemptsLeft: Int, done: @escaping () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            let reader = BookReaderBridge.shared.current
+            if reader?.loadedChapter == index, reader?.web?.isLoading == false {
+                done()
+            } else if attemptsLeft > 0 {
+                waitForChapter(index, attemptsLeft: attemptsLeft - 1, done: done)
+            }
         }
     }
 
@@ -805,7 +944,12 @@ struct UnifiedFileViewer: View {
                     PDFKitPreviewView(document: document,
                                       showsThumbnails: showsPDFThumbnails,
                                       onPageChange: { pdfPage = $0 },
-                                      onReady: { pdfView = $0 })
+                                      onReady: {
+                                          pdfView = $0
+                                          // Поиску — мимо состояния SwiftUI: вид готов прямо
+                                          // сейчас, а состояние из сборки вида может не дойти.
+                                          findTargets.pdf = $0
+                                      })
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if targetItem != nil || isLoading {
                     // Документ читается с диска и заодно взвешивается — доли секунды.
@@ -906,6 +1050,8 @@ struct UnifiedFileViewer: View {
                                     onReady: { pages in
                                         djvuPages = pages
                                         DjVuPageBridge.shared.current = pages
+                                        // Поиску — мимо состояния SwiftUI, как и вид PDF.
+                                        findTargets.djvu = pages
                                     },
                                     onPageChange: { djvuPage = $0 })
                     }
@@ -952,7 +1098,7 @@ struct UnifiedFileViewer: View {
             } else if isMarkdownFile, let markdownContent {
                 // Not a SwiftUI Text: a document-sized one took seconds to lay out — see
                 // MarkdownStyler.
-                MarkdownPreview(content: markdownContent, scrollJump: scrollJump)
+                MarkdownPreview(content: markdownContent, scrollJump: scrollJump, findTargets: findTargets)
             } else {
                 plainTextContent
             }
@@ -962,14 +1108,18 @@ struct UnifiedFileViewer: View {
     private var plainTextContent: some View {
         Group {
             if useFastPreview {
-                FastTextPreview(filePath: fastPreviewFilePath, scrollJump: scrollJump, theme: textTheme) { path, name in
+                FastTextPreview(filePath: fastPreviewFilePath, scrollJump: scrollJump, theme: textTheme,
+                                findTargets: findTargets) { path, name in
                     // Ответ опоздавшего файла — уже не про тот, что на экране.
                     if useFastPreview, fastPreviewFilePath == path { encoding = name }
+                    // Текст большого файла приезжает позже вида: искать в нём можно только теперь.
+                    find.contentChanged()
                 }
             } else if let plainText {
                 // Не список строк SwiftUI: тот на длинных строках проседал и отставал от
                 // трекпада — см. NumberedTextView.
-                NumberedTextPreview(text: plainText, scrollJump: scrollJump, theme: textTheme)
+                NumberedTextPreview(text: plainText, scrollJump: scrollJump, theme: textTheme,
+                                    findTargets: findTargets)
             } else if !isLoading {
                 Text(L("viewer.emptyFile"))
                     .foregroundStyle(.secondary)
@@ -2235,6 +2385,7 @@ struct UnifiedFileViewer: View {
     private var hexContent: some View {
         // По обеим осям: строка HEX шире узкой панели, и колонки не должны ломаться по
         // символу — тогда строка вырастает в столбец и текст справа пропадает.
+        ScrollViewReader { proxy in
         ScrollView([.vertical, .horizontal]) {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if hexLines.isEmpty && !isLoading {
@@ -2249,11 +2400,13 @@ struct UnifiedFileViewer: View {
                                 .foregroundStyle(.secondary)
                                 .frame(width: ceil(8 * Self.digitWidth(Self.hexOffsetFontSize)) + 2,
                                        alignment: .trailing)
-                            Text(line.bytesText)
+                            // Найденное поиском — на жёлтой подложке, текущее — на оранжевой.
+                            let marks = hexFind.marks(forLine: line.index)
+                            Text(Self.hexMarked(line.bytesText, marks: marks, cellWidth: 3, markWidth: 2))
                                 .font(.system(size: Self.hexFontSize, design: .monospaced))
                                 .lineLimit(1)
                                 .frame(width: hexBytesColumnWidth, alignment: .leading)
-                            Text(line.asciiText)
+                            Text(Self.hexMarked(line.asciiText, marks: marks, cellWidth: 1, markWidth: 1))
                                 .font(.system(size: Self.hexFontSize, design: .monospaced))
                                 .lineLimit(1)
                                 .fixedSize()
@@ -2266,6 +2419,30 @@ struct UnifiedFileViewer: View {
             }
         }
         .textSelection(.enabled)
+        .onChange(of: hexFind.scrollTarget?.token) { _ in
+            guard let line = hexFind.scrollTarget?.line else { return }
+            proxy.scrollTo(line, anchor: .center)
+        }
+        }
+    }
+
+    /// Строка HEX с подсветкой найденных байтов. `cellWidth` — знаков на байт вместе с
+    /// пробелом после него (3 в колонке байтов, 1 в колонке знаков), `markWidth` — сколько
+    /// из них красить.
+    private static func hexMarked(_ text: String, marks: (found: Set<Int>, current: Set<Int>)?,
+                                  cellWidth: Int, markWidth: Int) -> AttributedString {
+        var result = AttributedString(text)
+        guard let marks else { return result }
+        let length = result.characters.count
+        for cell in marks.found.sorted() {
+            let from = cell * cellWidth
+            guard from + markWidth <= length else { continue }
+            let start = result.index(result.startIndex, offsetByCharacters: from)
+            let end = result.index(start, offsetByCharacters: markWidth)
+            result[start..<end].backgroundColor = marks.current.contains(cell)
+                ? Color.orange.opacity(0.85) : Color.yellow.opacity(0.5)
+        }
+        return result
     }
 
     // MARK: - Folder Preview
@@ -2496,6 +2673,7 @@ struct UnifiedFileViewer: View {
                     let data = try await readFileDataAsync(path: filePath, maxBytes: 2 * 1024 * 1024)
                     if Task.isCancelled { return }
                     hexLines = buildHexLines(data: data, bytesPerLine: bytesPerHexLine)
+                    hexFind.data = data
                 } catch {
                     if Task.isCancelled { return }
                     loadError = error.localizedDescription
@@ -2722,7 +2900,9 @@ struct UnifiedFileViewer: View {
         // as well — so "Text" and "Hex" stay available on it.
         case .drawing: return cat != .drawing
         // Only offered for what textutil can actually read (Word-processing files).
-        case .document: return !isWordProcessingDocument(extension: item.fileExtension)
+        case .document:
+            return !isWordProcessingDocument(extension: item.fileExtension)
+                && !SpreadsheetPreview.isSpreadsheet(extension: item.fileExtension)
         case .djvu: return cat != .djvu
         case .model: return cat != .model
         case .book: return cat != .book
@@ -2764,9 +2944,11 @@ struct UnifiedFileViewer: View {
             // the viewer and be swallowed here, so the window the person was actually looking
             // at never got its key and would not go away.
             guard isEventForThisViewer(event) else { return event }
+            if handleFindKey(event) { return nil }
             // Books turn on the arrows and on Page Up/Down. Handled BEFORE the general keys
-            // so that a book in the panel does not move the panel's cursor instead.
-            if effectiveMode == .book, book != nil,
+            // so that a book in the panel does not move the panel's cursor instead. Стрелки
+            // в поле поиска водят курсор по запросу, а не листают книгу.
+            if effectiveMode == .book, book != nil, !isEditingTextField,
                !event.modifierFlags.contains(.command) {
                 switch event.keyCode {
                 case 124, 121:            // → and Page Down
@@ -2782,7 +2964,7 @@ struct UnifiedFileViewer: View {
             // ⌘C над распознанным текстом — выделенное в буфер. Иначе клавиша уходит в
             // меню «Правка → Копировать», а там её никто не принимает: панель не
             // текстовое поле, и нажатие пропадало без следа. ⌘A — выделить все слова.
-            if event.modifierFlags.contains(.command), !pictureText.isEmpty {
+            if event.modifierFlags.contains(.command), !pictureText.isEmpty, !isEditingTextField {
                 let letter = event.charactersIgnoringModifiers?.lowercased()
                 if letter == "c" || letter == "с", !selectedKeys.isEmpty {
                     if copySelectedPictureText() { return nil }
@@ -2815,6 +2997,23 @@ struct UnifiedFileViewer: View {
                 return event
             }
         }
+    }
+
+    /// Клавиши открытой полосы поиска: ⌘G и ⇧⌘G ходят по найденному, Esc закрывает её, а не
+    /// просмотр. true — клавиша наша. Саму полосу открывает команда «Поиск» строки меню
+    /// (`MainWindowController.menuSearch`) — по кодам клавиш, раскладка не мешает.
+    private func handleFindKey(_ event: NSEvent) -> Bool {
+        guard find.isVisible else { return false }
+        if event.keyCode == 53 {                                   // Esc
+            find.close()
+            return true
+        }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if event.keyCode == 5, flags.contains(.command) {          // G
+            if flags.contains(.shift) { find.previous() } else { find.next() }
+            return true
+        }
+        return false
     }
 
     /// Is this event ours to answer? Only if it belongs to the window the viewer is in. Until
@@ -3318,6 +3517,8 @@ private struct FastTextPreview: NSViewRepresentable {
     var scrollJump: ScrollJumpController? = nil
     /// Тема текста (TextTheme).
     var theme: TextTheme = .system
+    /// Поиск по тексту просмотра: вид кладёт сюда себя и свою подачу порций.
+    var findTargets: ViewerFindTargets? = nil
     /// Файл прочитан: его путь и название кодировки — для строки над текстом. На главном потоке.
     var onEncoding: ((String, String) -> Void)? = nil
 
@@ -3356,6 +3557,8 @@ private struct FastTextPreview: NSViewRepresentable {
         scrollView.applyTextTheme(theme)
         tv.delegate = context.coordinator.feeder
         context.coordinator.feeder.textView = tv
+        findTargets?.text = tv
+        findTargets?.feeder = context.coordinator.feeder
         loadFile(into: tv, context: context)
         context.coordinator.jump.attach(scrollJump, to: scrollView)
         return scrollView
@@ -3498,6 +3701,9 @@ private struct WordDocumentPreview: View {
         Group {
             if let converted {
                 WebArchiveView(url: converted, zoom: zoom)
+            } else if failed, SpreadsheetPreview.isSpreadsheet(extension: url.pathExtension) {
+                // Система не отдала таблицу страницей — показываем, как раньше, через Quick Look.
+                QuickLookPreviewView(url: url)
             } else if failed {
                 VStack(spacing: 6) {
                     Image(systemName: "doc.questionmark").font(.system(size: 28))
@@ -3572,10 +3778,14 @@ private struct WebArchiveView: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         var loadedURL: URL?
 
-        /// A converted document is local content only — never let it navigate anywhere.
+        /// A converted document is local content only — never let it navigate anywhere. Кроме
+        /// перехода внутри самой страницы: полоса листов таблицы прокручивает к листу.
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            decisionHandler(navigationAction.navigationType == .other ? .allow : .cancel)
+            let withinPage = navigationAction.request.url.map { target in
+                target.fragment != nil && target.path == webView.url?.path
+            } ?? false
+            decisionHandler(navigationAction.navigationType == .other || withinPage ? .allow : .cancel)
         }
     }
 }
@@ -3609,7 +3819,11 @@ enum DocumentHTMLConverter {
     }()
 
     /// Runs off the main thread — `textutil` is a subprocess (~60 ms for a typical document).
+    /// Таблицу Excel `textutil` не читает — её страницу отдаёт система (SpreadsheetPreview).
     static func convert(_ source: URL) -> URL? {
+        if SpreadsheetPreview.isSpreadsheet(extension: source.pathExtension) {
+            return SpreadsheetPreview.convert(source, cache: cacheDirectory)
+        }
         let attrs = try? FileManager.default.attributesOfItem(atPath: source.path)
         let stamp = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
         let key = "\(abs(source.path.hashValue))-\(Int(stamp))"

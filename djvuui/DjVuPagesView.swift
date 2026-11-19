@@ -34,6 +34,11 @@ public final class DjVuPagesView: NSView {
     /// thread AND serialises access to the reader.
     private let renderQueue = DispatchQueue(label: "com.fcxl.djvu.render", qos: .userInitiated)
 
+    /// What a search found: word boxes per page, in page points from the top left (the space
+    /// `FCXLDjVuReader.words(at:)` answers in), and the one match being looked at.
+    private var foundBoxes: [Int: [CGRect]] = [:]
+    private var currentBoxes: (page: Int, boxes: [CGRect])?
+
     public override var isFlipped: Bool { true }
 
     /// Width available for a page. Read from the clip view on demand — reading it once at
@@ -117,6 +122,43 @@ public final class DjVuPagesView: NSView {
         enclosingScrollView?.reflectScrolledClipView(enclosingScrollView!.contentView)
     }
 
+    /// Paint what a search found over the pages; `current` is the match being looked at, drawn
+    /// stronger. Empty to remove the marks.
+    public func showFound(_ boxes: [Int: [CGRect]], current: (page: Int, boxes: [CGRect])?) {
+        foundBoxes = boxes
+        currentBoxes = current
+        needsDisplay = true
+    }
+
+    /// Bring a box on a page into view, a little below the top edge.
+    public func scrollTo(page index: Int, box: CGRect) {
+        guard pageOffsets.indices.contains(index), let scroll = enclosingScrollView else { return }
+        let onPage = viewRect(of: box, onPage: index)
+        let viewport = scroll.contentView.bounds
+        guard !viewport.insetBy(dx: 0, dy: 24).contains(onPage) else { return }
+        let top = max(0, min(onPage.minY - viewport.height / 3, max(0, bounds.height - viewport.height)))
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: top))
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
+    /// A box in page points → where it lies in this view.
+    private func viewRect(of box: CGRect, onPage index: Int) -> NSRect {
+        let frame = rect(for: index)
+        return NSRect(x: frame.minX + box.minX * scale, y: frame.minY + box.minY * scale,
+                      width: box.width * scale, height: box.height * scale)
+    }
+
+    private func drawFound(onPage index: Int) {
+        if let boxes = foundBoxes[index] {
+            NSColor.systemYellow.withAlphaComponent(0.55).setFill()
+            for box in boxes { viewRect(of: box, onPage: index).fill(using: .multiply) }
+        }
+        if let current = currentBoxes, current.page == index {
+            NSColor.systemOrange.withAlphaComponent(0.9).setFill()
+            for box in current.boxes { viewRect(of: box, onPage: index).fill(using: .multiply) }
+        }
+    }
+
     private func rect(for index: Int) -> NSRect {
         let size = pageSizes[index]
         let w = size.width * scale
@@ -156,6 +198,7 @@ public final class DjVuPagesView: NSView {
                 frame.fill()
                 requestRender(index)
             }
+            drawFound(onPage: index)
             NSColor.separatorColor.setStroke()
             NSBezierPath(rect: frame).stroke()
         }

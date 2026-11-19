@@ -20,6 +20,12 @@ NS_ASSUME_NONNULL_BEGIN
 /// Returns dictionary with keys: "data" (NSData, RGBA), "width", "height", "stride".
 - (nullable NSDictionary<NSString*, id> *)renderPageAtIndex:(NSInteger)index scale:(CGFloat)scale;
 
+/// Words of the page's hidden text layer, in reading order. Each is a dictionary: "text"
+/// (NSString) and "x", "y", "w", "h" (NSNumber) — the word's box in page points (72 dpi) with
+/// the origin at the TOP left, the same space the rendered page is laid out in. An empty
+/// array means the page has no text layer (a plain scan) — there is nothing to search.
+- (NSArray<NSDictionary<NSString*, id> *> *)wordsAtIndex:(NSInteger)index;
+
 /// Close the document and free resources.
 - (void)close;
 

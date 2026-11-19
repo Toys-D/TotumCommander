@@ -1,5 +1,6 @@
 #import "FCXLDjVuBridge.h"
 #include <libdjvu/ddjvuapi.h>
+#include <libdjvu/miniexp.h>
 #include <stdlib.h>
 #include <math.h>
 
@@ -187,6 +188,58 @@ static const double kFCXLDjVuTimeout = 20.0;
     free(buffer);
     ddjvu_page_release(page);
     return result;
+    }
+}
+
+/// The text layer is an s-expression of nested zones — (page x0 y0 x1 y1 (line … (word x0 y0
+/// x1 y1 "text"))) — with boxes in page pixels from the BOTTOM left. Every zone that carries a
+/// string is collected, whatever its level: some files stop at lines and have no word zones.
+static void fcxl_djvu_collect_words(miniexp_t zone, NSMutableArray *words,
+                                    double scale, double pageHeight, int depth) {
+    if (!miniexp_consp(zone) || depth > 16) return;
+    miniexp_t rest = miniexp_cdr(zone);                 // past the zone's type symbol
+    int box[4];
+    for (int i = 0; i < 4; i++) {
+        if (!miniexp_consp(rest) || !miniexp_numberp(miniexp_car(rest))) return;
+        box[i] = miniexp_to_int(miniexp_car(rest));
+        rest = miniexp_cdr(rest);
+    }
+    for (miniexp_t item = rest; miniexp_consp(item); item = miniexp_cdr(item)) {
+        miniexp_t value = miniexp_car(item);
+        if (miniexp_stringp(value)) {
+            const char *utf8 = miniexp_to_str(value);
+            NSString *text = utf8 ? [NSString stringWithUTF8String:utf8] : nil;
+            if (text.length == 0) continue;
+            [words addObject:@{
+                @"text": text,
+                @"x": @(box[0] * scale),
+                @"y": @(pageHeight - box[3] * scale),
+                @"w": @((box[2] - box[0]) * scale),
+                @"h": @((box[3] - box[1]) * scale)
+            }];
+        } else if (miniexp_consp(value)) {
+            fcxl_djvu_collect_words(value, words, scale, pageHeight, depth + 1);
+        }
+    }
+}
+
+- (NSArray<NSDictionary<NSString*, id> *> *)wordsAtIndex:(NSInteger)index {
+    ddjvu_pageinfo_t info;
+    if (![self infoForPage:index into:&info]) return @[];
+    @synchronized (self) {
+        if (!_ctx || !_doc || index < 0 || index >= _pageCount) return @[];
+        miniexp_t text;
+        while ((text = ddjvu_document_get_pagetext(_doc, (int)index, "word")) == miniexp_dummy) {
+            if (!fcxl_djvu_pump(_ctx, true, kFCXLDjVuTimeout)) return @[];
+        }
+        NSMutableArray *words = [NSMutableArray array];
+        if (text != miniexp_nil) {
+            int dpi = info.dpi > 0 ? info.dpi : 300;
+            double scale = 72.0 / (double)dpi;
+            fcxl_djvu_collect_words(text, words, scale, (double)info.height * scale, 0);
+            ddjvu_miniexp_release(_doc, text);
+        }
+        return words;
     }
 }
 

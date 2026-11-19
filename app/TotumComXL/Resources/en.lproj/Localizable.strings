@@ -3007,3 +3007,12 @@ Totum Commander can take its F-keys back while it is in front — that needs the
 "settings.placeTab.mode.currentTab" = "In the current tab";
 "settings.placeTab.fromPinned" = "From a pinned tab — always in its own tab";
 "settings.placeTab.hint" = "Its own tab means one tab per disk: clicking the disk again switches to it, and when the disk is ejected the tab closes and the panel returns to where the disk was opened from. In the current tab the disk simply replaces the folder. A pinned tab never forgets its folder: leave it and come back, and the disk has to be opened again — hence the separate switch. Servers (FTP, SFTP) always open in a tab of their own.";
+
+/* Text search in the viewer (F3) */
+"viewer.find.tip" = "Search the text shown here — %@";
+"viewer.find.counter" = "%1$d of %2$@";
+"viewer.find.total" = "Found: %@";
+"viewer.find.searching" = "Searching…";
+"viewer.find.noneHere" = "None here — \"Next\" looks further";
+"viewer.find.nothingToSearch" = "Nothing to search here";
+"viewer.find.noTextLayer" = "The document has no text — recognise it first";

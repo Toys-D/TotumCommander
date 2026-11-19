@@ -298,6 +298,8 @@ struct MarkdownPreview: NSViewRepresentable {
     let content: NSAttributedString
     /// Кнопка «в конец» просмотрщика.
     var scrollJump: ScrollJumpController? = nil
+    /// Поиск по тексту просмотра: вид кладёт сюда себя.
+    var findTargets: ViewerFindTargets? = nil
 
     final class Coordinator {
         var shown: NSAttributedString?
@@ -324,6 +326,7 @@ struct MarkdownPreview: NSViewRepresentable {
         textView.layoutManager?.allowsNonContiguousLayout = true
         show(content, in: textView, context: context)
         context.coordinator.jump.attach(scrollJump, to: scrollView)
+        findTargets?.markdown = textView
         return scrollView
     }
 
